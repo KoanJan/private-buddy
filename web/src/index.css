@@ -1,0 +1,67 @@
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Ant Design overrides */
+.ant-layout-sider {
+  background: #fff !important;
+  border-right: 1px solid #f0f0f0 !important;
+}
+
+.ant-layout-header {
+  height: 64px !important;
+  padding: 0 !important;
+  border-bottom: 1px solid #f0f0f0 !important;
+}
+
+.ant-layout-content {
+  min-height: calc(100vh - 64px) !important;
+}
+
+.ant-menu-item {
+  height: 48px !important;
+  line-height: 48px !important;
+}
+
+.ant-menu-item-selected {
+  background-color: #f0f0f0 !important;
+}
+
+.ant-menu-item-selected > span {
+  color: #1890ff !important;
+  font-weight: 500 !important;
+}
+
+.trigger {
+  font-size: 18px;
+  line-height: 64px;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: color 0.3s;
+}
+
+.trigger:hover {
+  color: #1890ff;
+}
+
+.logo {
+  height: 32px;
+  margin: 16px;
+  background: rgba(255,255,255,0.2);
+}

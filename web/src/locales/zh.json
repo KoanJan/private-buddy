@@ -1,0 +1,99 @@
+{
+  "app": {
+    "title": "Private Buddy",
+    "startNewChat": "开始新对话",
+    "selectOrCreate": "选择一个会话或创建新对话开始聊天",
+    "askAnything": "有问题，尽管问，shift+enter换行",
+    "generating": "正在生成回复，请稍候..."
+  },
+  "sidebar": {
+    "noAgent": "暂无Agent",
+    "noSession": "暂无会话",
+    "loading": "加载中..."
+  },
+  "chat": {
+    "me": "我"
+  },
+  "agent": {
+    "title": "Agent配置",
+    "create": "新建Agent",
+    "edit": "编辑Agent",
+    "name": "名称",
+    "namePlaceholder": "例如: 助手小王",
+    "systemPrompt": "系统提示词",
+    "systemPromptPlaceholder": "定义Agent的角色和行为规则",
+    "description": "描述",
+    "descriptionPlaceholder": "Agent的简要描述（可选）",
+    "llmConfigId": "大模型",
+    "llmConfigIdPlaceholder": "请选择LLM配置",
+    "noDescription": "暂无描述",
+    "createSuccess": "创建Agent成功",
+    "createFailed": "创建Agent失败",
+    "updateSuccess": "更新Agent成功",
+    "updateFailed": "更新Agent失败",
+    "deleteSuccess": "删除成功",
+    "deleteFailed": "删除失败",
+    "confirmDelete": "确定要删除这个Agent吗？",
+    "confirmDeleteTitle": "确认删除"
+  },
+  "session": {
+    "untitled": "未命名会话",
+    "editTitle": "编辑会话标题",
+    "titlePlaceholder": "请输入会话标题",
+    "titleEmpty": "标题不能为空",
+    "updateSuccess": "标题更新成功",
+    "updateFailed": "更新标题失败",
+    "deleteSuccess": "删除成功",
+    "deleteFailed": "删除失败",
+    "confirmDelete": "确定要删除这个会话吗？",
+    "confirmDeleteTitle": "确认删除"
+  },
+  "llmConfig": {
+    "title": "LLM配置",
+    "create": "新建LLM配置",
+    "edit": "编辑LLM配置",
+    "name": "名称",
+    "namePlaceholder": "请输入配置名称",
+    "modelId": "模型ID",
+    "modelIdPlaceholder": "例如: gpt-3.5-turbo",
+    "baseUrl": "Base URL",
+    "baseUrlPlaceholder": "API基础URL",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "API密钥",
+    "description": "描述",
+    "descriptionPlaceholder": "配置的简要描述（可选）",
+    "noConfig": "暂无LLM配置",
+    "createSuccess": "创建LLM配置成功",
+    "createFailed": "创建LLM配置失败",
+    "updateSuccess": "更新LLM配置成功",
+    "updateFailed": "更新LLM配置失败",
+    "deleteSuccess": "删除成功",
+    "deleteFailed": "删除失败",
+    "confirmDelete": "确定要删除这个配置吗？",
+    "confirmDeleteTitle": "确认删除"
+  },
+  "settings": {
+    "title": "设置",
+    "llmConfig": "LLM配置",
+    "agentConfig": "Agent配置",
+    "language": "语言"
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "create": "创建",
+    "update": "更新",
+    "delete": "删除",
+    "edit": "编辑",
+    "confirm": "确认",
+    "loading": "加载中...",
+    "success": "成功",
+    "failed": "失败",
+    "error": "错误"
+  },
+  "messages": {
+    "sendFailed": "发送消息失败",
+    "loadFailed": "加载失败",
+    "aiResponseError": "AI回复出错"
+  }
+}

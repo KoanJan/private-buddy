@@ -1,0 +1,99 @@
+{
+  "app": {
+    "title": "Private Buddy",
+    "startNewChat": "Start New Chat",
+    "selectOrCreate": "Select a session or create a new one to start chatting",
+    "askAnything": "Ask anything, shift+enter for new line",
+    "generating": "Generating response, please wait..."
+  },
+  "sidebar": {
+    "noAgent": "No Agent",
+    "noSession": "No Session",
+    "loading": "Loading..."
+  },
+  "chat": {
+    "me": "Me"
+  },
+  "agent": {
+    "title": "Agent Configuration",
+    "create": "Create Agent",
+    "edit": "Edit Agent",
+    "name": "Name",
+    "namePlaceholder": "e.g., Assistant Wang",
+    "systemPrompt": "System Prompt",
+    "systemPromptPlaceholder": "Define the agent's role and behavior rules",
+    "description": "Description",
+    "descriptionPlaceholder": "Brief description of the agent (optional)",
+    "llmConfigId": "LLM",
+    "llmConfigIdPlaceholder": "Please select LLM config",
+    "noDescription": "No description",
+    "createSuccess": "Agent created successfully",
+    "createFailed": "Failed to create agent",
+    "updateSuccess": "Agent updated successfully",
+    "updateFailed": "Failed to update agent",
+    "deleteSuccess": "Deleted successfully",
+    "deleteFailed": "Failed to delete",
+    "confirmDelete": "Are you sure you want to delete this agent?",
+    "confirmDeleteTitle": "Confirm Delete"
+  },
+  "session": {
+    "untitled": "Untitled Session",
+    "editTitle": "Edit Session Title",
+    "titlePlaceholder": "Please enter session title",
+    "titleEmpty": "Title cannot be empty",
+    "updateSuccess": "Title updated successfully",
+    "updateFailed": "Failed to update title",
+    "deleteSuccess": "Deleted successfully",
+    "deleteFailed": "Failed to delete",
+    "confirmDelete": "Are you sure you want to delete this session?",
+    "confirmDeleteTitle": "Confirm Delete"
+  },
+  "llmConfig": {
+    "title": "LLM Configuration",
+    "create": "Create LLM Config",
+    "edit": "Edit LLM Config",
+    "name": "Name",
+    "namePlaceholder": "Please enter config name",
+    "modelId": "Model ID",
+    "modelIdPlaceholder": "e.g., gpt-3.5-turbo",
+    "baseUrl": "Base URL",
+    "baseUrlPlaceholder": "API base URL",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "API key",
+    "description": "Description",
+    "descriptionPlaceholder": "Brief description of the config (optional)",
+    "noConfig": "No LLM Config",
+    "createSuccess": "LLM config created successfully",
+    "createFailed": "Failed to create LLM config",
+    "updateSuccess": "LLM config updated successfully",
+    "updateFailed": "Failed to update LLM config",
+    "deleteSuccess": "Deleted successfully",
+    "deleteFailed": "Failed to delete",
+    "confirmDelete": "Are you sure you want to delete this config?",
+    "confirmDeleteTitle": "Confirm Delete"
+  },
+  "settings": {
+    "title": "Settings",
+    "llmConfig": "LLM Config",
+    "agentConfig": "Agent Config",
+    "language": "Language"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "create": "Create",
+    "update": "Update",
+    "delete": "Delete",
+    "edit": "Edit",
+    "confirm": "Confirm",
+    "loading": "Loading...",
+    "success": "Success",
+    "failed": "Failed",
+    "error": "Error"
+  },
+  "messages": {
+    "sendFailed": "Failed to send message",
+    "loadFailed": "Failed to load",
+    "aiResponseError": "AI response error"
+  }
+}
