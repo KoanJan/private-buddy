@@ -4,8 +4,8 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 
-class LLMConfig(Base):
-    __tablename__ = "llm_configs"
+class EmbeddingConfig(Base):
+    __tablename__ = "embedding_configs"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
@@ -15,10 +15,3 @@ class LLMConfig(Base):
     description = Column(Text, nullable=False, default='')
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    agents = relationship(
-        "Agent",
-        back_populates="llm_config",
-        primaryjoin="LLMConfig.id == Agent.llm_config_id",
-        foreign_keys="Agent.llm_config_id"
-    )

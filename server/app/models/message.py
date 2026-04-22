@@ -6,7 +6,6 @@ from app.database import Base
 
 MESSAGE_STATUS_STREAMING = 0
 MESSAGE_STATUS_COMPLETED = 1
-MESSAGE_STATUS_FAILED = 2
 
 
 class Message(Base):

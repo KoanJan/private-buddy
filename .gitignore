@@ -87,6 +87,8 @@ Thumbs.db
 
 # Project specific
 doc/draft
+doc/experiments
+server/chroma_db/
 
 # Temporary files
 *.tmp

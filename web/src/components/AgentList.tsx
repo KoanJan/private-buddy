@@ -30,7 +30,16 @@ const AgentList: React.FC<AgentListProps> = ({ currentSessionId, onSelectSession
     try {
       const response = await agentApi.listWithSessions();
       setAgents(response.data);
-      if (response.data.length > 0 && activeKeys.length === 0) {
+      
+      // Auto-expand agent that contains current session
+      if (currentSessionId) {
+        const agentWithSession = response.data.find(agent => 
+          agent.sessions.some(s => s.id === currentSessionId)
+        );
+        if (agentWithSession) {
+          setActiveKeys([`agent-${agentWithSession.id}`]);
+        }
+      } else if (response.data.length > 0 && activeKeys.length === 0) {
         setActiveKeys([`agent-${response.data[0].id}`]);
       }
     } catch (error) {
@@ -44,6 +53,18 @@ const AgentList: React.FC<AgentListProps> = ({ currentSessionId, onSelectSession
   useEffect(() => {
     loadAgents();
   }, []);
+
+  // Auto-expand agent when currentSessionId changes
+  useEffect(() => {
+    if (currentSessionId && agents.length > 0) {
+      const agentWithSession = agents.find(agent => 
+        agent.sessions.some(s => s.id === currentSessionId)
+      );
+      if (agentWithSession && !activeKeys.includes(`agent-${agentWithSession.id}`)) {
+        setActiveKeys([`agent-${agentWithSession.id}`]);
+      }
+    }
+  }, [currentSessionId, agents]);
 
   const handleDeleteSession = async (sessionId: number, e: React.MouseEvent) => {
     e.stopPropagation();

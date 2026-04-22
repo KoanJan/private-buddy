@@ -2,18 +2,21 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import AsyncGenerator, Optional
-from app.database import get_db
-from app.models.session import Session as SessionModel, SESSION_STATUS_STREAMING, SESSION_STATUS_IDLE
+from app.database import get_db, SessionLocal
+from app.models.session import Session as SessionModel, SESSION_STATUS_STREAMING
 from app.models.message import Message, MESSAGE_STATUS_STREAMING, MESSAGE_STATUS_COMPLETED
 from app.models.agent import Agent
-from app.services.connection_manager import manager
-from app.services.background_tasks import process_chat_task
+from app.services.chat import manager, process_chat_task, generate_summary_task
 from app.services.data_service import DataService
+from app.config import get_settings
 from app.logger import logger
 import json
 import asyncio
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# Maximum length for session title generated from message
+SESSION_TITLE_MAX_LENGTH = 15
 
 
 @router.post("/new")
@@ -27,7 +30,7 @@ async def create_and_send(
     logger.info(f"Create new session and send message: {message[:50]}...")
     
     if not title:
-        title = message[:50] + ("..." if len(message) > 50 else "")
+        title = message[:SESSION_TITLE_MAX_LENGTH] + ("..." if len(message) > SESSION_TITLE_MAX_LENGTH else "")
     
     if not agent_id:
         default_agent = db.query(Agent).first()
@@ -52,6 +55,16 @@ async def create_and_send(
     db.add(user_msg)
     db.flush()
     
+    # Trigger summary generation after user message creation
+    settings = get_settings()
+    message_count = db.query(Message).filter(
+        Message.session_id == session.id
+    ).count()
+    if message_count >= settings.summary_window_size:
+        logger.info(f"Triggering summary generation for new session {session.id}, V={message_count}")
+        asyncio.create_task(generate_summary_task(session.id, message_count))
+    
+    # Create AI message placeholder immediately to avoid race condition
     ai_msg = Message(
         session_id=session.id,
         role="assistant",
@@ -61,18 +74,17 @@ async def create_and_send(
     db.add(ai_msg)
     db.commit()
     
-    logger.info(f"Created session {session.id}, messages - user: {user_msg.id}, ai: {ai_msg.id}")
+    logger.info(f"Created session {session.id}, user message {user_msg.id}, AI message {ai_msg.id}")
     
     background_tasks.add_task(
         process_chat_task,
-        session.id,
         user_msg.id,
         ai_msg.id
     )
     
     return {
         "session_id": session.id,
-        "user_message_id": user_msg.id,
+        "trigger_message_id": user_msg.id,
         "ai_message_id": ai_msg.id
     }
 
@@ -103,6 +115,16 @@ async def send_message(
     db.add(user_msg)
     db.flush()
     
+    # Trigger summary generation after user message creation
+    settings = get_settings()
+    message_count = db.query(Message).filter(
+        Message.session_id == session_id
+    ).count()
+    if message_count >= settings.summary_window_size:
+        logger.info(f"Triggering summary generation for session {session_id}, V={message_count}")
+        asyncio.create_task(generate_summary_task(session_id, message_count))
+    
+    # Create AI message placeholder immediately to avoid race condition
     ai_msg = Message(
         session_id=session_id,
         role="assistant",
@@ -115,34 +137,36 @@ async def send_message(
     session.status = SESSION_STATUS_STREAMING
     db.commit()
     
-    logger.info(f"Created messages - user: {user_msg.id}, ai: {ai_msg.id}")
+    logger.info(f"Created user message {user_msg.id}, AI message {ai_msg.id} for session {session_id}")
     
     background_tasks.add_task(
         process_chat_task,
-        session_id,
         user_msg.id,
         ai_msg.id
     )
     
     return {
-        "user_message_id": user_msg.id,
+        "trigger_message_id": user_msg.id,
         "ai_message_id": ai_msg.id
     }
 
 
 @router.get("/stream/{session_id}")
 async def stream_messages(
-    session_id: int,
-    db: Session = Depends(get_db)
+    session_id: int
 ):
     logger.info(f"SSE stream request for session {session_id}")
     
-    session = DataService.get_session(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
     async def event_generator() -> AsyncGenerator[bytes, None]:
+        # Create independent db session for SSE stream
+        db = SessionLocal()
         try:
+            session = DataService.get_session(db, session_id)
+            if not session:
+                error_data = json.dumps({'type': 'error', 'message': 'Session not found'}, ensure_ascii=False)
+                yield f"data: {error_data}\n\n".encode('utf-8')
+                return
+            
             yield b": connected\n\n"
             
             streaming_msg = db.query(Message).filter(
@@ -181,6 +205,8 @@ async def stream_messages(
             logger.error(f"Error in SSE stream: {str(e)}", exc_info=True)
             error_data = json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)
             yield f"data: {error_data}\n\n".encode('utf-8')
+        finally:
+            db.close()
     
     return StreamingResponse(
         event_generator(),

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Input, Button, message, Spin } from 'antd';
 import { RobotOutlined } from '@ant-design/icons';
 import { Send } from 'lucide-react';
@@ -18,16 +18,18 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const prevSessionIdRef = useRef<number | null>(null);
+  const currentLoadIdRef = useRef<number>(0);
 
-  const isSessionStreaming = session?.status === SESSION_STATUS_STREAMING;
   const isTempSession = session?.id === -1;
 
   useEffect(() => {
     const loadAgent = async () => {
-      if (!session || isTempSession) {
+      if (!session || !session.agent_id) {
         setCurrentAgent(null);
         return;
       }
@@ -49,26 +51,53 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   }, [messages]);
 
   useEffect(() => {
+    const prevId = prevSessionIdRef.current;
+    const currentId = session?.id ?? null;
+    
     if (eventSourceRef.current) {
       logger.info('Closing EventSource on session change');
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    setMessages([]);
-    setStreamingMessage('');
+    
+    setIsStreaming(false);
+    currentLoadIdRef.current += 1;
+    
+    const isTempToReal = prevId === -1 && currentId !== null && currentId !== -1;
+    if (!isTempToReal) {
+      setMessages([]);
+      setStreamingMessage('');
+    }
     setInputValue('');
+    
+    prevSessionIdRef.current = currentId;
+    
+    return () => {
+      if (eventSourceRef.current) {
+        logger.info('Closing EventSource on unmount');
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
   }, [session?.id]);
 
-  const loadMessages = async () => {
+  const loadMessages = useCallback(async () => {
     if (!session || isTempSession) return;
     
-    logger.info('Loading messages for session:', session.id);
+    const loadId = ++currentLoadIdRef.current;
+    logger.info('Loading messages for session:', session.id, 'loadId:', loadId);
+    
     setLoading(true);
     try {
       const [messagesRes, sessionRes] = await Promise.all([
         messageApi.list(session.id),
         sessionApi.get(session.id)
       ]);
+      
+      if (loadId !== currentLoadIdRef.current) {
+        logger.info('Stale loadMessages response ignored, loadId:', loadId);
+        return;
+      }
       
       logger.info('Messages loaded:', messagesRes.data.length, 'Session status:', sessionRes.data.status);
       setMessages(messagesRes.data);
@@ -78,27 +107,41 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         if (streamingMsg) {
           logger.info('Found streaming message, reconnecting...', streamingMsg.id, 'content length:', streamingMsg.content.length);
           setStreamingMessage(streamingMsg.content);
-          connectToStream(session.id);
+          setIsStreaming(true);
+          connectToStream(session.id, loadId);
         } else {
           logger.warn('Session is streaming but no streaming message found');
+          setIsStreaming(false);
         }
+      } else {
+        setIsStreaming(false);
       }
     } catch (error) {
       logger.error('Failed to load messages:', error);
+      if (loadId === currentLoadIdRef.current) {
+        setIsStreaming(false);
+      }
     } finally {
-      setLoading(false);
+      if (loadId === currentLoadIdRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [session, isTempSession]);
 
   useEffect(() => {
     loadMessages();
-  }, [session?.id]);
+  }, [loadMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage]);
 
-  const connectToStream = (sessionId: number) => {
+  const connectToStream = (sessionId: number, loadId?: number) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    
     const url = `http://localhost:8000/api/chat/stream/${sessionId}`;
     logger.info('Creating EventSource:', url);
     
@@ -122,6 +165,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           setStreamingMessage(prev => prev + data.content);
         } else if (data.type === 'done') {
           logger.info('SSE stream completed');
+          setIsStreaming(false);
           loadMessages();
           setStreamingMessage('');
           eventSource.close();
@@ -129,6 +173,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         } else if (data.type === 'error') {
           logger.error('SSE error from server:', data.message);
           message.error(`${t('messages.aiResponseError')}: ${data.message}`);
+          setIsStreaming(false);
           setStreamingMessage('');
           eventSource.close();
           eventSourceRef.current = null;
@@ -140,13 +185,16 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
 
     eventSource.onerror = (error) => {
       logger.error('SSE connection error:', error);
+      if (loadId === undefined || loadId === currentLoadIdRef.current) {
+        setIsStreaming(false);
+      }
       eventSource.close();
       eventSourceRef.current = null;
     };
   };
 
   const handleSend = async () => {
-    if (!inputValue.trim() || !session || isSessionStreaming) return;
+    if (!inputValue.trim() || !session || isStreaming) return;
 
     logger.info('Sending message:', inputValue);
 
@@ -161,7 +209,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         const newSessionId = response.data.session_id;
         
         const userMessage: Message = {
-          id: response.data.user_message_id,
+          id: response.data.trigger_message_id,
           session_id: newSessionId,
           role: 'user',
           content: inputValue,
@@ -173,15 +221,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         setMessages([userMessage]);
         setInputValue('');
         setStreamingMessage('');
+        setIsStreaming(true);
         
         if (onSessionCreated) {
           onSessionCreated(newSessionId);
         }
-        
-        connectToStream(newSessionId);
       } else {
-        await messageApi.send(session.id, inputValue);
-        
         const userMessage: Message = {
           id: Date.now(),
           session_id: session.id,
@@ -195,16 +240,27 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         setMessages(prev => [...prev, userMessage]);
         setInputValue('');
         setStreamingMessage('');
+        setIsStreaming(true);
         
-        connectToStream(session.id);
+        await messageApi.send(session.id, inputValue);
+        
+        const [messagesRes, sessionRes] = await Promise.all([
+          messageApi.list(session.id),
+          sessionApi.get(session.id)
+        ]);
+        
+        setMessages(messagesRes.data);
+        
+        if (sessionRes.data.status === SESSION_STATUS_STREAMING) {
+          connectToStream(session.id);
+        } else {
+          setIsStreaming(false);
+        }
       }
     } catch (error: any) {
       logger.error('Failed to send message:', error);
-      if (error.response?.data?.detail) {
-        message.error(error.response.data.detail);
-      } else {
-        message.error(t('messages.sendFailed'));
-      }
+      message.error(t('messages.sendError'));
+      setIsStreaming(false);
     }
   };
 
@@ -218,7 +274,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     );
   }
 
-  const isSendDisabled = !inputValue.trim() || isSessionStreaming;
+  const isSendDisabled = !inputValue.trim() || isStreaming;
 
   return (
     <>
@@ -251,7 +307,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                   </div>
                 </div>
               ))}
-            {isSessionStreaming && (
+            {isStreaming && (
               <div className="message-item assistant">
                 <div className="message-header">
                   <span className="message-role">{currentAgent?.name || 'AI'}</span>
@@ -277,7 +333,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           <div className="input-container">
             <div className="input-area">
               <Input.TextArea
-                placeholder={isSessionStreaming ? t('app.generating') : ""}
+                placeholder={isStreaming ? t('app.generating') : ""}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onPressEnter={(e) => {
@@ -287,7 +343,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                   }
                 }}
                 autoSize={{ minRows: 1, maxRows: 4 }}
-                disabled={isSessionStreaming}
+                disabled={isStreaming}
                 bordered={false}
                 style={{
                   width: '100%',

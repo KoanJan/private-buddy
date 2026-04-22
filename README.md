@@ -1,6 +1,11 @@
-# Private Buddy
+<div align="center">
+  <img src="web/public/favicon.svg" alt="Private Buddy" width="64">
+  <h1>Private Buddy</h1>
+</div>
 
 A modern, private AI assistant system built from scratch. I initially called this project "Boring Practice" because it was just a practice project - I wanted to build a modern agent system from zero to show I know how to do it. I didn't plan to create anything fancy; I just wanted to copy the features that other agent systems have, like watching a documentary - boring (at least for now). The name "Private Buddy" isn't much better, but it at least captures what this is: a personal, privacy-focused AI assistant.
+
+---
 
 ## What It Does
 
@@ -22,7 +27,7 @@ More features will be added gradually.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/private-buddy.git
+git clone https://github.com/KoanJan/private-buddy.git
 cd private-buddy
 ```
 

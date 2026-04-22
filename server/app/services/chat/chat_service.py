@@ -1,21 +1,51 @@
+"""
+Chat service module for direct chat processing.
+
+This module provides a simple chat service that handles direct LLM interactions
+without the context engineering pipeline.
+
+Note: This service is deprecated. Use background_tasks.process_chat_task instead
+for the full context engineering pipeline.
+"""
+
 from sqlalchemy.orm import Session
-from typing import List, Dict, Optional, AsyncGenerator
-from app.models.session import Session as SessionModel
+from typing import AsyncGenerator
 from app.models.message import Message
-from app.models.llm_config import LLMConfig
-from app.services.llm_service import LLMService
+from app.services.llm import LLMService
 from app.services.data_service import DataService
+from app.services.llm.llm_logger import TokenUsageLogger
 from app.logger import logger
-import time
 
 
 class ChatService:
+    """
+    Service for direct chat processing without context engineering.
+    
+    Note: This service is deprecated. Use background_tasks.process_chat_task
+    instead for the full context engineering pipeline with summary, RAG, etc.
+    """
+    
     @staticmethod
     async def chat(
         db: Session,
         session_id: int,
         user_message: str
     ) -> AsyncGenerator[str, None]:
+        """
+        Process a chat message and stream the LLM response.
+        
+        This method handles direct LLM interactions without the context
+        engineering pipeline. It loads the session's agent to get character
+        settings and LLM configuration.
+        
+        Args:
+            db: Database session
+            session_id: Session ID for the chat
+            user_message: The user's message text
+            
+        Yields:
+            Chunks of the LLM response as they are generated
+        """
         logger.info(f"ChatService.chat called - session_id: {session_id}, message: {user_message[:50]}...")
         
         try:
@@ -25,9 +55,14 @@ class ChatService:
             
             logger.info(f"Session found: {session.title}")
             
+            # Load agent to get character_settings and llm_config_id
+            agent = DataService.get_agent(db, session.agent_id)
+            if not agent:
+                raise ValueError("Agent not found")
+            
             llm_config = None
-            if session.llm_config_id:
-                llm_config = DataService.get_llm_config(db, session.llm_config_id)
+            if agent.llm_config_id:
+                llm_config = DataService.get_llm_config(db, agent.llm_config_id)
             
             if not llm_config:
                 raise ValueError("LLM config not found")
@@ -38,26 +73,18 @@ class ChatService:
             
             chat_model = LLMService.create_chat_model(llm_config)
             langchain_messages = LLMService.build_messages(
-                session.system_prompt,
+                agent.character_settings if agent.character_settings else None,
                 history,
                 user_message
             )
             
             logger.info("Starting LLM stream...")
             full_response = ""
-            chunk_count = 0
-            start_time = time.time()
             
-            async for chunk in chat_model.astream(langchain_messages):
+            async for chunk in chat_model.astream(langchain_messages, config={"callbacks": [TokenUsageLogger()]}):
                 if chunk.content:
-                    chunk_count += 1
-                    chunk_time = time.time() - start_time
-                    logger.debug(f"Chunk #{chunk_count} at {chunk_time:.2f}s: {chunk.content[:30]}...")
                     full_response += chunk.content
                     yield chunk.content
-            
-            total_time = time.time() - start_time
-            logger.info(f"LLM stream completed - {chunk_count} chunks in {total_time:.2f}s, response length: {len(full_response)}")
             
             user_msg = Message(
                 session_id=session_id,

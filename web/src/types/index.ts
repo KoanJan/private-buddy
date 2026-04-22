@@ -28,11 +28,23 @@ export interface LLMConfig {
   updated_at: string | null;
 }
 
+export interface EmbeddingConfig {
+  id: number;
+  name: string;
+  model_id: string;
+  base_url: string;
+  api_key: string;
+  description: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
 export interface Agent {
   id: number;
   name: string;
-  system_prompt: string;
+  character_settings: string;
   llm_config_id: number;
+  embedding_config_id: number;
   description: string;
   created_at: string;
   updated_at: string | null;
@@ -55,4 +67,3 @@ export const SESSION_STATUS_IDLE = 1;
 
 export const MESSAGE_STATUS_STREAMING = 0;
 export const MESSAGE_STATUS_COMPLETED = 1;
-export const MESSAGE_STATUS_FAILED = 2;

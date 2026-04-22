@@ -1,12 +1,7 @@
 const LOG_KEY = 'private_buddy_logs';
 const MAX_LOGS = 1000;
 
-export const MESSAGE_STATUS_STREAMING = 0;
-export const MESSAGE_STATUS_COMPLETED = 1;
-export const MESSAGE_STATUS_FAILED = 2;
-
-export const SESSION_STATUS_STREAMING = 0;
-export const SESSION_STATUS_IDLE = 1;
+export { MESSAGE_STATUS_STREAMING, MESSAGE_STATUS_COMPLETED, SESSION_STATUS_STREAMING, SESSION_STATUS_IDLE } from './types';
 
 const getTimestamp = () => {
   return new Date().toISOString();

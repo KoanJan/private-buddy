@@ -1,24 +1,27 @@
 import { useState } from 'react';
 import { Button, Modal, Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
-import { SettingOutlined, RobotOutlined, UserOutlined, PlusOutlined, CloseOutlined, GlobalOutlined, CheckOutlined } from '@ant-design/icons';
+import { SettingOutlined, RobotOutlined, UserOutlined, PlusOutlined, CloseOutlined, GlobalOutlined, CheckOutlined, ApiOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage, getCurrentLanguage } from './i18n';
 import AgentList from './components/AgentList';
 import ChatWindow from './components/ChatWindow';
 import LLMConfigList from './components/LLMConfigList';
+import EmbeddingConfigList from './components/EmbeddingConfigList';
 import AgentConfig from './components/AgentConfig';
-import type { Session, LLMConfig } from './types';
+import type { Session, LLMConfig, EmbeddingConfig } from './types';
 import './App.css';
 
 function App() {
   const { t } = useTranslation();
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [showLLMConfig, setShowLLMConfig] = useState(false);
+  const [showEmbeddingConfig, setShowEmbeddingConfig] = useState(false);
   const [showAgentConfig, setShowAgentConfig] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showCreateLLM, setShowCreateLLM] = useState(false);
+  const [showCreateEmbedding, setShowCreateEmbedding] = useState(false);
   const [currentLang, setCurrentLang] = useState(getCurrentLanguage());
 
   const handleSelectSession = (session: Session | null) => {
@@ -32,6 +35,10 @@ function App() {
         llm_config_id: config.id
       } : null);
     }
+  };
+
+  const handleSelectEmbeddingConfig = (config: EmbeddingConfig | null) => {
+    console.log('Selected embedding config:', config);
   };
 
   const handleCreateSession = (agentId: number) => {
@@ -92,6 +99,12 @@ function App() {
       onClick: () => setShowLLMConfig(true)
     },
     {
+      key: 'embedding',
+      label: t('settings.embeddingConfig'),
+      icon: <ApiOutlined />,
+      onClick: () => setShowEmbeddingConfig(true)
+    },
+    {
       key: 'language',
       label: t('settings.language'),
       icon: <GlobalOutlined />,
@@ -140,8 +153,9 @@ function App() {
           <div className="chat-container">
             <ChatWindow 
               session={currentSession} 
-              onSessionCreated={() => {
+              onSessionCreated={(sessionId) => {
                 setRefreshKey(prev => prev + 1);
+                setCurrentSession(prev => prev ? { ...prev, id: sessionId } : null);
               }}
             />
           </div>
@@ -207,6 +221,37 @@ function App() {
           showCreate={showCreateAgent}
           onCreateClose={() => setShowCreateAgent(false)}
           onAgentCreated={handleAgentCreated}
+        />
+      </Modal>
+
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Button
+              type="text"
+              icon={<CloseOutlined />}
+              onClick={() => setShowEmbeddingConfig(false)}
+              style={{ color: '#6b7280' }}
+            />
+            <span>{t('embeddingConfig.title')}</span>
+            <Button
+              type="text"
+              icon={<PlusOutlined />}
+              onClick={() => setShowCreateEmbedding(true)}
+              style={{ color: '#6b7280' }}
+            />
+          </div>
+        }
+        open={showEmbeddingConfig}
+        onCancel={() => setShowEmbeddingConfig(false)}
+        footer={null}
+        width={600}
+        closable={false}
+      >
+        <EmbeddingConfigList 
+          onSelectConfig={handleSelectEmbeddingConfig}
+          showCreate={showCreateEmbedding}
+          onCreateClose={() => setShowCreateEmbedding(false)}
         />
       </Modal>
     </div>

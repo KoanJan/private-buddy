@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Session, Message, LLMConfig, Agent, AgentWithSessions } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
@@ -21,9 +21,9 @@ export const sessionApi = {
 export const messageApi = {
   list: (sessionId: number) => api.get<Message[]>(`/messages/${sessionId}`),
   send: (sessionId: number, content: string) => 
-    api.post<{user_message_id: number, ai_message_id: number}>(`/chat/send/${sessionId}?message=${encodeURIComponent(content)}`),
+    api.post<{trigger_message_id: number}>(`/chat/send/${sessionId}?message=${encodeURIComponent(content)}`),
   createAndSend: (content: string, agentId?: number, title?: string) =>
-    api.post<{session_id: number, user_message_id: number, ai_message_id: number}>(`/chat/new?message=${encodeURIComponent(content)}${agentId ? `&agent_id=${agentId}` : ''}${title ? `&title=${encodeURIComponent(title)}` : ''}`),
+    api.post<{session_id: number, trigger_message_id: number}>(`/chat/new?message=${encodeURIComponent(content)}${agentId ? `&agent_id=${agentId}` : ''}${title ? `&title=${encodeURIComponent(title)}` : ''}`),
 };
 
 export const llmConfigApi = {
@@ -32,6 +32,14 @@ export const llmConfigApi = {
   create: (data: Partial<LLMConfig>) => api.post<LLMConfig>('/llm-configs', data),
   update: (id: number, data: Partial<LLMConfig>) => api.put<LLMConfig>(`/llm-configs/${id}`, data),
   delete: (id: number) => api.delete(`/llm-configs/${id}`),
+};
+
+export const embeddingConfigApi = {
+  list: () => api.get<EmbeddingConfig[]>('/embedding-configs'),
+  get: (id: number) => api.get<EmbeddingConfig>(`/embedding-configs/${id}`),
+  create: (data: Partial<EmbeddingConfig>) => api.post<EmbeddingConfig>('/embedding-configs', data),
+  update: (id: number, data: Partial<EmbeddingConfig>) => api.put<EmbeddingConfig>(`/embedding-configs/${id}`, data),
+  delete: (id: number) => api.delete(`/embedding-configs/${id}`),
 };
 
 export const agentApi = {

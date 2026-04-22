@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
-from app.api import llm_configs, sessions, messages, chat, agents
+from app.api import llm_configs, sessions, messages, chat, agents, embedding_configs
 from app.logger import logger
 
 Base.metadata.create_all(bind=engine)
@@ -9,7 +9,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Private Buddy API",
     description="Private AI Assistant Backend API",
-    version="0.0.1"
+    version="0.0.2"
 )
 
 app.add_middleware(
@@ -21,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(llm_configs.router)
+app.include_router(embedding_configs.router)
 app.include_router(sessions.router)
 app.include_router(messages.router)
 app.include_router(chat.router)
