@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Button, Modal, Dropdown } from 'antd';
+import { Button, Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
-import { SettingOutlined, RobotOutlined, UserOutlined, PlusOutlined, CloseOutlined, GlobalOutlined, CheckOutlined, ApiOutlined } from '@ant-design/icons';
+import { SettingOutlined, RobotOutlined, UserOutlined, PlusOutlined, GlobalOutlined, CheckOutlined, ApiOutlined, ArrowLeftOutlined, SearchOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage, getCurrentLanguage } from './i18n';
 import AgentList from './components/AgentList';
@@ -9,15 +9,16 @@ import ChatWindow from './components/ChatWindow';
 import LLMConfigList from './components/LLMConfigList';
 import EmbeddingConfigList from './components/EmbeddingConfigList';
 import AgentConfig from './components/AgentConfig';
+import SearchConfigForm from './components/SearchConfigForm';
 import type { Session, LLMConfig, EmbeddingConfig } from './types';
 import './App.css';
+
+type MainView = 'chat' | 'agent' | 'llm' | 'embedding' | 'search';
 
 function App() {
   const { t } = useTranslation();
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
-  const [showLLMConfig, setShowLLMConfig] = useState(false);
-  const [showEmbeddingConfig, setShowEmbeddingConfig] = useState(false);
-  const [showAgentConfig, setShowAgentConfig] = useState(false);
+  const [mainView, setMainView] = useState<MainView>('chat');
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showCreateLLM, setShowCreateLLM] = useState(false);
@@ -26,6 +27,7 @@ function App() {
 
   const handleSelectSession = (session: Session | null) => {
     setCurrentSession(session);
+    setMainView('chat');
   };
 
   const handleSelectLLMConfig = (config: LLMConfig | null) => {
@@ -51,6 +53,7 @@ function App() {
       updated_at: new Date().toISOString(),
     };
     setCurrentSession(tempSession);
+    setMainView('chat');
   };
 
   const handleLanguageChange = (lang: string) => {
@@ -60,6 +63,10 @@ function App() {
 
   const handleAgentCreated = () => {
     setRefreshKey(prev => prev + 1);
+  };
+
+  const switchToChat = () => {
+    setMainView('chat');
   };
 
   const languageMenuItems: MenuProps['items'] = [
@@ -90,19 +97,25 @@ function App() {
       key: 'agent',
       label: t('settings.agentConfig'),
       icon: <UserOutlined />,
-      onClick: () => setShowAgentConfig(true)
+      onClick: () => setMainView('agent')
     },
     {
       key: 'llm',
       label: t('settings.llmConfig'),
       icon: <RobotOutlined />,
-      onClick: () => setShowLLMConfig(true)
+      onClick: () => setMainView('llm')
     },
     {
       key: 'embedding',
       label: t('settings.embeddingConfig'),
       icon: <ApiOutlined />,
-      onClick: () => setShowEmbeddingConfig(true)
+      onClick: () => setMainView('embedding')
+    },
+    {
+      key: 'search',
+      label: t('settings.searchConfig'),
+      icon: <SearchOutlined />,
+      onClick: () => setMainView('search')
     },
     {
       key: 'language',
@@ -111,6 +124,126 @@ function App() {
       children: languageMenuItems
     }
   ];
+
+  const renderMainContent = () => {
+    switch (mainView) {
+      case 'agent':
+        return (
+          <div className="main-panel">
+            <div className="main-panel-header">
+              <Button
+                type="text"
+                icon={<ArrowLeftOutlined />}
+                onClick={switchToChat}
+                style={{ color: '#6b7280' }}
+              />
+              <span className="main-panel-title">{t('agent.title')}</span>
+              <Button
+                type="text"
+                icon={<PlusOutlined />}
+                onClick={() => setShowCreateAgent(true)}
+                style={{ color: '#6b7280' }}
+              />
+            </div>
+            <div className="main-panel-body">
+              <AgentConfig
+                showCreate={showCreateAgent}
+                onCreateClose={() => setShowCreateAgent(false)}
+                onAgentCreated={handleAgentCreated}
+              />
+            </div>
+          </div>
+        );
+
+      case 'llm':
+        return (
+          <div className="main-panel">
+            <div className="main-panel-header">
+              <Button
+                type="text"
+                icon={<ArrowLeftOutlined />}
+                onClick={switchToChat}
+                style={{ color: '#6b7280' }}
+              />
+              <span className="main-panel-title">{t('llmConfig.title')}</span>
+              <Button
+                type="text"
+                icon={<PlusOutlined />}
+                onClick={() => setShowCreateLLM(true)}
+                style={{ color: '#6b7280' }}
+              />
+            </div>
+            <div className="main-panel-body">
+              <LLMConfigList
+                onSelectConfig={handleSelectLLMConfig}
+                showCreate={showCreateLLM}
+                onCreateClose={() => setShowCreateLLM(false)}
+              />
+            </div>
+          </div>
+        );
+
+      case 'embedding':
+        return (
+          <div className="main-panel">
+            <div className="main-panel-header">
+              <Button
+                type="text"
+                icon={<ArrowLeftOutlined />}
+                onClick={switchToChat}
+                style={{ color: '#6b7280' }}
+              />
+              <span className="main-panel-title">{t('embeddingConfig.title')}</span>
+              <Button
+                type="text"
+                icon={<PlusOutlined />}
+                onClick={() => setShowCreateEmbedding(true)}
+                style={{ color: '#6b7280' }}
+              />
+            </div>
+            <div className="main-panel-body">
+              <EmbeddingConfigList
+                onSelectConfig={handleSelectEmbeddingConfig}
+                showCreate={showCreateEmbedding}
+                onCreateClose={() => setShowCreateEmbedding(false)}
+              />
+            </div>
+          </div>
+        );
+
+      case 'search':
+        return (
+          <div className="main-panel">
+            <div className="main-panel-header">
+              <Button
+                type="text"
+                icon={<ArrowLeftOutlined />}
+                onClick={switchToChat}
+                style={{ color: '#6b7280' }}
+              />
+              <span className="main-panel-title">{t('searchConfig.title')}</span>
+            </div>
+            <div className="main-panel-body">
+              <SearchConfigForm />
+            </div>
+          </div>
+        );
+
+      case 'chat':
+      default:
+        return (
+          <div className="chat-container">
+            <ChatWindow
+              session={currentSession}
+              onSessionCreated={(sessionId) => {
+                setRefreshKey(prev => prev + 1);
+                setCurrentSession(prev => prev ? { ...prev, id: sessionId } : null);
+              }}
+            />
+          </div>
+        );
+    }
+  };
 
   return (
     <div className="app-container">
@@ -140,7 +273,8 @@ function App() {
                   borderRadius: '8px',
                   height: '40px',
                   justifyContent: 'flex-start',
-                  color: '#6b7280'
+                  color: ['agent', 'llm', 'embedding'].includes(mainView) ? '#1890ff' : '#6b7280',
+                  backgroundColor: ['agent', 'llm', 'embedding'].includes(mainView) ? '#e6f7ff' : 'transparent',
                 }}
               >
                 {t('settings.title')}
@@ -150,110 +284,9 @@ function App() {
         </aside>
 
         <main className="app-main">
-          <div className="chat-container">
-            <ChatWindow 
-              session={currentSession} 
-              onSessionCreated={(sessionId) => {
-                setRefreshKey(prev => prev + 1);
-                setCurrentSession(prev => prev ? { ...prev, id: sessionId } : null);
-              }}
-            />
-          </div>
+          {renderMainContent()}
         </main>
       </div>
-
-      <Modal
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Button
-              type="text"
-              icon={<CloseOutlined />}
-              onClick={() => setShowLLMConfig(false)}
-              style={{ color: '#6b7280' }}
-            />
-            <span>{t('llmConfig.title')}</span>
-            <Button
-              type="text"
-              icon={<PlusOutlined />}
-              onClick={() => setShowCreateLLM(true)}
-              style={{ color: '#6b7280' }}
-            />
-          </div>
-        }
-        open={showLLMConfig}
-        onCancel={() => setShowLLMConfig(false)}
-        footer={null}
-        width={600}
-        closable={false}
-      >
-        <LLMConfigList 
-          onSelectConfig={handleSelectLLMConfig}
-          showCreate={showCreateLLM}
-          onCreateClose={() => setShowCreateLLM(false)}
-        />
-      </Modal>
-
-      <Modal
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Button
-              type="text"
-              icon={<CloseOutlined />}
-              onClick={() => setShowAgentConfig(false)}
-              style={{ color: '#6b7280' }}
-            />
-            <span>{t('agent.title')}</span>
-            <Button
-              type="text"
-              icon={<PlusOutlined />}
-              onClick={() => setShowCreateAgent(true)}
-              style={{ color: '#6b7280' }}
-            />
-          </div>
-        }
-        open={showAgentConfig}
-        onCancel={() => setShowAgentConfig(false)}
-        footer={null}
-        width={700}
-        closable={false}
-      >
-        <AgentConfig 
-          showCreate={showCreateAgent}
-          onCreateClose={() => setShowCreateAgent(false)}
-          onAgentCreated={handleAgentCreated}
-        />
-      </Modal>
-
-      <Modal
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Button
-              type="text"
-              icon={<CloseOutlined />}
-              onClick={() => setShowEmbeddingConfig(false)}
-              style={{ color: '#6b7280' }}
-            />
-            <span>{t('embeddingConfig.title')}</span>
-            <Button
-              type="text"
-              icon={<PlusOutlined />}
-              onClick={() => setShowCreateEmbedding(true)}
-              style={{ color: '#6b7280' }}
-            />
-          </div>
-        }
-        open={showEmbeddingConfig}
-        onCancel={() => setShowEmbeddingConfig(false)}
-        footer={null}
-        width={600}
-        closable={false}
-      >
-        <EmbeddingConfigList 
-          onSelectConfig={handleSelectEmbeddingConfig}
-          showCreate={showCreateEmbedding}
-          onCreateClose={() => setShowCreateEmbedding(false)}
-        />
-      </Modal>
     </div>
   );
 }

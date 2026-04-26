@@ -12,6 +12,7 @@ A modern, private AI assistant system built from scratch. I initially called thi
 You can:
 - Create multiple AI agents with different prompts
 - Chat with them and keep history
+- Delegate tasks to agents for real-world execution
 
 More features will be added gradually.
 

@@ -104,7 +104,21 @@
     "llmConfig": "LLM Config",
     "embeddingConfig": "Embedding Config",
     "agentConfig": "Agent Config",
+    "searchConfig": "Search Engine",
     "language": "Language"
+  },
+  "searchConfig": {
+    "title": "Search Engine Configuration",
+    "provider": "Search Engine",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "Enter API key",
+    "apiKeyRequired": "API Key is required to enable search",
+    "description": "Description",
+    "descriptionPlaceholder": "Brief description of the config (optional)",
+    "isActive": "Enable Search",
+    "loadError": "Failed to load config",
+    "saveSuccess": "Saved successfully",
+    "saveError": "Failed to save"
   },
   "common": {
     "save": "Save",
@@ -114,6 +128,7 @@
     "delete": "Delete",
     "edit": "Edit",
     "confirm": "Confirm",
+    "reset": "Reset",
     "loading": "Loading...",
     "success": "Success",
     "failed": "Failed",

@@ -3,21 +3,39 @@ Background task module for asynchronous chat processing.
 
 This module contains the core background tasks that handle:
 - Chat message processing with context engineering
+- Agent execution for world-interaction requests
 - LLM streaming responses
 - Summary generation triggers
 
 The tasks are designed to run asynchronously without blocking the API,
 enabling real-time streaming responses via SSE (Server-Sent Events).
+
+Flow:
+1. User sends message -> API creates user_msg + ai_msg placeholders
+2. Background task infers user state (including needs_world_interaction)
+3. If needs_world_interaction=true:
+   - Set ai_msg.has_interactions=1 (exists)
+   - Execute agent via AgentService with session workspace
+   - Record interactions to database
+   - Deliver result as ai_msg content
+4. If needs_world_interaction=false:
+   - Set ai_msg.has_interactions=2 (none)
+   - Continue with normal LLM chat flow (context engineering + streaming)
 """
 
+from pathlib import Path
+
 from app.models.session import SESSION_STATUS_IDLE
-from app.models.message import Message, MESSAGE_STATUS_COMPLETED
+from app.models.message import Message, MESSAGE_STATUS_COMPLETED, HAS_INTERACTIONS_EXISTS, HAS_INTERACTIONS_NONE
 from app.services.llm import LLMService
 from app.services.data_service import DataService
 from app.services.chat.connection_manager import manager
 from app.services.llm.llm_logger import TokenUsageLogger
 from app.services.context import SummaryService, RetrievalService, ContextAssemblyService, QueryPreprocessingService, NarrativeService
 from app.services.context.user_state import UserStateService
+from app.services.agent.agent_service import AgentService
+from app.services.agent.workspace import ensure_session_workspace
+from app.services.agent.requirement_rewriter import TaskRequirementRewriter
 from app.database import SessionLocal
 from app.config import get_settings
 from app.logger import logger
@@ -37,18 +55,17 @@ async def process_chat_task(
     
     This is the main background task that handles the complete chat processing pipeline:
     1. Load session, agent, and LLM configuration
-    2. Determine if context engineering is needed (V >= N)
-    3. If V < N: Use simple context assembly with all messages
-    4. If V >= N: Apply full context engineering pipeline
-       - Query preprocessing (routing, rewriting, clarification)
-       - RAG retrieval (if needed)
-       - Narrative generation from summary + segments
-       - Context assembly with metadata
-    5. Stream LLM response and notify clients via SSE
-    6. Trigger summary generation if needed
+    2. Infer user state (including needs_world_interaction)
+    3. If needs_world_interaction=true: execute agent and deliver result
+    4. If needs_world_interaction=false: apply context engineering and stream LLM response
+    5. Trigger summary generation if needed
     
-    This design supports message equality - any message can trigger a response,
-    not just user messages. Currently limited to user-triggered scenarios.
+    Context Engineering Variables:
+        V = current message count in session
+        N = summary window size (configurable via settings.summary_window_size)
+        
+        - V < N: Skip context engineering, use all messages directly (no summary exists)
+        - V >= N: Apply full context engineering pipeline (summary + retrieval + assembly)
     
     Args:
         trigger_message_id: The ID of the message that triggers this task
@@ -99,7 +116,6 @@ async def process_chat_task(
             return
         
         # Current limitation: trigger message must be from user
-        # This check ensures compatibility for future scenarios
         if trigger_msg.role != "user":
             logger.error(f"[process_chat_task] Trigger message is not from user: session_id={session_id}, trigger_message_id={trigger_message_id}, ai_message_id={ai_message_id}, role={trigger_msg.role}")
             ai_msg.status = MESSAGE_STATUS_COMPLETED
@@ -115,8 +131,42 @@ async def process_chat_task(
         logger.info(f"AI message {ai_message_id} for session {session_id}, V={message_count}")
         
         settings = get_settings()
-        chat_model = LLMService.create_chat_model(llm_config)
         window_size = settings.summary_window_size
+        
+        # --- User state inference (always, to determine needs_world_interaction) ---
+        recent_messages_for_state = RetrievalService.get_recent_messages(
+            db, session_id, limit=min(message_count, window_size), status=MESSAGE_STATUS_COMPLETED
+        )
+        user_state_result = await UserStateService.infer_user_state(llm_config, recent_messages_for_state)
+        
+        needs_world_interaction = user_state_result.needs_world_interaction if user_state_result else False
+        logger.info(
+            f"User state inference: needs_world_interaction={needs_world_interaction}, "
+            f"session_id={session_id}, trigger_message_id={trigger_message_id}"
+        )
+        
+        # --- Branch: Agent execution path ---
+        if needs_world_interaction:
+            await _process_agent_execution(
+                db=db,
+                ai_msg=ai_msg,
+                session=session,
+                agent=agent,
+                llm_config=llm_config,
+                trigger_msg=trigger_msg,
+                session_id=session_id,
+                message_count=message_count,
+                window_size=window_size,
+                has_embedding=False,
+            )
+            return
+        
+        # --- Branch: Normal chat path ---
+        # Update has_interactions to NONE (no world interaction needed)
+        ai_msg.has_interactions = HAS_INTERACTIONS_NONE
+        db.commit()
+        
+        chat_model = LLMService.create_chat_model(llm_config)
         
         # Branch 1: V < N - Skip context engineering, use all messages directly
         if message_count < window_size:
@@ -175,14 +225,12 @@ async def process_chat_task(
             
             # Step 2: Context retrieval (with or without RAG)
             if preprocessing_result.get("skip_retrieval"):
-                # Skip RAG for no_query type (greetings, chitchat, etc.)
                 context = RetrievalService.get_context_without_rag(
                     db, session_id, recent_count=window_size
                 )
                 has_embedding = False
                 logger.info(f"Context assembled (skip RAG) - summary: {context['summary'] is not None}")
             else:
-                # Full RAG retrieval with query
                 context = RetrievalService.get_context_for_chat(
                     db, session_id, processed_query,
                     recent_count=window_size, rag_count=5
@@ -201,28 +249,18 @@ async def process_chat_task(
                 db.commit()
                 return
             
-            # Step 3: Generate background narrative and infer user state in parallel
-            # Run narrative generation and user state inference concurrently
+            # Step 3: Generate background narrative
             if context['summary'] or context.get('relevant_segments'):
-                background_story, user_state_result = await asyncio.gather(
-                    NarrativeService.generate_background_story(
-                        llm_config, context['summary'], context.get('relevant_segments', [])
-                    ),
-                    UserStateService.infer_user_state(llm_config, context['recent_messages'])
+                background_story = await NarrativeService.generate_background_story(
+                    llm_config, context['summary'], context.get('relevant_segments', [])
                 )
             else:
                 background_story = None
-                user_state_result = await UserStateService.infer_user_state(
-                    llm_config, context['recent_messages']
-                )
             
             # Convert user state to natural language description for prompt injection
             user_state_description = user_state_result.to_natural_language() if user_state_result else None
             
             # Step 4: Calculate message sequence numbers for metadata
-            # Note: summary_version and recent_messages range are DECOUPLED
-            # - recent_messages always contains the latest N messages (or all if V < N)
-            # - summary_version just indicates what the summary covers
             summary_version = context['summary']['version'] if context['summary'] else None
             recent_start = message_count - len(context['recent_messages']) + 1
             
@@ -309,6 +347,137 @@ async def process_chat_task(
     
     finally:
         db.close()
+
+
+async def _process_agent_execution(
+    db,
+    ai_msg: Message,
+    session,
+    agent,
+    llm_config,
+    trigger_msg: Message,
+    session_id: int,
+    message_count: int,
+    window_size: int,
+    has_embedding: bool,
+):
+    """
+    Execute agent for world-interaction requests.
+    
+    This function handles the agent execution path when needs_world_interaction=true:
+    1. Update ai_msg.has_interactions to EXISTS
+    2. Rewrite user message into clear task requirement (using conversation context)
+    3. Ensure session workspace exists
+    4. Execute agent via AgentService
+    5. Deliver result as ai_msg content
+    6. Notify client via SSE
+    
+    Args:
+        db: Database session.
+        ai_msg: The AI message placeholder to fill with the result.
+        session: The session model.
+        agent: The agent model.
+        llm_config: LLM configuration.
+        trigger_msg: The user message that triggered execution.
+        session_id: The session ID.
+        message_count: Current message count in session.
+        window_size: Summary window size.
+        has_embedding: Whether embedding is available for RAG.
+    """
+    from app.services.chat.connection_manager import manager
+    from app.models.session import SESSION_STATUS_IDLE
+    
+    # Update has_interactions to EXISTS
+    ai_msg.has_interactions = HAS_INTERACTIONS_EXISTS
+    db.commit()
+    logger.info(f"Agent execution path: session_id={session_id}, ai_msg_id={ai_msg.id}, has_interactions=EXISTS")
+    
+    # Notify frontend that agent is processing (not streaming text yet)
+    await manager.notify(session_id, {
+        'type': 'agent_processing',
+        'message': 'Agent is processing your request...'
+    })
+    
+    try:
+        # Ensure session workspace exists
+        workspace = ensure_session_workspace(session_id)
+        
+        # Rewrite user message into clear task requirement
+        # Use recent messages as context for resolving references
+        recent_messages = RetrievalService.get_recent_messages(
+            db, session_id, limit=min(message_count, window_size), status=MESSAGE_STATUS_COMPLETED
+        )
+        # recent_messages is already List[Dict] with 'role' and 'content' keys
+        
+        rewritten_requirement = await TaskRequirementRewriter.rewrite(
+            llm_config=llm_config,
+            user_message=trigger_msg.content,
+            history=recent_messages,
+        )
+        logger.info(
+            f"Task requirement rewritten: session_id={session_id}, "
+            f"original='{trigger_msg.content[:50]}...', rewritten='{rewritten_requirement[:50]}...'"
+        )
+        
+        # Execute agent via AgentService with rewritten requirement
+        agent_service = AgentService(db)
+        delivery = await agent_service.execute(
+            task_requirement=rewritten_requirement,
+            llm_config=llm_config,
+            workspace=workspace,
+            session_id=session_id,
+            user_msg_id=trigger_msg.id,
+            agent_msg_id=ai_msg.id,
+        )
+        
+        # Deliver result
+        if delivery.status == "success":
+            result_content = delivery.result or ""
+        else:
+            result_content = delivery.reason or "Task execution failed"
+        
+        # Update AI message with result
+        ai_msg.status = MESSAGE_STATUS_COMPLETED
+        ai_msg.content = result_content
+        db.commit()
+        
+        # Release session status
+        session.status = SESSION_STATUS_IDLE
+        db.commit()
+        
+        # Notify client with the complete result
+        await manager.notify(session_id, {
+            'type': 'chunk',
+            'content': result_content
+        })
+        await manager.notify(session_id, {'type': 'done'})
+        
+        logger.info(
+            f"Agent execution completed: session_id={session_id}, "
+            f"status={delivery.status}, result_len={len(result_content)}"
+        )
+        
+        # Get updated message count after AI response
+        message_count = db.query(Message).filter(
+            Message.session_id == session_id
+        ).count()
+        
+        # Trigger summary generation if V >= N
+        if message_count >= window_size:
+            logger.info(f"Triggering summary generation for session {session_id}, V={message_count}, N={window_size}")
+            asyncio.create_task(generate_summary_task(session_id, message_count))
+        
+    except Exception as e:
+        logger.error(f"Agent execution error: session_id={session_id}, error={str(e)}", exc_info=True)
+        
+        ai_msg.status = MESSAGE_STATUS_COMPLETED
+        ai_msg.content = USER_FRIENDLY_ERROR_MESSAGE
+        db.commit()
+        
+        session.status = SESSION_STATUS_IDLE
+        db.commit()
+        
+        await manager.notify(session_id, {'type': 'done'})
 
 
 async def generate_summary_task(session_id: int, version: int):

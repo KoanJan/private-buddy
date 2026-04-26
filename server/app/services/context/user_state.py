@@ -54,6 +54,12 @@ class UserState(BaseModel):
                     "Examples: 'at work on desktop', 'late evening on mobile', "
                     "'in a meeting', 'commuting'"
     )
+    needs_world_interaction: bool = Field(
+        description="Whether the user's request requires interaction with the external world: "
+                    "true if the request needs tools, real-time information, file operations, "
+                    "or any action beyond the LLM's parametric knowledge; "
+                    "false if the LLM can answer directly from its training data"
+    )
 
     def to_natural_language(self) -> str:
         """
@@ -81,6 +87,8 @@ class UserState(BaseModel):
         ]
         if self.situation and self.situation != "unknown":
             parts.append(f"and is likely {self.situation}")
+        if self.needs_world_interaction:
+            parts.append("and needs to interact with the external world (tools, real-time data, or file operations)")
 
         return ", ".join(parts) + "."
 
@@ -99,7 +107,13 @@ class UserStateService:
 Recent conversation:
 {recent_messages}
 
-Analyze the user's emotional tone, conversational purpose, and any clues about their physical situation."""
+Analyze the user's emotional tone, conversational purpose, and any clues about their physical situation.
+
+Also determine if the user's request requires interaction with the external world:
+- Set needs_world_interaction=true if the request needs: real-time information (news, weather, stock prices), 
+  file operations (create, modify, delete files), code execution, web searches, or any tool usage.
+- Set needs_world_interaction=false if the LLM can answer directly from its training data 
+  (general knowledge, advice, explanations, casual conversation)."""
 
     @staticmethod
     def _create_chat_model(llm_config: LLMConfig) -> ChatOpenAI:
@@ -166,7 +180,7 @@ Analyze the user's emotional tone, conversational purpose, and any clues about t
                 messages, config={"callbacks": [TokenUsageLogger()]}
             )
 
-            logger.info(f"Inferred user state: emotion={result.emotion}, purpose={result.purpose}, situation={result.situation}")
+            logger.info(f"Inferred user state: emotion={result.emotion}, purpose={result.purpose}, situation={result.situation}, needs_world_interaction={result.needs_world_interaction}")
             return result
 
         except Exception as e:

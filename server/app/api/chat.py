@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import AsyncGenerator, Optional
 from app.database import get_db, SessionLocal
 from app.models.session import Session as SessionModel, SESSION_STATUS_STREAMING
-from app.models.message import Message, MESSAGE_STATUS_STREAMING, MESSAGE_STATUS_COMPLETED
+from app.models.message import Message, MESSAGE_STATUS_STREAMING, MESSAGE_STATUS_COMPLETED, HAS_INTERACTIONS_NONE, HAS_INTERACTIONS_PENDING
 from app.models.agent import Agent
 from app.services.chat import manager, process_chat_task, generate_summary_task
 from app.services.data_service import DataService
@@ -50,7 +50,8 @@ async def create_and_send(
         session_id=session.id,
         role="user",
         content=message,
-        status=MESSAGE_STATUS_COMPLETED
+        status=MESSAGE_STATUS_COMPLETED,
+        has_interactions=HAS_INTERACTIONS_NONE
     )
     db.add(user_msg)
     db.flush()
@@ -69,7 +70,8 @@ async def create_and_send(
         session_id=session.id,
         role="assistant",
         content="",
-        status=MESSAGE_STATUS_STREAMING
+        status=MESSAGE_STATUS_STREAMING,
+        has_interactions=HAS_INTERACTIONS_PENDING
     )
     db.add(ai_msg)
     db.commit()
@@ -110,7 +112,8 @@ async def send_message(
         session_id=session_id,
         role="user",
         content=message,
-        status=MESSAGE_STATUS_COMPLETED
+        status=MESSAGE_STATUS_COMPLETED,
+        has_interactions=HAS_INTERACTIONS_NONE
     )
     db.add(user_msg)
     db.flush()
@@ -129,7 +132,8 @@ async def send_message(
         session_id=session_id,
         role="assistant",
         content="",
-        status=MESSAGE_STATUS_STREAMING
+        status=MESSAGE_STATUS_STREAMING,
+        has_interactions=HAS_INTERACTIONS_PENDING
     )
     db.add(ai_msg)
     db.flush()

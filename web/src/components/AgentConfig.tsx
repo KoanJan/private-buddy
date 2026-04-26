@@ -147,13 +147,13 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
 
   return (
     <>
-      <div style={{ minHeight: '400px', maxHeight: '600px', overflowY: 'auto' }}>
+      <div>
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af' }}>
             {t('sidebar.loading')}
           </div>
         ) : agents.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af' }}>
             {t('sidebar.noAgent')}
           </div>
         ) : (
@@ -161,7 +161,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
             <div
               key={agent.id}
               className="session-item"
-              style={{ cursor: 'default' }}
+              style={{ cursor: 'default', padding: '12px 16px' }}
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -169,7 +169,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
                     <RobotOutlined style={{ marginRight: '8px', fontSize: '12px' }} />
                     {agent.name}
                   </div>
-                  <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                  <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>
                     {agent.description || t('agent.noDescription')}
                   </div>
                 </div>

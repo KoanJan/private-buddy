@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Input, Button, message, Spin } from 'antd';
-import { RobotOutlined } from '@ant-design/icons';
+import { Input, Button, message, Spin, Modal } from 'antd';
+import { RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { Message, Session, Agent } from '../types';
-import { messageApi, sessionApi, agentApi } from '../services/api';
+import type { Message, Session, Agent, Interaction } from '../types';
+import { HAS_INTERACTIONS_PENDING, HAS_INTERACTIONS_EXISTS, INTERACTION_TYPE_REQUEST } from '../types';
+import { messageApi, sessionApi, agentApi, interactionApi, API_BASE_URL } from '../services/api';
 import { logger, MESSAGE_STATUS_STREAMING, SESSION_STATUS_STREAMING } from '../logger';
 
 interface ChatWindowProps {
@@ -20,6 +21,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [streamingMessage, setStreamingMessage] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
+  const [interactionModalVisible, setInteractionModalVisible] = useState(false);
+  const [selectedInteractions, setSelectedInteractions] = useState<Interaction[]>([]);
+  const [interactionsLoading, setInteractionsLoading] = useState(false);
+  const pollingRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const prevSessionIdRef = useRef<number | null>(null);
@@ -132,6 +137,53 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     loadMessages();
   }, [loadMessages]);
 
+  // Poll for interaction status on agent messages with has_interactions=PENDING
+  useEffect(() => {
+    const pendingAgentMessages = messages.filter(
+      m => m.role === 'assistant' && m.has_interactions === HAS_INTERACTIONS_PENDING
+    );
+
+    pendingAgentMessages.forEach(msg => {
+      if (!pollingRef.current.has(msg.id)) {
+        const timer = setInterval(async () => {
+          try {
+            const res = await interactionApi.getInteractionStatus(msg.id);
+            const status = res.data.has_interactions;
+            if (status !== HAS_INTERACTIONS_PENDING) {
+              setMessages(prev => prev.map(m =>
+                m.id === msg.id ? { ...m, has_interactions: status } : m
+              ));
+              clearInterval(timer);
+              pollingRef.current.delete(msg.id);
+            }
+          } catch (err) {
+            logger.error('Failed to poll interaction status:', err);
+          }
+        }, 2000);
+        pollingRef.current.set(msg.id, timer);
+      }
+    });
+
+    return () => {
+      pollingRef.current.forEach(timer => clearInterval(timer));
+      pollingRef.current.clear();
+    };
+  }, [messages]);
+
+  const handleViewInteractions = async (agentMsgId: number) => {
+    setInteractionsLoading(true);
+    setInteractionModalVisible(true);
+    try {
+      const res = await interactionApi.getInteractions(agentMsgId);
+      setSelectedInteractions(res.data.interactions);
+    } catch (err) {
+      logger.error('Failed to load interactions:', err);
+      message.error('Failed to load interaction records');
+    } finally {
+      setInteractionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage]);
@@ -142,7 +194,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
       eventSourceRef.current = null;
     }
     
-    const url = `http://localhost:8000/api/chat/stream/${sessionId}`;
+    const url = `${API_BASE_URL}/chat/stream/${sessionId}`;
     logger.info('Creating EventSource:', url);
     
     const eventSource = new EventSource(url);
@@ -214,6 +266,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           role: 'user',
           content: inputValue,
           status: 1,
+          has_interactions: 2,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -233,6 +286,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           role: 'user',
           content: inputValue,
           status: 1,
+          has_interactions: 2,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -305,6 +359,19 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                   <div className="message-content">
                     {msg.content}
                   </div>
+                  {msg.role === 'assistant' && msg.has_interactions === HAS_INTERACTIONS_EXISTS && (
+                    <div style={{ marginTop: '4px' }}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<ThunderboltOutlined />}
+                        onClick={() => handleViewInteractions(msg.id)}
+                        style={{ color: '#8b5cf6', fontSize: '12px', padding: '0 4px' }}
+                      >
+                        Interactions
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             {isStreaming && (
@@ -376,6 +443,82 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           </div>
         </div>
       </div>
+
+      <Modal
+        title="Interaction Records"
+        open={interactionModalVisible}
+        onCancel={() => {
+          setInteractionModalVisible(false);
+          setSelectedInteractions([]);
+        }}
+        footer={null}
+        width={800}
+      >
+        {interactionsLoading ? (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <Spin />
+          </div>
+        ) : (
+          <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+            {selectedInteractions.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>
+                No interaction records found
+              </div>
+            ) : (
+              (() => {
+                const iterationMap = new Map<number, Interaction[]>();
+                selectedInteractions.forEach(interaction => {
+                  const list = iterationMap.get(interaction.iteration) || [];
+                  list.push(interaction);
+                  iterationMap.set(interaction.iteration, list);
+                });
+                return Array.from(iterationMap.entries()).map(([iteration, items]) => (
+                  <div key={`iter-${iteration}`} style={{ marginBottom: '16px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '8px', color: '#374151' }}>
+                      Iteration {iteration}
+                    </div>
+                    {items.map(interaction => {
+                      const typeLabel = interaction.type === INTERACTION_TYPE_REQUEST ? 'Request' : 'Response';
+                      const typeColor = interaction.type === INTERACTION_TYPE_REQUEST ? '#3b82f6' : '#10b981';
+                      return (
+                        <div key={`interaction-${interaction.id}`} style={{ marginLeft: '16px', marginBottom: '8px' }}>
+                          <div style={{ fontSize: '12px', marginBottom: '4px' }}>
+                            <span style={{ color: typeColor, fontWeight: 500 }}>{typeLabel}</span>
+                            <span style={{ color: '#9ca3af', marginLeft: '8px' }}>
+                              {new Date(interaction.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <pre style={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontSize: '12px',
+                            lineHeight: '1.5',
+                            margin: 0,
+                            padding: '8px',
+                            background: '#f9fafb',
+                            borderRadius: '4px',
+                            border: '1px solid #e5e7eb',
+                            maxHeight: '300px',
+                            overflowY: 'auto',
+                          }}>
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(interaction.data), null, 2);
+                              } catch {
+                                return interaction.data;
+                              }
+                            })()}
+                          </pre>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
+              })()
+            )}
+          </div>
+        )}
+      </Modal>
     </>
   );
 };

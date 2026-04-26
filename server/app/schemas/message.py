@@ -16,6 +16,7 @@ class MessageCreate(BaseModel):
 class MessageResponse(MessageBase):
     id: int
     status: int
+    has_interactions: int
     created_at: datetime
     updated_at: Optional[datetime] = None
 

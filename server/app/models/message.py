@@ -7,6 +7,10 @@ from app.database import Base
 MESSAGE_STATUS_STREAMING = 0
 MESSAGE_STATUS_COMPLETED = 1
 
+HAS_INTERACTIONS_PENDING = 0
+HAS_INTERACTIONS_EXISTS = 1
+HAS_INTERACTIONS_NONE = 2
+
 
 class Message(Base):
     __tablename__ = "messages"
@@ -16,6 +20,7 @@ class Message(Base):
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     status = Column(Integer, default=MESSAGE_STATUS_COMPLETED, nullable=False)
+    has_interactions = Column(Integer, default=HAS_INTERACTIONS_NONE, nullable=False, comment="0=pending, 1=has interactions, 2=no interactions")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

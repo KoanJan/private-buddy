@@ -127,6 +127,37 @@
   flex-direction: column;
 }
 
+.main-panel {
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.main-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.main-panel-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.main-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
 .chat-container {
   max-width: 800px;
   margin: 0 auto;

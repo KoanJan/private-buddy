@@ -1,7 +1,7 @@
 import axios from 'axios';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, Interaction, SearchConfig } from '../types';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+export const API_BASE_URL = 'http://localhost:8000/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -49,4 +49,16 @@ export const agentApi = {
   create: (data: Partial<Agent>) => api.post<Agent>('/agents', data),
   update: (id: number, data: Partial<Agent>) => api.put<Agent>(`/agents/${id}`, data),
   delete: (id: number) => api.delete(`/agents/${id}`),
+};
+
+export const interactionApi = {
+  getInteractionStatus: (messageId: number) =>
+    api.get<{ has_interactions: number }>(`/messages/${messageId}/interaction-status`),
+  getInteractions: (agentMsgId: number) =>
+    api.get<{ interactions: Interaction[] }>('/interactions', { params: { agent_msg_id: agentMsgId } }),
+};
+
+export const searchConfigApi = {
+  get: () => api.get<SearchConfig>('/search-config'),
+  update: (data: Partial<SearchConfig>) => api.put<SearchConfig>('/search-config', data),
 };

@@ -1,3 +1,11 @@
+"""
+Application-wide logging configuration.
+
+Reads LOG_LEVEL from environment (defaults to INFO) and configures
+both file and stream handlers. Uses force=True to ensure the
+configuration takes effect even if basicConfig was called earlier.
+"""
+
 import logging
 import os
 from datetime import datetime
@@ -15,11 +23,12 @@ log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+        logging.FileHandler(log_file, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+    force=True,
 )
 
 logger = logging.getLogger(__name__)

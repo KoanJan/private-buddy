@@ -132,13 +132,13 @@ const LLMConfigList: React.FC<LLMConfigListProps> = ({ onSelectConfig, showCreat
 
   return (
     <>
-      <div style={{ minHeight: '400px', maxHeight: '600px', overflowY: 'auto' }}>
+      <div>
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af' }}>
             {t('sidebar.loading')}
           </div>
         ) : configs.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af' }}>
             {t('llmConfig.noConfig')}
           </div>
       ) : (
@@ -146,7 +146,7 @@ const LLMConfigList: React.FC<LLMConfigListProps> = ({ onSelectConfig, showCreat
           <div
             key={config.id}
             className="session-item"
-            style={{ cursor: 'default' }}
+            style={{ cursor: 'default', padding: '12px 16px' }}
           >
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -154,7 +154,7 @@ const LLMConfigList: React.FC<LLMConfigListProps> = ({ onSelectConfig, showCreat
                   <ApiOutlined style={{ marginRight: '8px', fontSize: '12px' }} />
                   {config.name}
                 </div>
-                <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>
                   {config.model_id}
                 </div>
               </div>

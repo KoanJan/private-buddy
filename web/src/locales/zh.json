@@ -104,7 +104,21 @@
     "llmConfig": "LLM配置",
     "embeddingConfig": "Embedding配置",
     "agentConfig": "Agent配置",
+    "searchConfig": "搜索引擎",
     "language": "语言"
+  },
+  "searchConfig": {
+    "title": "搜索引擎配置",
+    "provider": "搜索引擎",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "请输入API密钥",
+    "apiKeyRequired": "启用搜索功能需要填写API Key",
+    "description": "描述",
+    "descriptionPlaceholder": "配置的简要描述（可选）",
+    "isActive": "启用搜索",
+    "loadError": "加载配置失败",
+    "saveSuccess": "保存成功",
+    "saveError": "保存失败"
   },
   "common": {
     "save": "保存",
@@ -114,6 +128,7 @@
     "delete": "删除",
     "edit": "编辑",
     "confirm": "确认",
+    "reset": "重置",
     "loading": "加载中...",
     "success": "成功",
     "failed": "失败",
