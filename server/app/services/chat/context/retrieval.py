@@ -6,8 +6,12 @@ LLM processing:
 - Recent messages from the session
 - RAG-based relevant segments from vector store
 - Latest summary from the summary system
+- Cached narrative from the summary record
 
 The retrieval process supports both RAG-enabled and RAG-disabled modes.
+Narrative is retrieved from the summary record's narrative field (cached,
+generated in background alongside summary), eliminating the need for
+real-time narrative generation during chat processing.
 """
 
 from sqlalchemy.orm import Session
@@ -28,6 +32,7 @@ class RetrievalService:
     - Recent messages (with optional status filter)
     - RAG segments (if embedding is configured)
     - Latest summary (if available)
+    - Cached narrative (from summary record, if available)
     """
     
     @staticmethod
@@ -50,7 +55,6 @@ class RetrievalService:
         if not agent:
             return None
 
-        # Check if agent has embedding config (ID > 0 means configured)
         if agent.embedding_config_id and agent.embedding_config_id > 0:
             return db.query(EmbeddingConfig).filter(
                 EmbeddingConfig.id == agent.embedding_config_id
@@ -84,11 +88,9 @@ class RetrievalService:
             Message.session_id == session_id
         )
         
-        # Apply status filter if provided
         if status is not None:
             query = query.filter(Message.status == status)
         
-        # Get messages in reverse order (newest first), then reverse
         messages = query.order_by(Message.id.desc()).limit(limit).all()
         messages = list(reversed(messages))
 
@@ -96,6 +98,37 @@ class RetrievalService:
             {"role": msg.role, "content": msg.content, "id": msg.id}
             for msg in messages
         ]
+
+    @staticmethod
+    def _build_summary_and_narrative(
+        latest_summary
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Extract summary dict and cached narrative from a HistoricalSummary record.
+        
+        Narrative retrieval follows the same versioning policy as summary:
+        get the latest available version without requiring alignment with
+        current message count. If narrative field is empty (not yet generated
+        or generation failed), returns None for narrative.
+        
+        Args:
+            latest_summary: HistoricalSummary record, or None
+            
+        Returns:
+            Tuple of (summary_dict, narrative_text).
+            summary_dict is None if no summary exists.
+            narrative_text is None if no narrative exists or field is empty.
+        """
+        if not latest_summary:
+            return None, None
+
+        summary_dict = {
+            "version": latest_summary.version,
+            "content": latest_summary.content
+        }
+        narrative = latest_summary.narrative if latest_summary.narrative else None
+
+        return summary_dict, narrative
 
     @staticmethod
     def get_context_without_rag(
@@ -107,7 +140,7 @@ class RetrievalService:
         Get context without RAG retrieval.
         
         Used for queries that don't need RAG (e.g., greetings, chitchat).
-        Only retrieves recent messages and latest summary.
+        Retrieves recent messages, latest summary, and cached narrative.
         
         Args:
             db: Database session
@@ -115,28 +148,24 @@ class RetrievalService:
             recent_count: Number of recent messages to retrieve
             
         Returns:
-            Dictionary with 'recent_messages', 'relevant_segments', and 'summary'
+            Dictionary with 'recent_messages', 'relevant_segments', 'summary',
+            and 'narrative' keys
         """
-        result = {
+        result: Dict[str, Any] = {
             "recent_messages": [],
             "relevant_segments": [],
-            "summary": None
+            "summary": None,
+            "narrative": None
         }
 
         from app.models.message import MESSAGE_STATUS_COMPLETED
         
-        # Get recent completed messages
         result["recent_messages"] = RetrievalService.get_recent_messages(
             db, session_id, recent_count, status=MESSAGE_STATUS_COMPLETED
         )
 
-        # Get latest summary (may be older than current message count)
         latest_summary = SummaryService.get_latest_summary(db, session_id)
-        if latest_summary:
-            result["summary"] = {
-                "version": latest_summary.version,
-                "content": latest_summary.content
-            }
+        result["summary"], result["narrative"] = RetrievalService._build_summary_and_narrative(latest_summary)
 
         return result
 
@@ -155,6 +184,7 @@ class RetrievalService:
         1. Recent messages from the session
         2. RAG segments relevant to the query (if embedding configured)
         3. Latest summary (if available)
+        4. Cached narrative from summary record (if available)
         
         Args:
             db: Database session
@@ -165,43 +195,35 @@ class RetrievalService:
             
         Returns:
             Dictionary with 'recent_messages', 'relevant_segments', 
-            'summary', and 'has_embedding' keys
+            'summary', 'narrative', and 'has_embedding' keys
         """
-        result = {
+        result: Dict[str, Any] = {
             "recent_messages": [],
             "relevant_segments": [],
             "summary": None,
+            "narrative": None,
             "has_embedding": False
         }
 
         from app.models.message import MESSAGE_STATUS_COMPLETED
         
-        # Get recent completed messages
         result["recent_messages"] = RetrievalService.get_recent_messages(
             db, session_id, recent_count, status=MESSAGE_STATUS_COMPLETED
         )
 
-        # Perform RAG retrieval if embedding is configured
         embedding_config = RetrievalService.get_embedding_config_for_session(db, session_id)
         if embedding_config:
             result["has_embedding"] = True
             try:
                 vector_store = VectorStoreService.get_instance(session_id, embedding_config)
-
-                # Search for relevant segments
                 search_results = vector_store.search(query, k=rag_count)
                 result["relevant_segments"] = search_results
                 logger.info(f"RAG retrieved {len(search_results)} segments for session {session_id}")
             except Exception as e:
                 logger.error(f"RAG retrieval failed: {str(e)}", exc_info=True)
 
-        # Get latest summary (may be older than current message count)
         latest_summary = SummaryService.get_latest_summary(db, session_id)
-        if latest_summary:
-            result["summary"] = {
-                "version": latest_summary.version,
-                "content": latest_summary.content
-            }
+        result["summary"], result["narrative"] = RetrievalService._build_summary_and_narrative(latest_summary)
 
         return result
 
@@ -225,13 +247,11 @@ class RetrievalService:
         Returns:
             True if indexing succeeded, False otherwise
         """
-        # Check if embedding is configured
         embedding_config = RetrievalService.get_embedding_config_for_session(db, session_id)
         if not embedding_config:
             logger.info(f"No embedding config for session {session_id}, skipping indexing")
             return False
 
-        # Load messages to index
         messages = db.query(Message).filter(
             Message.id.in_(message_ids),
             Message.session_id == session_id
@@ -244,14 +264,12 @@ class RetrievalService:
         try:
             vector_store = VectorStoreService.get_instance(session_id, embedding_config)
 
-            # Prepare data for indexing
             contents = [msg.content for msg in messages]
             metadatas = [
                 {"role": msg.role, "message_id": msg.id}
                 for msg in messages
             ]
 
-            # Add to vector store
             vector_store.add_messages(
                 message_ids=[msg.id for msg in messages],
                 contents=contents,

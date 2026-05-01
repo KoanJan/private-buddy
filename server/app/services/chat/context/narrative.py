@@ -1,14 +1,19 @@
 """
 Narrative generation module for creating background stories.
 
-This module handles the generation of background narratives from summary
-and RAG segments. The narrative provides a coherent context for the LLM
-to understand the conversation history.
+This module handles the generation of background narratives. Two generation
+modes are supported:
 
-The narrative generation process:
-1. Combine summary content (if available)
-2. Combine relevant RAG segments (if available)
-3. Use LLM to generate a coherent narrative from the agent's perspective
+1. Cached narrative (from summary only, no segments):
+   - Generated in background immediately after summary generation
+   - Stored in historical_summaries.narrative field alongside the summary
+   - Retrieved at chat time without LLM call (major performance gain)
+   - Segments are handled as an independent section in context assembly
+
+2. Legacy real-time narrative (from summary + segments):
+   - Generated on-the-fly during chat processing
+   - Segments are naturally integrated into the narrative
+   - Kept for backward compatibility but no longer used in main flow
 
 Narrative Perspective Design:
 - Uses internal focalization (agent's viewpoint) rather than external focalization
@@ -27,10 +32,30 @@ class NarrativeService:
     """
     Service for generating background narratives from context components.
     
-    This service transforms structured context (summary + segments) into
-    a flowing narrative that helps the LLM understand conversation history.
+    This service transforms structured context into a flowing narrative
+    that helps the LLM understand conversation history.
     """
-    
+
+    CACHED_NARRATIVE_PROMPT = """You are a conversation background narrative assistant. Generate a coherent background narrative based on the summary.
+
+Summary:
+{summary_content}
+
+Requirements:
+1. Use second-person perspective (address the agent as "You"). For example: "You have been discussing X with the user. The user mentioned..."
+2. Preserve ALL key information from the summary
+3. Transform the summary into a flowing narrative
+4. Do NOT add interpretations, judgments, or assumptions
+5. Maintain information fidelity
+
+IMPORTANT: The narrative MUST preserve the original language of the conversation.
+- If the conversation is in Chinese, write the narrative in Chinese.
+- If the conversation is in English, write the narrative in English.
+- If the conversation contains multiple languages, the narrative may also contain multiple languages.
+- Do NOT translate between languages. Maintain information fidelity.
+
+Output only the narrative content."""
+
     NARRATIVE_PROMPT = """You are a conversation background narrative assistant. Generate a coherent background narrative based on the following information.
 
 {summary_section}
@@ -53,10 +78,10 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
     def create_chat_model(llm_config: LLMConfig) -> ChatOpenAI:
         """
         Create a ChatOpenAI instance from LLM configuration.
-        
+
         Args:
             llm_config: LLM configuration containing model ID, API key, and base URL
-            
+
         Returns:
             Configured ChatOpenAI instance with moderate temperature for creative output
         """
@@ -64,8 +89,48 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
             model=llm_config.model_id,
             openai_api_base=llm_config.base_url,
             openai_api_key=llm_config.api_key,
-            temperature=0.3  # Higher temperature for more creative narrative
+            temperature=0.3
         )
+
+    @staticmethod
+    async def generate_narrative_from_summary(
+        llm_config: LLMConfig,
+        summary_content: str
+    ) -> Optional[str]:
+        """
+        Generate a background narrative from summary content only.
+
+        This is the cached narrative generation method, called in background
+        immediately after summary generation. The narrative is stored alongside
+        the summary and retrieved at chat time without LLM call.
+
+        Args:
+            llm_config: LLM configuration for narrative generation
+            summary_content: The summary text to transform into narrative
+
+        Returns:
+            Generated narrative text, or None if generation failed
+        """
+        if not summary_content:
+            return None
+
+        prompt = NarrativeService.CACHED_NARRATIVE_PROMPT.format(
+            summary_content=summary_content
+        )
+
+        try:
+            chat_model = NarrativeService.create_chat_model(llm_config)
+            messages = [HumanMessage(content=prompt)]
+
+            response = await chat_model.ainvoke(messages)
+            narrative = response.content.strip()
+
+            logger.info(f"Generated cached narrative from summary, length: {len(narrative)}")
+            return narrative
+
+        except Exception as e:
+            logger.error(f"Failed to generate cached narrative: {str(e)}", exc_info=True)
+            return None
 
     @staticmethod
     async def generate_background_story(
@@ -75,29 +140,26 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
     ) -> Optional[str]:
         """
         Generate a background story from summary and RAG segments.
-        
-        This method combines the summary and relevant segments into a prompt
-        and uses LLM to generate a coherent narrative from the agent's perspective
-        (internal focalization).
-        
+
+        Legacy real-time generation method. Segments are naturally integrated
+        into the narrative for maximum coherence, but this requires an LLM
+        call during chat processing (40-66s bottleneck).
+
         Args:
             llm_config: LLM configuration for narrative generation
             summary: Summary dictionary with 'version' and 'content' keys
             relevant_segments: List of RAG segment dictionaries with 'content' key
-            
+
         Returns:
             Generated background story text, or None if no input provided
         """
-        # Return early if no context available
         if not summary and not relevant_segments:
             return None
 
-        # Build summary section
         summary_section = ""
         if summary:
             summary_section = f"[Conversation Summary]\n{summary['content']}"
 
-        # Build segments section
         segments_section = ""
         if relevant_segments:
             segments_text = "\n".join([
@@ -106,7 +168,6 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
             ])
             segments_section = f"[Relevant Historical Segments]\n{segments_text}"
 
-        # Format prompt
         prompt = NarrativeService.NARRATIVE_PROMPT.format(
             summary_section=summary_section,
             segments_section=segments_section
@@ -114,9 +175,7 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 
         try:
             chat_model = NarrativeService.create_chat_model(llm_config)
-            messages = [
-                HumanMessage(content=prompt)
-            ]
+            messages = [HumanMessage(content=prompt)]
 
             response = await chat_model.ainvoke(messages)
             background_story = response.content.strip()

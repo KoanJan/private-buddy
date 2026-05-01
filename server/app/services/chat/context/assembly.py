@@ -8,7 +8,8 @@ a single prompt.
 
 The assembly process includes:
 - Character settings (personality, style, identity) integration
-- Background story formatting with metadata
+- Background story (cached narrative) formatting with metadata
+- Relevant segments as independent section with narrative transition
 - Recent message formatting with sequence numbers
 - User state injection as natural language in instruction area
 - Agent delivery integration for world-interaction results
@@ -16,9 +17,15 @@ The assembly process includes:
 Template Design:
 - Uses narrative-style section headers instead of bracketed labels
 - "Background context from earlier" and "Recent conversation" create temporal flow
+- Segments section uses narrative transition to reduce abruptness
 - Metadata (message numbers) preserved for debugging and context clarity
 - User state placed in instruction area (after narrative, before response directive)
   to preserve narrative flow while guiding response strategy
+
+Performance Optimization (0.0.7):
+- Background story is now a cached narrative (generated in background with summary)
+- Segments are no longer fused into narrative; they appear as an independent section
+- This eliminates the 40-66s real-time narrative generation bottleneck
 """
 
 from typing import List, Dict, Any, Optional
@@ -33,20 +40,19 @@ class ContextAssemblyService:
     
     This service implements the context assembly strategy where:
     - Character settings define the agent's personality and style
-    - Summary and recent messages are decoupled (may overlap)
-    - Metadata labels help LLM understand the scope of each component
-    - Background story provides compressed historical context
+    - Cached narrative provides background context (generated with summary)
+    - Segments provide RAG-retrieved historical details as independent section
     - Recent messages provide precise details for current context
     - User state guides response strategy via natural language instruction
     - Agent delivery provides world-interaction results when applicable
     """
     
-    # Template for full context with background story and character settings
+    # Template for full context with background story, segments, and character settings
     ONE_BIG_MESSAGE_TEMPLATE = """{character_section}Background context from earlier in the conversation (messages 1-{summary_version}):
 
 {background_story}
 
----
+{segments_section}---
 
 Recent conversation (messages {recent_start}-{recent_end}):
 
@@ -79,6 +85,30 @@ Recent conversation (messages {recent_start}-{recent_end}):
         if not character_settings:
             return ""
         return f"[Your Character]\n{character_settings}\n\n---\n\n"
+
+    @staticmethod
+    def _format_segments_section(relevant_segments: List[Dict[str, Any]]) -> str:
+        """
+        Format relevant segments as an independent section with narrative transition.
+        
+        Segments are RAG-retrieved historical fragments that could not be fused
+        into the cached narrative (which is generated from summary only). A
+        narrative-style transition sentence is used to reduce abruptness.
+        
+        Args:
+            relevant_segments: List of segment dictionaries with 'content' key
+            
+        Returns:
+            Formatted segments section string, or empty string if no segments
+        """
+        if not relevant_segments:
+            return ""
+
+        segments_text = "\n".join([
+            f"- {seg['content']}"
+            for seg in relevant_segments
+        ])
+        return f"Some additional details from earlier conversations that may be relevant:\n\n{segments_text}\n\n"
 
     @staticmethod
     def _format_user_state_instruction(user_state_description: Optional[str]) -> str:
@@ -123,7 +153,6 @@ Recent conversation (messages {recent_start}-{recent_end}):
         if task_result.status == "success":
             return f"[Task Execution Result]\nThe following task was completed successfully:\n\n{task_result.result or 'Task completed.'}\n\n---\n\n"
         else:
-            # Failure case: include notes for context
             notes_section = ""
             if task_result.notes:
                 notes_section = f"\n\nProgress notes:\n{task_result.notes}"
@@ -135,6 +164,7 @@ Recent conversation (messages {recent_start}-{recent_end}):
         character_settings: Optional[str],
         background_story: Optional[str],
         recent_messages: List[Dict[str, Any]],
+        relevant_segments: Optional[List[Dict[str, Any]]] = None,
         summary_version: Optional[int] = None,
         recent_start: int = 1,
         recent_end: int = 1,
@@ -144,14 +174,19 @@ Recent conversation (messages {recent_start}-{recent_end}):
         """
         Assemble context into one big message for LLM processing.
         
-        This method combines character settings, background story, and recent messages
-        into a unified message format. The background story and recent messages
-        are decoupled - they may overlap in coverage.
+        This method combines character settings, background story (cached narrative),
+        relevant segments, and recent messages into a unified message format.
+        
+        The background story is a cached narrative generated in background alongside
+        the summary. Segments are RAG-retrieved fragments placed as an independent
+        section with narrative transition, since they could not be fused into the
+        pre-generated narrative.
         
         Args:
             character_settings: Agent's personality, style, and identity settings
-            background_story: Background narrative from summary + RAG segments
+            background_story: Cached narrative from summary record
             recent_messages: Recent completed messages (including trigger_message as the latest)
+            relevant_segments: RAG-retrieved historical segments (independent section)
             summary_version: Version number of the summary (covers messages 1 to summary_version)
             recent_start: Starting message sequence number for recent messages
             recent_end: Ending message sequence number for recent messages
@@ -165,27 +200,24 @@ Recent conversation (messages {recent_start}-{recent_end}):
         """
         messages = []
 
-        # Format character settings section
         character_section = ContextAssemblyService._format_character_section(character_settings)
 
-        # Format user state instruction
         user_state_instruction = ContextAssemblyService._format_user_state_instruction(user_state_description)
 
-        # Format agent delivery section
         task_result_section = ContextAssemblyService._format_task_result_section(task_result)
 
-        # Format recent messages into dialog section
         dialog_lines = []
         for msg in recent_messages:
             role = "User" if msg["role"] == "user" else "You"
             dialog_lines.append(f"{role}: {msg['content']}")
         dialog_section = "\n".join(dialog_lines)
 
-        # Choose template based on whether background story exists
         if background_story and summary_version:
+            segments_section = ContextAssemblyService._format_segments_section(relevant_segments or [])
             one_big_message = ContextAssemblyService.ONE_BIG_MESSAGE_TEMPLATE.format(
                 character_section=character_section,
                 background_story=background_story,
+                segments_section=segments_section,
                 dialog_section=dialog_section,
                 summary_version=summary_version,
                 recent_start=recent_start,
@@ -203,8 +235,7 @@ Recent conversation (messages {recent_start}-{recent_end}):
                 task_result_section=task_result_section,
             )
 
-        # Add the one big message as a HumanMessage
         messages.append(HumanMessage(content=one_big_message))
 
-        logger.info(f"Assembled context with {len(messages)} messages, user_state: {user_state_description is not None}, task_result: {task_result is not None}")
+        logger.info(f"Assembled context with {len(messages)} messages, user_state: {user_state_description is not None}, task_result: {task_result is not None}, segments: {len(relevant_segments) if relevant_segments else 0}")
         return messages

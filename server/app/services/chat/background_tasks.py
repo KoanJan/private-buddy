@@ -31,7 +31,7 @@ from app.models.message import Message, MESSAGE_STATUS_COMPLETED, HAS_INTERACTIO
 from app.services.llm import LLMService
 from app.services.data_service import DataService
 from app.services.chat.connection_manager import manager
-from app.services.chat.context import SummaryService, RetrievalService, ContextAssemblyService, QueryPreprocessingService, NarrativeService
+from app.services.chat.context import SummaryService, RetrievalService, ContextAssemblyService, QueryPreprocessingService
 from app.services.chat.context.user_state import UserStateService
 from app.services.dto.task_result import TaskResult
 from app.services.task.task_executor import TaskExecutor
@@ -135,11 +135,34 @@ async def process_chat_task(
         settings = get_settings()
         window_size = settings.summary_window_size
         
-        # --- User state inference (always, to determine needs_world_interaction) ---
+        # --- Parallel: User State + Query Preprocessing (when V >= N) ---
+        # These two LLM calls have no data dependency and can run concurrently.
+        # When V < N, preprocessing is not needed, so only user state is invoked.
         recent_messages_for_state = RetrievalService.get_recent_messages(
             db, session_id, limit=min(message_count, window_size), status=MESSAGE_STATUS_COMPLETED
         )
-        user_state_result = await UserStateService.infer_user_state(llm_config, recent_messages_for_state)
+        
+        if message_count >= window_size:
+            # Speculative parallel execution: both calls start simultaneously
+            preprocessing_history = DataService.get_message_history(
+                db, session_id, ai_message_id, limit=window_size
+            )
+            
+            user_state_coro = UserStateService.infer_user_state(llm_config, recent_messages_for_state)
+            preprocessing_coro = QueryPreprocessingService.preprocess_query(
+                llm_config, trigger_msg.content, preprocessing_history,
+                agent.character_settings if agent.character_settings else None,
+                max_messages=window_size
+            )
+            
+            user_state_result, preprocessing_result = await asyncio.gather(
+                user_state_coro, preprocessing_coro
+            )
+            logger.info(f"Parallel execution completed: user_state and preprocessing for session {session_id}")
+        else:
+            # V < N: only user state is needed
+            user_state_result = await UserStateService.infer_user_state(llm_config, recent_messages_for_state)
+            preprocessing_result = None
         
         needs_world_interaction = user_state_result.needs_world_interaction if user_state_result else False
         logger.info(
@@ -150,6 +173,7 @@ async def process_chat_task(
         # --- Agent execution (if needed) ---
         task_result: Optional[TaskResult] = None
         if needs_world_interaction:
+            # Preprocessing result is discarded when agent path is taken
             ai_msg.has_interactions = HAS_INTERACTIONS_EXISTS
             db.commit()
             task_result = await _execute_agent(
@@ -198,18 +222,7 @@ async def process_chat_task(
             
         # Branch 2: V >= N - Apply full context engineering pipeline
         else:
-            # Step 1: Query preprocessing
-            preprocessing_history = DataService.get_message_history(
-                db, session_id, ai_message_id, limit=window_size
-            )
-            
-            preprocessing_result = await QueryPreprocessingService.preprocess_query(
-                llm_config, trigger_msg.content, preprocessing_history,
-                agent.character_settings if agent.character_settings else None,
-                max_messages=window_size
-            )
-            
-            # Handle clarification needed case
+            # Handle clarification needed case (from parallel preprocessing)
             if preprocessing_result["needs_clarification"]:
                 ai_msg.status = MESSAGE_STATUS_COMPLETED
                 ai_msg.content = preprocessing_result["clarification"]
@@ -223,7 +236,7 @@ async def process_chat_task(
             processed_query = preprocessing_result["processed_query"]
             logger.info(f"Query type: {preprocessing_result['query_type']}, processed: '{processed_query[:50]}...'")
             
-            # Step 2: Context retrieval (with or without RAG)
+            # Context retrieval (with or without RAG)
             if preprocessing_result.get("skip_retrieval"):
                 context = RetrievalService.get_context_without_rag(
                     db, session_id, recent_count=window_size
@@ -249,33 +262,29 @@ async def process_chat_task(
                 db.commit()
                 return
             
-            # Step 3: Generate background narrative
-            if context['summary'] or context.get('relevant_segments'):
-                background_story = await NarrativeService.generate_background_story(
-                    llm_config, context['summary'], context.get('relevant_segments', [])
-                )
-            else:
-                background_story = None
+            # Use cached narrative (generated in background with summary)
+            background_story = context.get('narrative')
             
             # Convert user state to natural language description for prompt injection
             user_state_description = user_state_result.to_natural_language() if user_state_result else None
             
-            # Step 4: Calculate message sequence numbers for metadata
+            # Calculate message sequence numbers for metadata
             summary_version = context['summary']['version'] if context['summary'] else None
             recent_start = message_count - len(context['recent_messages']) + 1
             
-            # Step 5: Assemble context with metadata and user state
+            # Assemble context with metadata, user state, and segments
             langchain_messages = ContextAssemblyService.assemble_context(
                 character_settings=agent.character_settings if agent.character_settings else None,
                 background_story=background_story,
                 recent_messages=context['recent_messages'],
+                relevant_segments=context.get('relevant_segments', []),
                 summary_version=summary_version,
                 recent_start=recent_start,
                 recent_end=message_count,
                 user_state_description=user_state_description,
                 task_result=task_result,
             )
-            logger.info(f"Using context assembly with background_story: {background_story is not None}, user_state: {user_state_description is not None}, task_result: {task_result is not None}")
+            logger.info(f"Using context assembly with cached_narrative: {background_story is not None}, segments: {len(context.get('relevant_segments', []))}, user_state: {user_state_description is not None}, task_result: {task_result is not None}")
         
         logger.debug(f"Message list for LLM: {[{'type': type(m).__name__, 'content': m.content} for m in langchain_messages]}")
         

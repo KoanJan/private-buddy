@@ -10,4 +10,5 @@ class HistoricalSummary(Base):
     session_id = Column(Integer, nullable=False, index=True)
     version = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
+    narrative = Column(Text, nullable=False, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

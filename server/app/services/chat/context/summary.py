@@ -9,10 +9,17 @@ Summary Generation Rules:
 - N <= V < 2N: Full summary using all messages (1 to V) with empty baseline
 - V >= 2N: Incremental summary using baseline (V-N) + recent messages (V-N+1 to V)
 
+After summary content is generated, a narrative is immediately generated from
+the summary content. Both are written to the database in a single atomic
+operation, ensuring no intermediate state exists where summary exists but
+narrative is empty. This eliminates the real-time narrative generation
+bottleneck during chat processing while maintaining data consistency.
+
 The summary system supports:
 - Recursive baseline generation when baseline is missing
 - Asynchronous generation that doesn't block chat responses
 - Version tracking for context assembly
+- Atomic write of summary + narrative
 """
 
 from sqlalchemy.orm import Session
@@ -21,6 +28,7 @@ from app.models.historical_summary import HistoricalSummary
 from app.models.message import Message
 from app.models.llm_config import LLMConfig
 from app.services.llm import LLMService
+from app.services.chat.context.narrative import NarrativeService
 from app.logger import logger
 from langchain_core.messages import HumanMessage
 
@@ -34,6 +42,7 @@ class SummaryService:
     - Summary generation with LLM
     - Recursive baseline generation
     - Message formatting for summary prompts
+    - Atomic write of summary + cached narrative
     """
     
     SUMMARY_PROMPT = """You are a conversation summary assistant. Generate a new summary based on the conversation history and baseline summary.
@@ -77,6 +86,7 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
         
         Used during context assembly to get the most recent summary
         available, even if it's older than the current message count.
+        The narrative field is included in the returned record.
         
         Args:
             db: Database session
@@ -120,16 +130,22 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
         db: Session,
         session_id: int,
         version: int,
-        content: str
+        content: str,
+        narrative: str = ""
     ) -> HistoricalSummary:
         """
-        Create and persist a new summary.
+        Create and persist a new summary with narrative.
+        
+        Both summary content and narrative are written atomically in a single
+        database operation. This ensures no intermediate state exists where
+        summary is available but narrative is empty.
         
         Args:
             db: Database session
             session_id: Session ID
             version: Version number (equals message count at generation time)
             content: Summary content text
+            narrative: Cached narrative text
             
         Returns:
             Created HistoricalSummary instance
@@ -137,7 +153,8 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
         summary = HistoricalSummary(
             session_id=session_id,
             version=version,
-            content=content
+            content=content,
+            narrative=narrative
         )
         db.add(summary)
         db.commit()
@@ -183,7 +200,14 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
            - V >= 2N: Incremental with baseline + recent messages
         4. Recursively generate missing baseline if needed
         5. Call LLM to generate summary content
-        6. Persist the summary
+        6. Generate cached narrative from summary content
+        7. Atomically persist summary + narrative in a single write
+        
+        Atomic write design: summary and narrative are both generated before
+        writing to the database. This eliminates the intermediate state where
+        summary exists but narrative is empty, avoiding race conditions during
+        concurrent reads. If narrative generation fails, the entire operation
+        is aborted and no record is written — the next trigger will retry.
         
         Args:
             db: Database session
@@ -248,7 +272,7 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
                 recent_messages=messages_text
             )
 
-        # Generate summary using LLM
+        # Generate summary content using LLM
         try:
             chat_model = LLMService.create_chat_model(llm_config)
             langchain_messages = [
@@ -258,12 +282,23 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
             response = await chat_model.ainvoke(langchain_messages)
             summary_content = response.content
 
-            # Persist the summary
+            logger.info(f"Generated summary content for session {session_id}, version {version}")
+
+            # Generate cached narrative from summary content (before DB write)
+            narrative_result = await NarrativeService.generate_narrative_from_summary(
+                llm_config, summary_content
+            )
+            if not narrative_result:
+                logger.error(f"Narrative generation failed for session {session_id}, version {version}, aborting atomic write")
+                return None
+
+            # Atomically persist summary + narrative in a single write
             summary = SummaryService.create_summary(
-                db, session_id, version, summary_content
+                db, session_id, version, summary_content, narrative_result
             )
 
-            logger.info(f"Created summary for session {session_id}, version {version}")
+            logger.info(f"Atomically created summary+record for session {session_id}, version {version}")
+
             return summary
 
         except Exception as e:
