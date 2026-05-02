@@ -1,8 +1,9 @@
 import axios from 'axios';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, Interaction, SearchConfig } from '../types';
+import type { Session, Message, LLMConfig, Agent, AgentWithSessions, Interaction, SearchConfig } from '../types';
 
-export const API_BASE_URL = 'http://localhost:8000/api';
-export const SERVER_BASE_URL = 'http://localhost:8000';
+// Use relative path in production (nginx proxy), absolute path in development
+export const API_BASE_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8000/api';
+const SERVER_BASE_URL = import.meta.env.PROD ? '' : 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -33,14 +34,6 @@ export const llmConfigApi = {
   create: (data: Partial<LLMConfig>) => api.post<LLMConfig>('/llm-configs', data),
   update: (id: number, data: Partial<LLMConfig>) => api.put<LLMConfig>(`/llm-configs/${id}`, data),
   delete: (id: number) => api.delete(`/llm-configs/${id}`),
-};
-
-export const embeddingConfigApi = {
-  list: () => api.get<EmbeddingConfig[]>('/embedding-configs'),
-  get: (id: number) => api.get<EmbeddingConfig>(`/embedding-configs/${id}`),
-  create: (data: Partial<EmbeddingConfig>) => api.post<EmbeddingConfig>('/embedding-configs', data),
-  update: (id: number, data: Partial<EmbeddingConfig>) => api.put<EmbeddingConfig>(`/embedding-configs/${id}`, data),
-  delete: (id: number) => api.delete(`/embedding-configs/${id}`),
 };
 
 export const agentApi = {

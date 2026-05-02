@@ -14,7 +14,6 @@ class AgentBase(BaseModel):
     name: str
     character_settings: str  # Agent's personality, style, identity
     llm_config_id: int
-    embedding_config_id: int = 0
     description: str = ""
     avatar: str = ""
 
@@ -29,7 +28,6 @@ class AgentUpdate(BaseModel):
     name: Optional[str] = None
     character_settings: Optional[str] = None
     llm_config_id: Optional[int] = None
-    embedding_config_id: Optional[int] = None
     description: Optional[str] = None
     avatar: Optional[str] = None
 

@@ -11,7 +11,10 @@ class Agent(Base):
     
     An agent defines the behavior and capabilities of an AI assistant,
     including its character settings (personality, style, identity)
-    and the LLM/embedding configurations to use.
+    and the LLM configuration to use.
+    
+    Note: Embedding is now built-in using BGE-base-zh model (768 dimensions).
+    No user configuration is required or supported.
     """
     __tablename__ = "agents"
 
@@ -19,7 +22,6 @@ class Agent(Base):
     name = Column(String(255), nullable=False)
     character_settings = Column(Text, nullable=False, default='')  # Agent's personality, style, identity
     llm_config_id = Column(Integer, nullable=False, index=True)
-    embedding_config_id = Column(Integer, nullable=False, default=0, index=True)
     description = Column(Text, nullable=False, default='')
     avatar = Column(String(500), nullable=False, default='')  # Relative path under PrivateBuddyData/avatars/
     created_at = Column(DateTime(timezone=True), default=datetime.now, server_default=LOCALTIME, nullable=False)

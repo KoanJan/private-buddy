@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 
 
-DATA_ROOT = Path.home() / "PrivateBuddyData"
+DATA_ROOT = Path.home() / "PBD_trial_docker_and_embedding"
 
 
 class Settings(BaseSettings):

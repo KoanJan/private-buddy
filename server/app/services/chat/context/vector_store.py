@@ -1,40 +1,48 @@
 from typing import List, Optional, Dict, Any
 from langchain_community.vectorstores import Chroma
 from langchain_core.embeddings import Embeddings
-from app.models.embedding_config import EmbeddingConfig
-from app.services.llm.embedding import EmbeddingService
 from app.config import get_settings
 from app.logger import logger
 import os
+from chromadb.utils import embedding_functions
 
 
-class CustomEmbeddings(Embeddings):
-    def __init__(self, embedding_config: EmbeddingConfig):
-        self.embedding_config = embedding_config
-
+class BgeEmbeddings(Embeddings):
+    """
+    Embedding function using BGE-base-zh model (768 dimensions).
+    
+    This is a built-in embedding solution that uses ChromaDB's
+    SentenceTransformerEmbeddingFunction with the BAAI/bge-base-zh model.
+    No user configuration is required or supported.
+    """
+    
+    def __init__(self):
+        self._embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="BAAI/bge-base-zh"
+        )
+    
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return EmbeddingService.embed_texts_sync(self.embedding_config, texts)
-
+        return self._embedding_func(texts)
+    
     def embed_query(self, text: str) -> List[float]:
-        return EmbeddingService.embed_query_sync(self.embedding_config, text)
+        return self._embedding_func([text])[0]
 
 
 class VectorStoreService:
     _instances: Dict[int, "VectorStoreService"] = {}
 
-    def __init__(self, session_id: int, embedding_config: EmbeddingConfig):
+    def __init__(self, session_id: int):
         self.session_id = session_id
-        self.embedding_config = embedding_config
-        self.embedding_func = CustomEmbeddings(embedding_config)
+        self.embedding_func = BgeEmbeddings()
         settings = get_settings()
         self.persist_dir = os.path.join(settings.chroma_persist_dir, f"session_{session_id}")
         self.collection_name = f"session_{session_id}"
         self._vectorstore: Optional[Chroma] = None
 
     @classmethod
-    def get_instance(cls, session_id: int, embedding_config: EmbeddingConfig) -> "VectorStoreService":
+    def get_instance(cls, session_id: int) -> "VectorStoreService":
         if session_id not in cls._instances:
-            cls._instances[session_id] = cls(session_id, embedding_config)
+            cls._instances[session_id] = cls(session_id)
         return cls._instances[session_id]
 
     @property

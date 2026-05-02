@@ -1,0 +1,37 @@
+services:
+  server:
+    build: ./server
+    container_name: private-buddy-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - buddy-data:/root/PBD_trial_docker_and_embedding
+    environment:
+      - DATA_ROOT=/root/PBD_trial_docker_and_embedding
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SUMMARY_WINDOW_SIZE=${SUMMARY_WINDOW_SIZE:-5}
+      - TASK_MAX_ITERATIONS=${TASK_MAX_ITERATIONS:-50}
+      - CONTEXT_WINDOW_ITERATIONS=${CONTEXT_WINDOW_ITERATIONS:-10}
+      - NOTES_MAX_CHARS=${NOTES_MAX_CHARS:-5000}
+      # Proxy settings (optional)
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
+    # DNS settings (optional)
+    # dns:
+    #   - ${DNS_SERVER:-8.8.8.8}
+    # Network mode (use host network for better compatibility)
+    # network_mode: host
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    container_name: private-buddy-web
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  buddy-data:

@@ -1,19 +1,8 @@
--- Private Buddy 0.0.8 Full Schema
+-- Private Buddy 0.0.9 Full Schema
 -- SQLite version, optimized for performance, foreign keys removed per project coding rules
 -- This file represents the complete current schema and is used for fresh database initialization
 
 CREATE TABLE IF NOT EXISTS llm_configs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
-    model_id VARCHAR(100) NOT NULL,
-    base_url VARCHAR(255) NOT NULL,
-    api_key VARCHAR(255) NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS embedding_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name VARCHAR(100) NOT NULL,
     model_id VARCHAR(100) NOT NULL,
@@ -119,4 +108,4 @@ CREATE TABLE IF NOT EXISTS db_versions (
 );
 
 INSERT INTO db_versions (version, description)
-VALUES ('0.0.8', 'Initial SQLite schema after MySQL migration');
+VALUES ('0.0.9', 'Removed embedding configuration, using built-in BGE-base-zh model');

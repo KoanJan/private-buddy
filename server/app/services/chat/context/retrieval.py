@@ -8,7 +8,7 @@ LLM processing:
 - Latest summary from the summary system
 - Cached narrative from the summary record
 
-The retrieval process supports both RAG-enabled and RAG-disabled modes.
+The retrieval process uses built-in BGE-base-zh embedding model (768 dimensions).
 Narrative is retrieved from the summary record's narrative field (cached,
 generated in background alongside summary), eliminating the need for
 real-time narrative generation during chat processing.
@@ -17,7 +17,6 @@ real-time narrative generation during chat processing.
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
 from app.models.message import Message
-from app.models.embedding_config import EmbeddingConfig
 from app.services.chat.context.summary import SummaryService
 from app.services.chat.context.vector_store import VectorStoreService
 from app.services.data_service import DataService
@@ -30,37 +29,10 @@ class RetrievalService:
     
     This service coordinates the retrieval of:
     - Recent messages (with optional status filter)
-    - RAG segments (if embedding is configured)
+    - RAG segments (using built-in BGE-base-zh embedding)
     - Latest summary (if available)
     - Cached narrative (from summary record, if available)
     """
-    
-    @staticmethod
-    def get_embedding_config_for_session(db: Session, session_id: int) -> Optional[EmbeddingConfig]:
-        """
-        Get the embedding configuration for a session's agent.
-        
-        Args:
-            db: Database session
-            session_id: Session ID
-            
-        Returns:
-            EmbeddingConfig if configured, None otherwise
-        """
-        session = DataService.get_session(db, session_id)
-        if not session:
-            return None
-
-        agent = DataService.get_agent(db, session.agent_id)
-        if not agent:
-            return None
-
-        if agent.embedding_config_id and agent.embedding_config_id > 0:
-            return db.query(EmbeddingConfig).filter(
-                EmbeddingConfig.id == agent.embedding_config_id
-            ).first()
-
-        return None
 
     @staticmethod
     def get_recent_messages(
@@ -201,8 +173,7 @@ class RetrievalService:
             "recent_messages": [],
             "relevant_segments": [],
             "summary": None,
-            "narrative": None,
-            "has_embedding": False
+            "narrative": None
         }
 
         from app.models.message import MESSAGE_STATUS_COMPLETED
@@ -211,16 +182,13 @@ class RetrievalService:
             db, session_id, recent_count, status=MESSAGE_STATUS_COMPLETED
         )
 
-        embedding_config = RetrievalService.get_embedding_config_for_session(db, session_id)
-        if embedding_config:
-            result["has_embedding"] = True
-            try:
-                vector_store = VectorStoreService.get_instance(session_id, embedding_config)
-                search_results = vector_store.search(query, k=rag_count)
-                result["relevant_segments"] = search_results
-                logger.info(f"RAG retrieved {len(search_results)} segments for session {session_id}")
-            except Exception as e:
-                logger.error(f"RAG retrieval failed: {str(e)}", exc_info=True)
+        try:
+            vector_store = VectorStoreService.get_instance(session_id)
+            search_results = vector_store.search(query, k=rag_count)
+            result["relevant_segments"] = search_results
+            logger.info(f"RAG retrieved {len(search_results)} segments for session {session_id}")
+        except Exception as e:
+            logger.error(f"RAG retrieval failed: {str(e)}", exc_info=True)
 
         latest_summary = SummaryService.get_latest_summary(db, session_id)
         result["summary"], result["narrative"] = RetrievalService._build_summary_and_narrative(latest_summary)
@@ -247,11 +215,6 @@ class RetrievalService:
         Returns:
             True if indexing succeeded, False otherwise
         """
-        embedding_config = RetrievalService.get_embedding_config_for_session(db, session_id)
-        if not embedding_config:
-            logger.info(f"No embedding config for session {session_id}, skipping indexing")
-            return False
-
         messages = db.query(Message).filter(
             Message.id.in_(message_ids),
             Message.session_id == session_id
@@ -262,7 +225,7 @@ class RetrievalService:
             return False
 
         try:
-            vector_store = VectorStoreService.get_instance(session_id, embedding_config)
+            vector_store = VectorStoreService.get_instance(session_id)
 
             contents = [msg.content for msg in messages]
             metadatas = [

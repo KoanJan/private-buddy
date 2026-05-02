@@ -1,71 +1,39 @@
-# Database Scripts Directory
+# Private Buddy Database
 
-This directory contains database initialization scripts and SQL files for the Private Buddy project.
+Private Buddy uses SQLite for data storage with SQLAlchemy ORM.
 
-## Directory Structure
+## Database Schema
 
-```
-database/
-├── init_db.sh         # Database initialization/upgrade script
-├── sql/
-│   ├── full_init.sql  # Full schema for fresh database initialization
-│   └── upgrade/       # Incremental upgrade SQL files
-│                       # (empty for 0.0.8 — breaking change, no upgrade path)
-└── README.md
-```
+### Tables
 
-## Usage
+- **llm_configs**: LLM provider configurations
+- **agents**: AI assistant configurations
+- **sessions**: Chat sessions
+- **messages**: Chat messages
+- **interactions**: Agent interaction records
+- **historical_summaries**: Conversation summaries
+- **search_config**: Search engine configuration
+- **db_versions**: Schema version tracking
 
-### Fresh Database Initialization
+### Key Features
 
-```bash
-cd server/database
-./init_db.sh          # or ./init_db.sh init
-```
+- **No Foreign Keys**: Following project coding rules, all data constraints are handled at the application layer
+- **No Nullable Fields**: All database fields are non-nullable
+- **Automatic Schema Creation**: Tables are created automatically on application startup
 
-This script will:
-1. Create `$HOME/PrivateBuddyData/db/` directory if it doesn't exist
-2. Execute SQL files in `sql/init/` directory
-3. Create SQLite database file at `$HOME/PrivateBuddyData/db/private_buddy.db`
-4. Display execution progress and results
+## Data Directory
 
-If the database file already exists, the script will ask for confirmation before overwriting.
-
-### Database Upgrade
-
-```bash
-cd server/database
-./init_db.sh upgrade
-```
-
-This script will:
-1. Check that the database file exists
-2. Execute SQL files in `sql/upgrade/` directory in version order
-3. Apply incremental schema changes to the existing database
-
-If no upgrade SQL files are found, it reports that the database is already up to date.
-
-### Prerequisites
-
-1. `sqlite3` command available in terminal
-
-### Database Location
-
-The SQLite database file is stored at `~/PrivateBuddyData/db/private_buddy.db`. The application also uses `Base.metadata.create_all()` to ensure all tables exist on startup, so manual initialization is optional.
-
-### Data Directory
-
-All application data is unified under `~/PrivateBuddyData/`:
+All application data is unified under `~/PBD_trial_docker_and_embedding/`:
 
 ```
-~/PrivateBuddyData/
+~/PBD_trial_docker_and_embedding/
     db/                 -- SQLite database (private_buddy.db)
-    chroma/             -- ChromaDB vector store
+    chroma/             -- ChromaDB vector store (using built-in BGE-base-zh embedding)
     workspace/          -- Agent task workspace
     avatars/            -- Agent avatar images
 ```
 
-The `DATA_ROOT` can be configured via `.env` file (defaults to `~/PrivateBuddyData`).
+The `DATA_ROOT` can be configured via `.env` file (defaults to `~/PBD_trial_docker_and_embedding`).
 
 ## SQL File Management
 
@@ -89,111 +57,82 @@ Contains **incremental** schema changes between versions. Each file represents t
 4. Add comments at the beginning of the upgrade file to describe changes
 5. The upgrade SQL should also insert a record into `db_versions`
 
-**Example upgrade file:**
+## Database Initialization
 
-```sql
--- 0.0.9 Schema
--- Changes: Add user preferences table
+### Automatic Initialization
 
-CREATE TABLE IF NOT EXISTS user_preferences (
-    ...
-);
+The application automatically creates all tables on startup using `Base.metadata.create_all()`. Manual initialization is optional.
 
-INSERT INTO db_versions (version, description)
-VALUES ('0.0.9', 'Add user preferences table');
+### Manual Initialization
+
+Run the initialization script:
+
+```bash
+cd database
+./init_db.sh
 ```
 
-## Database Structure
+This creates the SQLite database at `~/PBD_trial_docker_and_embedding/db/private_buddy.db`.
 
-### Table Structure
+### Database Upgrade
 
-**llm_configs** - LLM configuration table
-- Stores LLM configuration information, including model name, API keys, etc.
+To upgrade an existing database:
 
-**embedding_configs** - Embedding configuration table
-- Stores embedding model configuration for RAG retrieval
+```bash
+cd database
+./init_db.sh upgrade
+```
 
-**agents** - Agent configuration table
-- Stores Agent configuration, associated with LLM configuration and character settings
+This applies all pending upgrade SQL files from `sql/upgrade/`.
 
-**sessions** - Session table
-- Stores session information, associated with Agent
+## Version History
 
-**messages** - Message table
-- Stores message records, associated with session
+- **0.0.9**: Removed embedding configuration, using built-in BGE-base-zh model
+- **0.0.8**: Initial SQLite schema after MySQL migration
 
-**interactions** - Interaction table
-- Stores agent-world interaction records (LLM request/response per iteration)
+## Backup and Restore
 
-**historical_summaries** - Historical summary table
-- Stores conversation summaries and cached narratives
+### Backup
 
-**search_config** - Search configuration table
-- Single record (id=1) for search engine configuration
+```bash
+cp ~/PBD_trial_docker_and_embedding/db/private_buddy.db ~/backup/private_buddy_$(date +%Y%m%d).db
+```
 
-**db_versions** - Database version tracking table
-- Records each schema version applied to the database
-- Used for upgrade detection and future automated migration support
+### Restore
 
-### Index Optimization
-
-**agents table:**
-- `idx_agents_llm_config_id` - LLM configuration association query
-- `idx_agents_updated_at` - Sort by update time
-
-**sessions table:**
-- `idx_sessions_created_at` - Sort by creation time
-- `idx_sessions_status` - Filter by status
-- `idx_sessions_agent_id` - Query by Agent ID
-- `idx_sessions_agent_updated` - Composite index, optimize agent session list query
-
-**messages table:**
-- `idx_messages_session_id` - Query by session ID
-- `idx_messages_created_at` - Sort by creation time
-- `idx_messages_status` - Filter by status
-- `idx_messages_session_created` - Composite index, optimize message history query
-- `idx_messages_session_status` - Composite index, optimize streaming message query
-
-**interactions table:**
-- `idx_interactions_session` - Query by session ID
-- `idx_interactions_user_msg` - Query by user message ID
-- `idx_interactions_agent_msg` - Query by agent message ID
-- `idx_interactions_session_iteration` - Composite index, optimize iteration query
-
-## Database Design Principles
-
-This project follows these database design principles:
-
-1. **No foreign key constraints** - Data constraints should be enforced at application layer
-2. **No nullable fields** - All fields should have explicit NOT NULL constraints
-3. **Use indexes for query optimization** - Create indexes for frequently queried fields
-4. **Prefer composite indexes** - Create composite indexes based on query patterns
-5. **Avoid redundant indexes** - Remove duplicate and unnecessary indexes
-
-## Important Notes
-
-1. **Backup data** - Always backup before performing any database operations (copy the .db file)
-2. **Test environment** - Validate database changes in test environment first
-3. **Version control** - Commit new SQL files to version control system
-4. **Idempotency** - SQL files should support repeated execution (use IF NOT EXISTS, etc.)
+```bash
+cp ~/backup/private_buddy_20260101.db ~/PBD_trial_docker_and_embedding/db/private_buddy.db
+```
 
 ## Troubleshooting
 
-### Database File Not Created
+### Database Locked
 
-Check the following:
-1. Is `~/PrivateBuddyData/db/` directory writable
-2. Is `sqlite3` command available
-3. Check application logs for errors
+If you encounter "database is locked" errors:
 
-### SQL Execution Failed
+1. Ensure only one application instance is running
+2. Check for zombie processes: `ps aux | grep uvicorn`
+3. Restart the application
 
-1. Check SQL syntax for SQLite compatibility
-2. Confirm if table or column already exists
-3. Note: SQLite has limited ALTER TABLE support (no DROP COLUMN before 3.35.0)
+### Schema Mismatch
 
-### Connection Issues
+If you encounter schema mismatch errors:
 
-1. Check `DATA_ROOT` in `.env` file
-2. Ensure the database file path is correct
-3. Check file permissions
+1. Check the current version: `sqlite3 ~/PBD_trial_docker_and_embedding/db/private_buddy.db "SELECT * FROM db_versions ORDER BY id DESC LIMIT 1;"`
+2. Run upgrade script: `cd database && ./init_db.sh upgrade`
+3. If upgrade fails, backup and reinitialize: `rm ~/PBD_trial_docker_and_embedding/db/private_buddy.db && cd database && ./init_db.sh`
+
+## Development
+
+### Creating Migrations
+
+When modifying the database schema:
+
+1. Update the SQLAlchemy models in `app/models/`
+2. Create an upgrade SQL file in `database/sql/upgrade/`
+3. Update `database/sql/full_init.sql` with the complete schema
+4. Test the migration on a copy of production data
+
+### Testing
+
+Always test migrations on a copy of production data before applying to production.

@@ -68,17 +68,16 @@ def list_agents_with_sessions(
     result = []
     for agent in agents:
         agent_data = AgentWithSessions(
-            id=agent.id,
-            name=agent.name,
-            character_settings=agent.character_settings,
-            llm_config_id=agent.llm_config_id,
-            embedding_config_id=agent.embedding_config_id,
-            description=agent.description,
-            avatar=agent.avatar,
-            created_at=agent.created_at,
-            updated_at=agent.updated_at,
-            sessions=sessions_by_agent.get(agent.id, [])
-        )
+        id=agent.id,
+        name=agent.name,
+        character_settings=agent.character_settings,
+        llm_config_id=agent.llm_config_id,
+        description=agent.description,
+        avatar=agent.avatar,
+        created_at=agent.created_at,
+        updated_at=agent.updated_at,
+        sessions=sessions_by_agent.get(agent.id, [])
+    )
         result.append(agent_data)
     
     return result

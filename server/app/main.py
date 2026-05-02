@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from app.database import engine, Base, SessionLocal
-from app.api import llm_configs, sessions, messages, chat, agents, embedding_configs, interactions, search_config, uploads
+from app.api import llm_configs, sessions, messages, chat, agents, interactions, search_config, uploads
 from app.services.task.workspace import get_avatars_dir
 from app.config import get_settings
 from app.logger import logger
@@ -50,7 +50,6 @@ app.add_middleware(
 )
 
 app.include_router(llm_configs.router)
-app.include_router(embedding_configs.router)
 app.include_router(sessions.router)
 app.include_router(messages.router)
 app.include_router(chat.router)

@@ -33,23 +33,11 @@ export interface LLMConfig {
   updated_at: string | null;
 }
 
-export interface EmbeddingConfig {
-  id: number;
-  name: string;
-  model_id: string;
-  base_url: string;
-  api_key: string;
-  description: string;
-  created_at: string;
-  updated_at: string | null;
-}
-
 export interface Agent {
   id: number;
   name: string;
   character_settings: string;
   llm_config_id: number;
-  embedding_config_id: number;
   description: string;
   avatar: string;
   created_at: string;
