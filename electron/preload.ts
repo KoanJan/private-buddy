@@ -21,4 +21,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('backend-status', handler);
     return () => ipcRenderer.removeListener('backend-status', handler);
   },
+  onBackendError: (callback: (error: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: string) => callback(error);
+    ipcRenderer.on('backend-error', handler);
+    return () => ipcRenderer.removeListener('backend-error', handler);
+  },
 });

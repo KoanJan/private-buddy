@@ -116,13 +116,18 @@ app.on('ready', async () => {
 
   createSplashWindow();
 
-  try {
-    await startPythonServer();
-  } catch (err) {
-    console.error('Failed to start Python server:', err);
-  }
-
   createMainWindow();
+
+  startPythonServer()
+    .then(() => {
+      console.log('Python server started successfully');
+      mainWindow?.webContents.send('backend-status', 'ready');
+    })
+    .catch((err) => {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('Failed to start Python server:', errMsg);
+      mainWindow?.webContents.send('backend-error', errMsg);
+    });
 
   mainWindow?.webContents.once('did-finish-load', () => {
     mainWindow?.webContents.send('backend-status', 'ready');

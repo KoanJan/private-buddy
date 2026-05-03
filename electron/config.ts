@@ -28,8 +28,21 @@ export async function findFreePort(): Promise<number> {
         reject(new Error('Failed to get address from server'));
       }
     });
-    server.on('error', (err) => {
-      reject(err);
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EACCES' || err.code === 'EADDRNOTAVAIL') {
+        server.listen(0, () => {
+          const addr = server.address();
+          if (addr && typeof addr !== 'string' && addr.port) {
+            const port = addr.port;
+            server.close(() => resolve(port));
+          } else {
+            server.close();
+            reject(new Error('Failed to get address from server'));
+          }
+        });
+      } else {
+        reject(err);
+      }
     });
   });
 }
@@ -55,9 +68,11 @@ export function getProjectRoot(): string {
 
 export function getPythonExecutable(): string {
   if (isDev()) {
-    return path.join(getProjectRoot(), 'server', 'venv', 'bin', 'python');
+    const pythonBin = process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python';
+    return path.join(getProjectRoot(), 'server', 'venv', pythonBin);
   }
-  return path.join(process.resourcesPath, 'python-server', 'private-buddy-server', 'private-buddy-server');
+  const exeName = process.platform === 'win32' ? 'private-buddy-server.exe' : 'private-buddy-server';
+  return path.join(process.resourcesPath, 'python-server', 'private-buddy-server', exeName);
 }
 
 export function getServerCwd(): string {

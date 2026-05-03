@@ -12,10 +12,11 @@ import { ChildProcess, spawn } from 'child_process';
 import { getPythonExecutable, getServerCwd, isDev, SERVER_HOST, getServerPort, setServerPort, findFreePort, getDataRoot } from './config';
 import { app } from 'electron';
 import http from 'http';
+import { existsSync } from 'fs';
 
 let pythonProcess: ChildProcess | null = null;
 
-function healthCheck(host: string, port: number, maxRetries: number = 30, intervalMs: number = 1000): Promise<void> {
+function healthCheck(host: string, port: number, maxRetries: number = 15, intervalMs: number = 1000): Promise<void> {
   return new Promise((resolve, reject) => {
     let attempts = 0;
 
@@ -57,7 +58,7 @@ function healthCheck(host: string, port: number, maxRetries: number = 30, interv
   });
 }
 
-const MAX_PORT_RETRIES = 5;
+const MAX_PORT_RETRIES = 3;
 
 export async function startPythonServer(): Promise<void> {
   for (let attempt = 0; attempt < MAX_PORT_RETRIES; attempt++) {
@@ -67,17 +68,28 @@ export async function startPythonServer(): Promise<void> {
     const exe = getPythonExecutable();
     const cwd = getServerCwd();
 
-    console.log(`[Python] Spawning server (attempt ${attempt + 1}): exe=${exe}, cwd=${cwd}, dev=${isDev()}, port=${port}`);
+    console.log(`[Python] Spawning server (attempt ${attempt + 1}/${MAX_PORT_RETRIES}):`);
+    console.log(`[Python]   exe=${exe}`);
+    console.log(`[Python]   cwd=${cwd}`);
+    console.log(`[Python]   dev=${isDev()}, port=${port}, platform=${process.platform}`);
+
+    if (!existsSync(exe)) {
+      throw new Error(`Python executable not found: ${exe}. Ensure PyInstaller build was run before packaging.`);
+    }
 
     const args = isDev()
       ? ['-m', 'uvicorn', 'app.main:app', '--host', SERVER_HOST, '--port', String(port)]
       : ['--host', SERVER_HOST, '--port', String(port)];
+
+    console.log(`[Python]   args=${args.join(' ')}`);
 
     const env = {
       ...process.env,
       PORT: String(port),
       DATA_ROOT: getDataRoot(),
     };
+
+    let spawnError: Error | null = null;
 
     pythonProcess = spawn(exe, args, {
       cwd,
@@ -86,20 +98,21 @@ export async function startPythonServer(): Promise<void> {
     });
 
     pythonProcess.stdout?.on('data', (data: Buffer) => {
-      console.log(`[Python] ${data.toString().trim()}`);
+      console.log(`[Python] stdout: ${data.toString().trim()}`);
     });
 
     pythonProcess.stderr?.on('data', (data: Buffer) => {
-      console.error(`[Python] ${data.toString().trim()}`);
+      console.error(`[Python] stderr: ${data.toString().trim()}`);
     });
 
     pythonProcess.on('error', (err) => {
-      console.error('Failed to start Python server:', err);
+      spawnError = err;
+      console.error(`[Python] spawn error: ${err.message} (code=${(err as NodeJS.ErrnoException).code})`);
     });
 
     pythonProcess.on('exit', (code, signal) => {
-      if (code !== null && code !== 0 && code !== 1) {
-        console.error(`Python server exited with code ${code}, signal ${signal}`);
+      if (code !== null && code !== 0) {
+        console.error(`[Python] exited with code ${code}, signal ${signal}`);
       }
       pythonProcess = null;
     });
@@ -109,12 +122,13 @@ export async function startPythonServer(): Promise<void> {
       console.log(`Python server is ready on port ${port}`);
       return;
     } catch (err) {
-      console.warn(`[Python] Health check failed on port ${port}:`, err);
+      const cause = spawnError || err;
+      console.warn(`[Python] Health check failed on port ${port}:`, cause);
       stopPythonServer();
       if (attempt < MAX_PORT_RETRIES - 1) {
         console.log(`[Python] Retrying with a new port...`);
       } else {
-        throw new Error(`Failed to start Python server after ${MAX_PORT_RETRIES} attempts`);
+        throw new Error(`Failed to start Python server after ${MAX_PORT_RETRIES} attempts. Last error: ${cause instanceof Error ? cause.message : String(cause)}`);
       }
     }
   }
@@ -127,21 +141,22 @@ export function stopPythonServer(): void {
 
   if (process.platform === 'win32') {
     pythonProcess.kill();
+    pythonProcess = null;
   } else {
     pythonProcess.kill('SIGTERM');
-  }
 
-  const forceKillTimer = setTimeout(() => {
-    if (pythonProcess) {
-      pythonProcess.kill('SIGKILL');
+    const forceKillTimer = setTimeout(() => {
+      if (pythonProcess) {
+        pythonProcess.kill('SIGKILL');
+        pythonProcess = null;
+      }
+    }, 5000);
+
+    pythonProcess.on('exit', () => {
+      clearTimeout(forceKillTimer);
       pythonProcess = null;
-    }
-  }, 5000);
-
-  pythonProcess.on('exit', () => {
-    clearTimeout(forceKillTimer);
-    pythonProcess = null;
-  });
+    });
+  }
 }
 
 export function isServerRunning(): boolean {

@@ -12,6 +12,7 @@ declare global {
       windowMaximize: () => Promise<void>;
       windowClose: () => Promise<void>;
       onBackendStatus: (callback: (status: string) => void) => () => void;
+      onBackendError: (callback: (error: string) => void) => () => void;
     };
   }
 }

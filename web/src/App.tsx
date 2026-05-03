@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Button, Tooltip } from 'antd';
+import { Button, Tooltip, message } from 'antd';
 import { SettingOutlined, PlusOutlined, ArrowLeftOutlined, MinusOutlined, BorderOutlined, CloseOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage, getCurrentLanguage } from './i18n';
@@ -55,6 +55,14 @@ function App() {
           .then(res => setVersion(res.data.version))
           .catch(() => setVersion(''));
       }
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onBackendError) return;
+    const unsubscribe = window.electronAPI.onBackendError((error) => {
+      message.error(`Backend failed to start: ${error}`, 0);
     });
     return unsubscribe;
   }, []);
