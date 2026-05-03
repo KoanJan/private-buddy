@@ -1,0 +1,32 @@
+appId: com.private-buddy.app
+productName: Private Buddy
+directories:
+  output: dist-electron
+files:
+  - electron/dist/**/*
+  - web-dist/**/*
+extraResources:
+  - from: server/dist/private-buddy-server
+    to: python-server/private-buddy-server
+    filter:
+      - "**/*"
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  hardenedRuntime: true
+  extendInfo:
+    NSMicrophoneUsageDescription: "Private Buddy does not use the microphone."
+    NSCameraUsageDescription: "Private Buddy does not use the camera."
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: build/icon-1024.png
+  category: Utility

@@ -1,8 +1,76 @@
 import axios from 'axios';
 import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, Interaction, SearchConfig } from '../types';
 
-export const API_BASE_URL = 'http://localhost:8000/api';
-export const SERVER_BASE_URL = 'http://localhost:8000';
+declare global {
+  interface Window {
+    electronAPI?: {
+      getServerPort: () => Promise<number>;
+      getAppVersion: () => Promise<string>;
+      isPackaged: () => Promise<boolean>;
+      getPlatform: () => Promise<string>;
+      windowMinimize: () => Promise<void>;
+      windowMaximize: () => Promise<void>;
+      windowClose: () => Promise<void>;
+      onBackendStatus: (callback: (status: string) => void) => () => void;
+    };
+  }
+}
+
+const DEFAULT_PORT = 8000;
+const SERVER_HOST = '127.0.0.1';
+
+let resolvedPort: number | null = null;
+let portPromise: Promise<number> | null = null;
+
+function resolvePort(): Promise<number> {
+  if (resolvedPort !== null) return Promise.resolve(resolvedPort);
+  if (portPromise) return portPromise;
+
+  portPromise = (async () => {
+    try {
+      const hasApi = !!window.electronAPI;
+      console.log('[api] electronAPI available:', hasApi);
+      const port = await window.electronAPI?.getServerPort();
+      console.log('[api] got port from IPC:', port);
+      if (port && port > 0) {
+        resolvedPort = port;
+        console.log('[api] resolved dynamic port:', port);
+        return port;
+      }
+      console.warn('[api] IPC returned invalid port, falling back to default');
+    } catch (err) {
+      console.warn('[api] getServerPort failed (non-Electron env?):', err);
+    }
+    resolvedPort = DEFAULT_PORT;
+    console.log('[api] using default port:', DEFAULT_PORT);
+    return DEFAULT_PORT;
+  })();
+
+  return portPromise;
+}
+
+function getApiBaseUrl(): string {
+  const port = resolvedPort ?? DEFAULT_PORT;
+  return `http://${SERVER_HOST}:${port}/api`;
+}
+
+function getServerBaseUrl(): string {
+  const port = resolvedPort ?? DEFAULT_PORT;
+  return `http://${SERVER_HOST}:${port}`;
+}
+
+export const API_BASE_URL = getApiBaseUrl();
+export const SERVER_BASE_URL = getServerBaseUrl();
+
+export function getDynamicApiBaseUrl(): string {
+  const port = resolvedPort ?? DEFAULT_PORT;
+  return `http://${SERVER_HOST}:${port}/api`;
+}
+
+export function getDynamicServerBaseUrl(): string {
+  const port = resolvedPort ?? DEFAULT_PORT;
+  return `http://${SERVER_HOST}:${port}`;
+}
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -10,6 +78,17 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+api.interceptors.request.use(async (config) => {
+  const port = await resolvePort();
+  const url = `http://${SERVER_HOST}:${port}/api`;
+  config.baseURL = url;
+  return config;
+});
+
+export async function initApiClient(): Promise<number> {
+  return resolvePort();
+}
 
 export const sessionApi = {
   list: () => api.get<Session[]>('/sessions'),
@@ -76,7 +155,7 @@ export const uploadApi = {
 
 export const getAvatarUrl = (avatar: string) => {
   if (!avatar) return '';
-  return `${SERVER_BASE_URL}/avatars/${avatar}`;
+  return `${getDynamicServerBaseUrl()}/avatars/${avatar}`;
 };
 
 export const versionApi = {

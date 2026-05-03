@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Tooltip } from 'antd';
-import { SettingOutlined, PlusOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { SettingOutlined, PlusOutlined, ArrowLeftOutlined, MinusOutlined, BorderOutlined, CloseOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage, getCurrentLanguage } from './i18n';
 import AgentList from './components/AgentList';
@@ -10,7 +10,7 @@ import EmbeddingConfigList from './components/EmbeddingConfigList';
 import AgentConfig from './components/AgentConfig';
 import SearchConfigForm from './components/SearchConfigForm';
 import { ConfigIcon } from './components/AgentAvatar';
-import { versionApi } from './services/api';
+import { versionApi, initApiClient } from './services/api';
 import type { IconType } from './components/AgentAvatar';
 import type { Session, LLMConfig, EmbeddingConfig } from './types';
 import './App.css';
@@ -35,6 +35,29 @@ function App() {
   const [showCreateEmbedding, setShowCreateEmbedding] = useState(false);
   const [currentLang, setCurrentLang] = useState(getCurrentLanguage());
   const [version, setVersion] = useState<string>('');
+  const [isNonMacElectron, setIsNonMacElectron] = useState(false);
+
+  useEffect(() => {
+    if (window.electronAPI) {
+      window.electronAPI.getPlatform().then(platform => {
+        setIsNonMacElectron(platform !== 'darwin');
+      });
+      initApiClient();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onBackendStatus) return;
+    const unsubscribe = window.electronAPI.onBackendStatus((status) => {
+      if (status === 'ready') {
+        setRefreshKey(prev => prev + 1);
+        versionApi.get()
+          .then(res => setVersion(res.data.version))
+          .catch(() => setVersion(''));
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     versionApi.get()
@@ -255,10 +278,10 @@ function App() {
 
   return (
     <div className="app-container">
-      <header className="app-header">
+      <header className={`app-header${isNonMacElectron ? '' : ' app-header-mac'}`}>
         <Tooltip title={version ? `v${version}` : ''} placement="right">
           <div className="app-logo">
-            <img src="/favicon.svg" alt="logo" className="app-logo-img" />
+            <img src="./favicon.svg" alt="logo" className="app-logo-img" />
             Private Buddy
           </div>
         </Tooltip>
@@ -272,6 +295,19 @@ function App() {
               fontSize: '18px',
             }}
           />
+          {isNonMacElectron && (
+            <div className="window-controls">
+              <button onClick={() => window.electronAPI?.windowMinimize()} title="Minimize">
+                <MinusOutlined />
+              </button>
+              <button onClick={() => window.electronAPI?.windowMaximize()} title="Maximize">
+                <BorderOutlined />
+              </button>
+              <button className="window-close" onClick={() => window.electronAPI?.windowClose()} title="Close">
+                <CloseOutlined />
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

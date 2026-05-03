@@ -1,0 +1,27 @@
+{
+  "name": "private-buddy",
+  "version": "0.0.8",
+  "description": "Private Buddy - A private AI chat assistant",
+  "main": "electron/dist/main.js",
+  "scripts": {
+    "dev": "tsc -p electron/tsconfig.json && cp electron/splash.html electron/dist/splash.html && electron .",
+    "dev:web": "cd web && npm run dev",
+    "dev:server": "cd server && ./start.sh",
+    "build:web": "cd web && npm run build",
+    "build:electron": "tsc -p electron/tsconfig.json && cp electron/splash.html electron/dist/splash.html",
+    "build": "npm run build:web && npm run build:electron",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "author": "Private Buddy Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.0",
+    "typescript": "~6.0.0"
+  }
+}

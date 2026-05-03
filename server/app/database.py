@@ -2,8 +2,12 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.config import get_settings
+import os
 
 settings = get_settings()
+
+db_dir = os.path.join(settings.data_root, 'db')
+os.makedirs(db_dir, exist_ok=True)
 
 engine = create_engine(
     settings.database_url,

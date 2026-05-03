@@ -30,8 +30,6 @@ class CachedStaticFiles(StaticFiles):
         await super().__call__(scope, receive, send_with_cache)
 
 settings = get_settings()
-db_dir = os.path.join(settings.data_root, 'db')
-os.makedirs(db_dir, exist_ok=True)
 
 Base.metadata.create_all(bind=engine)
 
@@ -97,3 +95,13 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutting down...")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    import uvicorn
+    uvicorn.run(app, host=args.host, port=args.port)

@@ -52,6 +52,9 @@ yarn-error.log*
 
 # Build outputs
 dist/
+dist-electron/
+electron/dist/
+web-dist/
 build/
 *.egg-info/
 
@@ -90,6 +93,7 @@ doc/draft
 doc/experiments
 server/chroma_db/
 server/data/
+server/pyinstaller_cache/
 
 # Temporary files
 *.tmp

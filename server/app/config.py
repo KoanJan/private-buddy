@@ -1,14 +1,12 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 from pathlib import Path
-import os
 
-
-DATA_ROOT = Path.home() / "PrivateBuddyData"
+_DEFAULT_DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 
 class Settings(BaseSettings):
-    data_root: str = str(DATA_ROOT)
+    data_root: str = str(_DEFAULT_DATA_ROOT)
     summary_window_size: int = 5
     log_level: str = "INFO"
     task_max_iterations: int = 50
@@ -28,8 +26,8 @@ class Settings(BaseSettings):
         return f"sqlite:///{self.get_data_root() / 'db' / 'private_buddy.db'}"
 
     @property
-    def chroma_persist_dir(self) -> str:
-        return str(self.get_data_root() / "chroma")
+    def vector_db_file(self) -> str:
+        return str(self.get_data_root() / "db" / "vectors.db")
 
 
 @lru_cache()

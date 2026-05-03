@@ -104,6 +104,8 @@
   justify-content: space-between;
   padding: 0 24px;
   flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
 }
 
 .app-logo {
@@ -126,6 +128,41 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  -webkit-app-region: no-drag;
+  margin-left: 8px;
+}
+
+.window-controls button {
+  width: 46px;
+  height: 56px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--color-text-secondary);
+}
+
+.window-controls button:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+.window-controls .window-close:hover {
+  background-color: #e81123;
+  color: white;
+}
+
+.app-header-mac {
+  padding-left: 78px;
 }
 
 .app-body {

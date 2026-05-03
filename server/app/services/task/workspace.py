@@ -5,9 +5,8 @@ Each session gets an isolated workspace directory under the configured root.
 All files created during agent execution are confined to this directory.
 
 Workspace structure (0.0.8):
-    ~/PrivateBuddyData/
-        db/                         -- SQLite database
-        chroma/                     -- ChromaDB vector store
+    ~/PBD_trial_electron/
+        db/                         -- SQLite database + vector store (vectors.db)
         workspace/
             1/                      -- session_id=1 workspace
                 .meta/
@@ -31,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from app.config import get_settings, DATA_ROOT
+from app.config import get_settings
 from app.logger import logger
 
 # Note entry types for structured logging

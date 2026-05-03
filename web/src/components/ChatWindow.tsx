@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message, Session, Agent, Interaction } from '../types';
 import { HAS_INTERACTIONS_PENDING, HAS_INTERACTIONS_EXISTS, INTERACTION_TYPE_REQUEST } from '../types';
-import { messageApi, sessionApi, agentApi, interactionApi, API_BASE_URL } from '../services/api';
+import { messageApi, sessionApi, agentApi, interactionApi, getDynamicApiBaseUrl } from '../services/api';
 import { logger, MESSAGE_STATUS_STREAMING, SESSION_STATUS_STREAMING } from '../logger';
 
 interface ChatWindowProps {
@@ -218,7 +218,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
       eventSourceRef.current = null;
     }
     
-    const url = `${API_BASE_URL}/chat/stream/${sessionId}`;
+    const url = `${getDynamicApiBaseUrl()}/chat/stream/${sessionId}`;
     logger.info('Creating EventSource:', url);
     
     const eventSource = new EventSource(url);
