@@ -1,0 +1,137 @@
+package tools
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+
+	"private-buddy-server/internal/model"
+
+	"github.com/sashabaranov/go-openai"
+)
+
+type WebSearchTool struct {
+	searchConfig *model.SearchConfig
+}
+
+func NewWebSearchTool(searchConfig *model.SearchConfig) *WebSearchTool {
+	return &WebSearchTool{searchConfig: searchConfig}
+}
+
+func (w *WebSearchTool) Name() string { return "web_search" }
+
+func (w *WebSearchTool) Schema() openai.FunctionDefinition {
+	return openai.FunctionDefinition{
+		Name:        "web_search",
+		Description: "Search the web for information. Use this tool to find current information, documentation, or answers to questions.",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "The search query",
+				},
+				"num_results": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of results to return (default: 5)",
+					"default":     5,
+				},
+			},
+			"required": []string{"query"},
+		},
+	}
+}
+
+type SearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet"`
+}
+
+type SearchResponse struct {
+	Results []SearchResult `json:"results"`
+	Error   string         `json:"error,omitempty"`
+}
+
+func (w *WebSearchTool) Execute(args map[string]interface{}) (string, error) {
+	query, _ := args["query"].(string)
+	numResults := 5
+	if n, ok := args["num_results"].(float64); ok {
+		numResults = int(n)
+	}
+
+	if query == "" {
+		resp, _ := json.Marshal(SearchResponse{Error: "Empty query"})
+		return string(resp), nil
+	}
+
+	if w.searchConfig == nil || !w.searchConfig.IsAvailable() {
+		resp, _ := json.Marshal(SearchResponse{Error: "Search engine not configured"})
+		return string(resp), nil
+	}
+
+	provider := w.searchConfig.Provider
+	apiKey := w.searchConfig.APIKey
+
+	var results []SearchResult
+	var err error
+
+	switch provider {
+	case "tavily":
+		results, err = w.searchTavily(apiKey, query, numResults)
+	default:
+		resp, _ := json.Marshal(SearchResponse{Error: fmt.Sprintf("Unknown search provider: %s", provider)})
+		return string(resp), nil
+	}
+
+	if err != nil {
+		resp, _ := json.Marshal(SearchResponse{Error: err.Error()})
+		return string(resp), nil
+	}
+
+	resp, _ := json.Marshal(SearchResponse{Results: results})
+	return string(resp), nil
+}
+
+func (w *WebSearchTool) searchTavily(apiKey, query string, numResults int) ([]SearchResult, error) {
+	payload := map[string]interface{}{
+		"api_key":     apiKey,
+		"query":       query,
+		"max_results": numResults,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post("https://api.tavily.com/search", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var tavilyResp struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(data, &tavilyResp); err != nil {
+		return nil, err
+	}
+
+	results := make([]SearchResult, 0, len(tavilyResp.Results))
+	for _, item := range tavilyResp.Results {
+		results = append(results, SearchResult{
+			Title:   item.Title,
+			URL:     item.URL,
+			Snippet: item.Content,
+		})
+	}
+	return results, nil
+}

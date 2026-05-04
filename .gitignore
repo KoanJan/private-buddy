@@ -99,3 +99,4 @@ server/pyinstaller_cache/
 *.tmp
 *.temp
 .cache/
+PBD_trial_electron
