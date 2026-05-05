@@ -3,15 +3,15 @@
  *
  * Manages the application lifecycle:
  * 1. Shows splash screen on app ready
- * 2. Spawns the Python backend server in background
+ * 2. Spawns the Go backend server in background
  * 3. Once server health check passes, closes splash and shows main window
  * 4. Handles IPC from renderer (preload bridge)
- * 5. Graceful shutdown of Python server on quit
+ * 5. Graceful shutdown of server on quit
  */
 
 import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
 import path from 'path';
-import { startGoServer, stopGoServer } from './go-manager';
+import { startServer, stopServer } from './server-manager';
 import { isDev, getWebDistPath, getServerPort, APP_NAME } from './config';
 
 let mainWindow: BrowserWindow | null = null;
@@ -118,14 +118,14 @@ app.on('ready', async () => {
 
   createMainWindow();
 
-  startGoServer()
+  startServer()
     .then(() => {
-      console.log('Go server started successfully');
+      console.log('Server started successfully');
       mainWindow?.webContents.send('backend-status', 'ready');
     })
     .catch((err: Error) => {
       const errMsg = err.message;
-      console.error('Failed to start Go server:', errMsg);
+      console.error('Failed to start server:', errMsg);
       mainWindow?.webContents.send('backend-error', errMsg);
     });
 
@@ -136,13 +136,13 @@ app.on('ready', async () => {
 });
 
 app.on('window-all-closed', () => {
-  stopGoServer();
+  stopServer();
   app.quit();
 });
 
 app.on('before-quit', () => {
   globalShortcut.unregisterAll();
-  stopGoServer();
+  stopServer();
 });
 
 app.on('activate', () => {

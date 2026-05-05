@@ -1,16 +1,9 @@
 #!/bin/bash
+set -e
 
-# Server service restart script
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-echo "Restarting server service..."
-
-# Stop service
+echo "Restarting server..."
 "$SCRIPT_DIR/stop.sh"
-
-# Wait for service to fully stop
 sleep 1
-
-# Start service
 "$SCRIPT_DIR/start.sh"

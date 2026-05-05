@@ -7,18 +7,21 @@
     "postinstall": "cd web && npm install",
     "dev": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/splash.html','electron/dist/splash.html')\" && electron .",
     "dev:web": "cd web && npm run dev",
-    "dev:server": "cd server_go && ./start.sh",
+    "dev:server": "cd server && ./start.sh",
     "build:web": "cd web && npm run build",
     "build:electron": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/splash.html','electron/dist/splash.html')\"",
-    "build:server": "cd server_go && go build -o private-buddy-server ./cmd/server/",
-    "build:server:win": "cd server_go && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o private-buddy-server.exe ./cmd/server/",
-    "build:server:linux": "cd server_go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o private-buddy-server ./cmd/server/",
+    "build:server": "cd server && go build -o private-buddy-server ./cmd/server/",
+    "build:server:win": "cd server && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o private-buddy-server.exe ./cmd/server/",
+    "build:server:linux": "cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o private-buddy-server ./cmd/server/",
     "build": "npm run build:web && npm run build:electron",
     "dist:mac": "npm run build:server && npm run build && electron-builder --mac --config.directories.output=dist-electron/mac",
     "dist:win": "npm run build:server:win && npm run build && electron-builder --win --config.directories.output=dist-electron/win",
     "dist:linux": "npm run build:server:linux && npm run build && electron-builder --linux --config.directories.output=dist-electron/linux"
   },
-  "author": "Private Buddy Team",
+  "author": {
+    "name": "Private Buddy Team",
+    "email": "private-buddy@example.com"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.6.0",

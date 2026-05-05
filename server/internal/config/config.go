@@ -3,8 +3,14 @@
 // Configuration is loaded from environment variables with sensible defaults.
 // The global Settings singleton is initialized on first access via Get().
 //
+// Two deployment modes:
+//   - Electron packaging: PORT and DATA_ROOT are injected by the main process;
+//     .env file is not included in the bundle.
+//   - Standalone server: .env file is required; DATA_ROOT defaults to ../data (project root).
+//
 // Environment variables:
-//   - DATA_ROOT: Root directory for all data storage (default: ../data)
+//   - DATA_ROOT: Root directory for all data storage (default: ../data, relative to executable)
+//   - PORT: Server listen port (default: 8000)
 //   - SUMMARY_WINDOW_SIZE: Number of messages before triggering summary generation (default: 5)
 //   - LOG_LEVEL: Logging level (default: INFO)
 //   - TASK_MAX_ITERATIONS: Maximum iterations for task loop (default: 50)
@@ -35,14 +41,14 @@ type Settings struct {
 
 // Init loads configuration from environment variables with defaults.
 func Init() {
-	dataRoot := getEnv("DATA_ROOT", filepath.Join("..", "data"))
+	dataRoot := expandHome(getEnv("DATA_ROOT", filepath.Join("..", "data")))
 
 	globalSettings = &Settings{
 		DataRoot:                dataRoot,
 		SummaryWindowSize:       getEnvInt("SUMMARY_WINDOW_SIZE", 5),
 		LogLevel:                getEnv("LOG_LEVEL", "INFO"),
 		TaskMaxIterations:       getEnvInt("TASK_MAX_ITERATIONS", 50),
-		WorkspaceRoot:           getEnv("WORKSPACE_ROOT", ""),
+		WorkspaceRoot:           expandHome(getEnv("WORKSPACE_ROOT", "")),
 		ContextWindowIterations: getEnvInt("CONTEXT_WINDOW_ITERATIONS", 10),
 		NotesMaxChars:           getEnvInt("NOTES_MAX_CHARS", 5000),
 	}
@@ -101,4 +107,21 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// homeDir returns the current user's home directory.
+func homeDir() string {
+	if dir, err := os.UserHomeDir(); err == nil {
+		return dir
+	}
+	return os.Getenv("HOME")
+}
+
+// expandHome replaces a leading ~/ in the path with the user's home directory.
+// Returns the path unchanged if it does not start with ~/.
+func expandHome(path string) string {
+	if len(path) >= 2 && path[:2] == "~/" {
+		return filepath.Join(homeDir(), path[2:])
+	}
+	return path
 }

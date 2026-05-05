@@ -2,7 +2,7 @@
  * Application configuration constants for Electron main process.
  *
  * Centralizes paths, ports, and environment detection used by
- * the main process and python manager.
+ * the main process and server manager.
  */
 
 import { app } from 'electron';
@@ -66,36 +66,20 @@ export function getProjectRoot(): string {
   return path.dirname(app.getPath('exe'));
 }
 
-export function getPythonExecutable(): string {
-  if (isDev()) {
-    const pythonBin = process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python';
-    return path.join(getProjectRoot(), 'server', 'venv', pythonBin);
-  }
-  const exeName = process.platform === 'win32' ? 'private-buddy-server.exe' : 'private-buddy-server';
-  return path.join(process.resourcesPath, 'python-server', 'private-buddy-server', exeName);
-}
-
-export function getGoServerExecutable(): string {
+export function getServerExecutable(): string {
   if (isDev()) {
     const exeName = process.platform === 'win32' ? 'private-buddy-server.exe' : 'private-buddy-server';
-    return path.join(getProjectRoot(), 'server_go', exeName);
+    return path.join(getProjectRoot(), 'server', exeName);
   }
   const exeName = process.platform === 'win32' ? 'private-buddy-server.exe' : 'private-buddy-server';
-  return path.join(process.resourcesPath, 'go-server', exeName);
+  return path.join(process.resourcesPath, 'server', exeName);
 }
 
 export function getServerCwd(): string {
   if (isDev()) {
     return path.join(getProjectRoot(), 'server');
   }
-  return path.join(process.resourcesPath, 'python-server', 'private-buddy-server');
-}
-
-export function getGoServerCwd(): string {
-  if (isDev()) {
-    return path.join(getProjectRoot(), 'server_go');
-  }
-  return path.join(process.resourcesPath, 'go-server');
+  return path.join(process.resourcesPath, 'server');
 }
 
 export function getWebDistPath(): string {
@@ -109,6 +93,12 @@ export function getServerUrl(): string {
   return `http://${SERVER_HOST}:${getServerPort()}`;
 }
 
+// Returns the data root directory for the packaged app.
+// Uses Electron's userData path, which resolves to platform-standard locations:
+//   macOS:   ~/Library/Application Support/Private Buddy/data
+//   Windows: %APPDATA%/Private Buddy/data
+//   Linux:   ~/.config/Private Buddy/data
+// This value is injected as DATA_ROOT env var when spawning the Go server.
 export function getDataRoot(): string {
   return path.join(app.getPath('userData'), 'data');
 }

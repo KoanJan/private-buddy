@@ -1,46 +1,6 @@
 # Trae IDE
 .trae
 
-# Python
-venv/
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Python testing
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-coverage.xml
-*.cover
-.hypothesis/
-
-# Python type checking
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
 # Node.js
 node_modules/
 npm-debug.log*
@@ -56,7 +16,6 @@ dist-electron/
 electron/dist/
 web-dist/
 build/
-*.egg-info/
 
 # Environment variables
 .env
@@ -75,9 +34,6 @@ logs/
 *.swp
 *.swo
 *~
-.project
-.pydevproject
-.settings/
 
 # OS files
 .DS_Store
@@ -91,16 +47,15 @@ Thumbs.db
 # Project specific
 doc/draft
 doc/experiments
-server/chroma_db/
 server/data/
-server/pyinstaller_cache/
 
 # Go build artifacts
-server_go/private-buddy-server
-server_go/private-buddy-server.exe
+server/private-buddy-server
+server/private-buddy-server.exe
+server/.pid
 
 # Temporary files
 *.tmp
 *.temp
 .cache/
-PBD_trial_electron
+data/

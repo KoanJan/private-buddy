@@ -13,10 +13,8 @@ mac:
   icon: build/icon.icns
   hardenedRuntime: true
   extraResources:
-    - from: server_go/private-buddy-server
-      to: go-server/private-buddy-server
-    - from: server_go/.env
-      to: go-server/.env
+    - from: server/private-buddy-server
+      to: server/private-buddy-server
   extendInfo:
     NSMicrophoneUsageDescription: "Private Buddy does not use the microphone."
     NSCameraUsageDescription: "Private Buddy does not use the camera."
@@ -27,10 +25,8 @@ win:
         - x64
   icon: build/icon.ico
   extraResources:
-    - from: server_go/private-buddy-server.exe
-      to: go-server/private-buddy-server.exe
-    - from: server_go/.env
-      to: go-server/.env
+    - from: server/private-buddy-server.exe
+      to: server/private-buddy-server.exe
 linux:
   target:
     - AppImage
@@ -38,7 +34,5 @@ linux:
   icon: build/icon-1024.png
   category: Utility
   extraResources:
-    - from: server_go/private-buddy-server
-      to: go-server/private-buddy-server
-    - from: server_go/.env
-      to: go-server/.env
+    - from: server/private-buddy-server
+      to: server/private-buddy-server

@@ -1,28 +1,26 @@
 #!/bin/bash
+set -e
 
-# Server service stop script
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PID_FILE="$SCRIPT_DIR/.pid"
 
-echo "Stopping server service..."
-
-# Find and stop uvicorn process
-PID=$(ps aux | grep 'uvicorn app.main:app' | grep -v grep | awk '{print $2}')
-
-if [ -z "$PID" ]; then
-    echo "Server service is not running"
+if [ ! -f "$PID_FILE" ]; then
+    echo "Server is not running (no PID file found)"
     exit 0
 fi
 
-# Stop process
-kill $PID
-
-# Wait for process to terminate
-sleep 2
-
-# Check if stopped successfully
-if ps -p $PID > /dev/null 2>&1; then
-    echo "Force stopping server service..."
-    kill -9 $PID
-    sleep 1
+PID=$(cat "$PID_FILE")
+if kill -0 "$PID" 2>/dev/null; then
+    echo "Stopping server (PID: $PID)..."
+    kill "$PID"
+    sleep 2
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Force killing server..."
+        kill -9 "$PID"
+    fi
+    echo "Server stopped"
+else
+    echo "Server process not found (stale PID file)"
 fi
 
-echo "Server service stopped"
+rm -f "$PID_FILE"
