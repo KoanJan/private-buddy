@@ -11,12 +11,30 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+// WriteNotesTool implements an append-only, structured notes system for persisting agent's working memory.
+//
+// Each note entry has:
+//   - Timestamp: when the entry was written
+//   - Type: observation/decision/finding/correction/progress
+//   - Content: the main note text
+//   - References: optional links to workspace files
+//   - Conflict marker: optional note about conflicting with a previous entry
+//
+// Design principles:
+//   - Append-only: never overwrite, always add new entries
+//   - Structured: consistent format for traceability
+//   - Traceable: each entry can reference files and mark conflicts
+//   - LLM stateless: each LLM call is independent, notes bridge the gap
+//
+// The notes are stored in a system-managed location (.meta/notes.md) that the
+// agent should not directly access. Use this tool to interact with notes.
 type WriteNotesTool struct {
-	sessionID     int64
+	sessionID     int64 // Session ID for determining the workspace path
 	workspaceRoot string
-	notesMaxChars int
+	notesMaxChars int // Maximum character limit for notes file
 }
 
+// NewWriteNotesTool creates a WriteNotesTool for the given session.
 func NewWriteNotesTool(sessionID int64, workspaceRoot string, notesMaxChars int) *WriteNotesTool {
 	return &WriteNotesTool{
 		sessionID:     sessionID,
@@ -79,6 +97,8 @@ func (w *WriteNotesTool) Schema() openai.FunctionDefinition {
 	}
 }
 
+// Execute appends a structured entry to the agent's notes.
+// Validates required fields (entry_type, content) and returns a confirmation message.
 func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 	entryType, _ := args["entry_type"].(string)
 	content, _ := args["content"].(string)
@@ -110,10 +130,13 @@ func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 		entryType, len(content), refCount, conflictMarker), nil
 }
 
+// getMetaDir returns the .meta directory path for this session's workspace.
 func (w *WriteNotesTool) getMetaDir() string {
 	return filepath.Join(w.workspaceRoot, strconv.FormatInt(w.sessionID, 10), ".meta")
 }
 
+// appendNote appends a structured entry to the notes.md file.
+// Format: "## [TIMESTAMP] TYPE\n\ncontent\n\n---\n\n"
 func (w *WriteNotesTool) appendNote(entryType, content string, references []string, conflictsWith string) {
 	notesFile := filepath.Join(w.getMetaDir(), "notes.md")
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
@@ -145,6 +168,8 @@ func (w *WriteNotesTool) appendNote(entryType, content string, references []stri
 	f.WriteString(sb.String())
 }
 
+// ReadNotes reads the full content of the notes.md file.
+// Returns empty string if the file doesn't exist.
 func (w *WriteNotesTool) ReadNotes() string {
 	notesFile := filepath.Join(w.getMetaDir(), "notes.md")
 	data, err := os.ReadFile(notesFile)
@@ -154,6 +179,9 @@ func (w *WriteNotesTool) ReadNotes() string {
 	return string(data)
 }
 
+// TrimNotes truncates the notes file if it exceeds the maximum character limit.
+// Trims from the beginning, preserving the most recent entries.
+// Attempts to align to entry boundaries (## [timestamp]) to avoid partial entries.
 func (w *WriteNotesTool) TrimNotes() {
 	notesFile := filepath.Join(w.getMetaDir(), "notes.md")
 	data, err := os.ReadFile(notesFile)

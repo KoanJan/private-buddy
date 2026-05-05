@@ -14,8 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maxAvatarFileSize is the maximum allowed avatar file size (2MB).
 const maxAvatarFileSize = 2 * 1024 * 1024 // 2MB
 
+// allowedAvatarExtensions defines the allowed image file extensions for avatars.
 var allowedAvatarExtensions = map[string]bool{
 	".jpg":  true,
 	".jpeg": true,
@@ -23,6 +25,8 @@ var allowedAvatarExtensions = map[string]bool{
 	".webp": true,
 }
 
+// UploadAvatar handles avatar image upload for agents.
+// Validates file type, size, and saves to the avatars directory.
 func (h *Handler) UploadAvatar(c *gin.Context) {
 	agentIDStr := c.Query("agent_id")
 	if agentIDStr == "" {

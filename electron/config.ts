@@ -75,11 +75,27 @@ export function getPythonExecutable(): string {
   return path.join(process.resourcesPath, 'python-server', 'private-buddy-server', exeName);
 }
 
+export function getGoServerExecutable(): string {
+  if (isDev()) {
+    const exeName = process.platform === 'win32' ? 'private-buddy-server.exe' : 'private-buddy-server';
+    return path.join(getProjectRoot(), 'server_go', exeName);
+  }
+  const exeName = process.platform === 'win32' ? 'private-buddy-server.exe' : 'private-buddy-server';
+  return path.join(process.resourcesPath, 'go-server', exeName);
+}
+
 export function getServerCwd(): string {
   if (isDev()) {
     return path.join(getProjectRoot(), 'server');
   }
   return path.join(process.resourcesPath, 'python-server', 'private-buddy-server');
+}
+
+export function getGoServerCwd(): string {
+  if (isDev()) {
+    return path.join(getProjectRoot(), 'server_go');
+  }
+  return path.join(process.resourcesPath, 'go-server');
 }
 
 export function getWebDistPath(): string {

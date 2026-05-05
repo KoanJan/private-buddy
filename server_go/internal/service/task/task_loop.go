@@ -22,23 +22,43 @@ import (
 	"gorm.io/gorm"
 )
 
+// defaultMaxIterations is the default maximum number of ReAct loop iterations.
 const defaultMaxIterations = 90
 
+// TaskLoop implements the ReAct-style task loop for autonomous task execution.
+//
+// The loop iterates:
+//   - Call LLM with current context (window-controlled by ContextManager)
+//   - If LLM returns tool_calls: execute tools, append results, continue
+//   - If LLM returns stop: deliver the content
+//   - If max_iterations reached: deliver failure with reason
+//
+// Every iteration is recorded to the interactions table with:
+//   - type=1 (request): the messages sent to the LLM
+//   - type=2 (response): the LLM output (content, tool_calls, finish_reason)
+//
+// Notes checkpoint strategy:
+//   - Agent can voluntarily call write_notes at any time
+//   - Forced checkpoint only when distance from last voluntary write >= window
+//   - This respects agent's autonomy while ensuring memory persistence
+//   - Final iteration always writes notes if task not completed
 type TaskLoop struct {
-	llmClient        *llm.ChatModel
-	llmConfig        *model.LLMConfig
-	toolRegistry     map[string]tools.Tool
-	contextManager   *taskcontext.ContextManager
-	maxIterations    int
-	db               *gorm.DB
-	sessionID        int64
-	userMsgID        int64
-	agentMsgID       int64
-	writeNotesTool   *tools.WriteNotesTool
-	checkpointClient *llm.ChatModel
-	lastNotesIter    int
+	llmClient        *llm.ChatModel              // Main LLM client with tool binding
+	llmConfig        *model.LLMConfig            // LLM config for creating checkpoint client
+	toolRegistry     map[string]tools.Tool       // Tool name -> Tool mapping
+	contextManager   *taskcontext.ContextManager // Context manager with window control
+	maxIterations    int                         // Maximum number of loop iterations
+	db               *gorm.DB                    // Database for writing interaction records
+	sessionID        int64                       // Session ID for interaction records
+	userMsgID        int64                       // User message ID that triggered execution
+	agentMsgID       int64                       // Agent message ID for the delivery target
+	writeNotesTool   *tools.WriteNotesTool       // Write notes tool for checkpoint iterations
+	checkpointClient *llm.ChatModel              // Lazy-initialized LLM client for checkpoint iterations
+	lastNotesIter    int                         // Last iteration where write_notes was called (voluntary or forced)
 }
 
+// NewTaskLoop creates a new TaskLoop instance.
+// The tool list is converted to a name-keyed registry for efficient lookup during execution.
 func NewTaskLoop(
 	llmClient *llm.ChatModel,
 	llmConfig *model.LLMConfig,
@@ -68,12 +88,22 @@ func NewTaskLoop(
 	}
 }
 
+// LoopResult represents the outcome of the task loop execution.
 type LoopResult struct {
-	Status string  `json:"status"`
-	Result *string `json:"result,omitempty"`
-	Reason *string `json:"reason,omitempty"`
+	Status string  `json:"status"`           // "success" or "failure"
+	Result *string `json:"result,omitempty"` // Final content on success
+	Reason *string `json:"reason,omitempty"` // Failure reason on failure
 }
 
+// Run executes the agent loop.
+//
+// This is the main entry point. It runs the ReAct loop until:
+//   - LLM returns a stop response (success)
+//   - Max iterations reached (failure, after writing notes)
+//
+// The task requirement is already injected via ContextManager
+// (as part of the fixed task.md content), so it is not passed
+// as a parameter here.
 func (tl *TaskLoop) Run() *LoopResult {
 	applogger.L.Info("TaskLoop starting",
 		"max_iterations", tl.maxIterations,
@@ -232,6 +262,13 @@ func (tl *TaskLoop) Run() *LoopResult {
 	return &LoopResult{Status: "failure", Reason: &reason}
 }
 
+// isCheckpointIteration checks if this iteration should be a forced notes checkpoint.
+//
+// Checkpoint is triggered when:
+//   - Distance from last voluntary write_notes >= window
+//   - This respects agent's autonomy while ensuring memory persistence
+//
+// Final iteration is handled separately.
 func (tl *TaskLoop) isCheckpointIteration(iteration int) bool {
 	if iteration == tl.maxIterations {
 		return false
@@ -241,6 +278,14 @@ func (tl *TaskLoop) isCheckpointIteration(iteration int) bool {
 	return distance >= window
 }
 
+// runNotesIteration runs a notes checkpoint or final notes iteration.
+//
+// During this iteration, only write_notes tool is available.
+// The agent must use it to persist information before older iterations
+// are discarded from the context window.
+//
+// On final iteration (isFinal=true), returns failure result after saving notes.
+// On checkpoint iteration, returns success to continue the loop.
 func (tl *TaskLoop) runNotesIteration(iteration int, messages []map[string]interface{}, isFinal bool) *LoopResult {
 	if tl.writeNotesTool == nil {
 		applogger.L.Error("Cannot run notes iteration: write_notes_tool not initialized")
@@ -252,7 +297,7 @@ func (tl *TaskLoop) runNotesIteration(iteration int, messages []map[string]inter
 	}
 
 	if tl.checkpointClient == nil {
-		tl.checkpointClient = llm.NewChatModel(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, 4096)
+		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, 0.7)
 	}
 
 	iterType := "checkpoint"
@@ -391,13 +436,16 @@ After writing notes, you will regain access to all tools.`
 	return &LoopResult{Status: "success"}
 }
 
+// updateNotesOnSuccess updates notes after successful task completion.
+// This ensures notes reflect the final state for future modifications.
+// Uses the checkpoint client (lazy-initialized) with only write_notes tool available.
 func (tl *TaskLoop) updateNotesOnSuccess(iteration int, finalContent string, messages []map[string]interface{}) {
 	if tl.writeNotesTool == nil {
 		return
 	}
 
 	if tl.checkpointClient == nil {
-		tl.checkpointClient = llm.NewChatModel(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, 4096)
+		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, 0.7)
 	}
 
 	applogger.L.Info("Updating notes after successful completion", "iteration", iteration)
@@ -451,6 +499,8 @@ This will help you continue work if the user requests changes later.`
 	applogger.L.Info("Notes updated after successful completion")
 }
 
+// invokeLLM calls the LLM with the current messages and all registered tools.
+// Converts internal message format to OpenAI format and binds tool schemas.
 func (tl *TaskLoop) invokeLLM(messages []map[string]interface{}) (*openai.ChatCompletionResponse, error) {
 	msgSummary := make([]map[string]interface{}, 0, len(messages))
 	for _, m := range messages {
@@ -486,6 +536,9 @@ func (tl *TaskLoop) invokeLLM(messages []map[string]interface{}) (*openai.ChatCo
 	return tl.llmClient.ChatWithTools(context.Background(), chatMessages, toolDefs)
 }
 
+// executeToolCall executes a single tool call and returns the result.
+// Looks up the tool in the registry, parses arguments, and calls Execute.
+// Returns error messages for unknown tools or invalid arguments.
 func (tl *TaskLoop) executeToolCall(tc openai.ToolCall) map[string]interface{} {
 	toolCallID := tc.ID
 	toolName := tc.Function.Name
@@ -524,6 +577,10 @@ func (tl *TaskLoop) executeToolCall(tc openai.ToolCall) map[string]interface{} {
 	}
 }
 
+// writeInteraction writes an interaction record to the database.
+// Silently skips if database session is not configured.
+// Records are grouped by (session_id, user_msg_id, agent_msg_id, iteration)
+// to support both frontend display and debugging.
 func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[string]interface{}) {
 	if tl.db == nil || tl.sessionID == 0 {
 		return
@@ -543,6 +600,8 @@ func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[st
 	}
 }
 
+// toOpenAIMessages converts internal message dicts to OpenAI ChatCompletionMessage format.
+// Handles role, content, tool_calls, and tool_call_id fields.
 func toOpenAIMessages(messages []map[string]interface{}) []openai.ChatCompletionMessage {
 	result := make([]openai.ChatCompletionMessage, 0, len(messages))
 	for _, m := range messages {
@@ -570,6 +629,7 @@ func toOpenAIMessages(messages []map[string]interface{}) []openai.ChatCompletion
 	return result
 }
 
+// minInt returns the smaller of two integers.
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -577,22 +637,28 @@ func minInt(a, b int) int {
 	return b
 }
 
+// getWorkspaceRoot returns the root directory for all session workspaces.
 func getWorkspaceRoot() string {
 	return config.Get().GetWorkspaceRoot()
 }
 
+// getSessionWorkspace returns the workspace directory path for a session.
 func getSessionWorkspace(sessionID int64) string {
 	return filepath.Join(getWorkspaceRoot(), strconv.FormatInt(sessionID, 10))
 }
 
+// getMetaDir returns the .meta directory path for a session workspace.
 func getMetaDir(sessionID int64) string {
 	return filepath.Join(getSessionWorkspace(sessionID), ".meta")
 }
 
+// getOutputDir returns the output directory path (LLM's working directory) for a session.
 func getOutputDir(sessionID int64) string {
 	return filepath.Join(getSessionWorkspace(sessionID), "output")
 }
 
+// ensureSessionWorkspace creates the workspace directory structure for a session.
+// Creates the root workspace directory if it doesn't exist.
 func ensureSessionWorkspace(sessionID int64) string {
 	root := getWorkspaceRoot()
 	os.MkdirAll(root, 0755)
@@ -604,6 +670,17 @@ func ensureSessionWorkspace(sessionID int64) string {
 	return workspace
 }
 
+// initSessionWorkspace initializes workspace structure for agent execution.
+//
+// Creates:
+//   - .meta/task.md with rewritten task requirement (appends if exists, tasks may evolve)
+//   - .meta/notes.md as empty file (structured, append-only; kept across executions)
+//   - output/ directory (LLM's working directory; kept across executions)
+//
+// If workspace already exists (from previous execution in same session):
+//   - .meta/task.md: append rewritten requirement with timestamp
+//   - .meta/notes.md: keep as-is (agent's memory across executions)
+//   - output/: keep as-is (previous deliverables)
 func initSessionWorkspace(sessionID int64, rewrittenRequirement string) string {
 	workspace := ensureSessionWorkspace(sessionID)
 
@@ -633,6 +710,7 @@ func initSessionWorkspace(sessionID int64, rewrittenRequirement string) string {
 	return workspace
 }
 
+// readTaskMD reads the task.md content from a session's workspace.
 func readTaskMD(sessionID int64) string {
 	taskFile := filepath.Join(getMetaDir(sessionID), "task.md")
 	data, err := os.ReadFile(taskFile)
@@ -642,6 +720,7 @@ func readTaskMD(sessionID int64) string {
 	return string(data)
 }
 
+// removeSessionWorkspace removes the entire workspace directory for a session.
 func removeSessionWorkspace(sessionID int64) {
 	workspace := getSessionWorkspace(sessionID)
 	os.RemoveAll(workspace)

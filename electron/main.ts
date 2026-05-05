@@ -11,7 +11,7 @@
 
 import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
 import path from 'path';
-import { startPythonServer, stopPythonServer } from './python-manager';
+import { startGoServer, stopGoServer } from './go-manager';
 import { isDev, getWebDistPath, getServerPort, APP_NAME } from './config';
 
 let mainWindow: BrowserWindow | null = null;
@@ -118,14 +118,14 @@ app.on('ready', async () => {
 
   createMainWindow();
 
-  startPythonServer()
+  startGoServer()
     .then(() => {
-      console.log('Python server started successfully');
+      console.log('Go server started successfully');
       mainWindow?.webContents.send('backend-status', 'ready');
     })
-    .catch((err) => {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error('Failed to start Python server:', errMsg);
+    .catch((err: Error) => {
+      const errMsg = err.message;
+      console.error('Failed to start Go server:', errMsg);
       mainWindow?.webContents.send('backend-error', errMsg);
     });
 
@@ -136,13 +136,13 @@ app.on('ready', async () => {
 });
 
 app.on('window-all-closed', () => {
-  stopPythonServer();
+  stopGoServer();
   app.quit();
 });
 
 app.on('before-quit', () => {
   globalShortcut.unregisterAll();
-  stopPythonServer();
+  stopGoServer();
 });
 
 app.on('activate', () => {

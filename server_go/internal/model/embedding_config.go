@@ -2,6 +2,8 @@ package model
 
 import "time"
 
+// EmbeddingConfig stores the configuration for the embedding API provider.
+// Used for RAG (Retrieval-Augmented Generation) vector operations.
 type EmbeddingConfig struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name        string    `gorm:"type:varchar(100);not null" json:"name"`

@@ -1,3 +1,7 @@
+// Package logger provides application-wide structured logging using slog.
+//
+// Logs are written to both stdout (JSON format) and a daily rotating log file.
+// Log level is controlled by the LOG_LEVEL configuration setting.
 package logger
 
 import (
@@ -11,8 +15,10 @@ import (
 	"private-buddy-server/internal/config"
 )
 
+// L is the global logger instance.
 var L *slog.Logger
 
+// Init initializes the global logger with JSON output to stdout and a daily log file.
 func Init() {
 	settings := config.Get()
 

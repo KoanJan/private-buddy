@@ -14,6 +14,8 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// userStateInferencePrompt is the LLM prompt template for user state inference.
+// It takes one parameter: recent_messages (formatted dialog text).
 const userStateInferencePrompt = `Based on the following recent conversation, infer the user's current state.
 
 Recent conversation:
@@ -28,6 +30,17 @@ Also determine if the user's request requires interaction with the external worl
   (general knowledge, advice, explanations, casual conversation).`
 
 // UserState represents the inferred user state from conversation context.
+//
+// Three-dimensional model:
+//   - Emotion: user's current emotional state (affects response tone)
+//   - Purpose: user's current conversational goal (affects response content direction)
+//   - Situation: user's physical context (affects response constraints)
+//
+// Intent type is implicitly derived from purpose + situation, not modeled separately.
+//
+// Field descriptions serve dual purpose:
+//  1. Guide LLM structured output generation
+//  2. Provide natural language fragments for prompt template assembly
 type UserState struct {
 	Emotion               string `json:"emotion"`
 	Purpose               string `json:"purpose"`
@@ -35,7 +48,8 @@ type UserState struct {
 	NeedsWorldInteraction bool   `json:"needs_world_interaction"`
 }
 
-// ToNaturalLanguage converts the structured user state into a natural language description.
+// ToNaturalLanguage converts the structured user state into a natural language description
+// suitable for injection into the prompt's instruction area.
 func (us *UserState) ToNaturalLanguage() string {
 	emotionMap := map[string]string{
 		"calm":       "calm and relaxed",
@@ -76,8 +90,12 @@ func (us *UserState) ToNaturalLanguage() string {
 }
 
 // UserStateService infers user state from recent conversation messages.
+// Uses LLM structured output (JSON Schema response format) to produce a UserState.
+// On failure, returns nil, allowing graceful degradation — the main chat flow
+// continues without user state.
 type UserStateService struct{}
 
+// NewUserStateService creates a UserStateService instance.
 func NewUserStateService() *UserStateService {
 	return &UserStateService{}
 }
@@ -97,6 +115,8 @@ func (uss *UserStateService) formatRecentMessages(recentMessages []map[string]in
 }
 
 // InferUserState infers the user's current state from recent conversation messages.
+// Uses temperature=0.1 for consistent, deterministic outputs.
+// Returns nil if inference fails, allowing the chat flow to continue without user state.
 func (uss *UserStateService) InferUserState(
 	llmConfig *model.LLMConfig,
 	recentMessages []map[string]interface{},
@@ -105,7 +125,7 @@ func (uss *UserStateService) InferUserState(
 		return nil
 	}
 
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 1024, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
 
 	dialogText := uss.formatRecentMessages(recentMessages)
 	prompt := fmt.Sprintf(userStateInferencePrompt, dialogText)

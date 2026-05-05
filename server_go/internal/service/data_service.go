@@ -4,15 +4,20 @@ import (
 	"private-buddy-server/internal/model"
 
 	applogger "private-buddy-server/internal/logger"
+
 	"gorm.io/gorm"
 )
 
+// DataService provides data access helper methods for the handler layer.
+// Encapsulates common database queries for sessions, agents, LLM configs, and message history.
 type DataService struct{}
 
+// NewDataService creates a new DataService instance.
 func NewDataService() *DataService {
 	return &DataService{}
 }
 
+// GetSession retrieves a session by ID. Returns nil if not found.
 func (ds *DataService) GetSession(db *gorm.DB, sessionID int64) *model.Session {
 	var session model.Session
 	if err := db.First(&session, sessionID).Error; err != nil {
@@ -22,6 +27,7 @@ func (ds *DataService) GetSession(db *gorm.DB, sessionID int64) *model.Session {
 	return &session
 }
 
+// GetAgent retrieves an agent by ID. Returns nil if not found.
 func (ds *DataService) GetAgent(db *gorm.DB, agentID int64) *model.Agent {
 	var agent model.Agent
 	if err := db.First(&agent, agentID).Error; err != nil {
@@ -31,6 +37,7 @@ func (ds *DataService) GetAgent(db *gorm.DB, agentID int64) *model.Agent {
 	return &agent
 }
 
+// GetLLMConfig retrieves an LLM config by ID. Returns nil if not found.
 func (ds *DataService) GetLLMConfig(db *gorm.DB, llmConfigID int64) *model.LLMConfig {
 	var config model.LLMConfig
 	if err := db.First(&config, llmConfigID).Error; err != nil {
@@ -40,11 +47,15 @@ func (ds *DataService) GetLLMConfig(db *gorm.DB, llmConfigID int64) *model.LLMCo
 	return &config
 }
 
+// MessageHistoryItem represents a simplified message for history retrieval.
 type MessageHistoryItem struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
+// GetMessageHistory retrieves message history for a session.
+// If beforeMessageID is provided, only messages before that ID are returned.
+// If limit is provided, returns the most recent N messages (reversed to chronological order).
 func (ds *DataService) GetMessageHistory(db *gorm.DB, sessionID int64, beforeMessageID *int64, limit *int) []MessageHistoryItem {
 	query := db.Model(&model.Message{}).Where("session_id = ?", sessionID)
 

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Handler groups all HTTP API handlers with shared dependencies.
 type Handler struct {
 	db            *gorm.DB
 	crudLLM       *service.CRUDBase[model.LLMConfig]
@@ -23,6 +24,7 @@ type Handler struct {
 	searchService *service.SearchService
 }
 
+// NewHandler creates a Handler with all CRUD services initialized.
 func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{
 		db:            db,
@@ -35,10 +37,12 @@ func NewHandler(db *gorm.DB) *Handler {
 	}
 }
 
+// Root returns a health check response.
 func (h *Handler) Root(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Private Buddy API is running"})
 }
 
+// GetVersion returns the current database schema version.
 func (h *Handler) GetVersion(c *gin.Context) {
 	var versionRecord model.DBVersion
 	err := h.db.Order("id DESC").First(&versionRecord).Error

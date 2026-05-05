@@ -14,6 +14,9 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// rewritePrompt is the system prompt for task requirement rewriting.
+// Transforms ambiguous user messages into explicit, self-contained task requirements
+// by utilizing conversation history to resolve references and provide context.
 const rewritePrompt = `You are a task requirement rewriter. Your job is to transform the user's message into a clear, self-contained task requirement that can be executed by an AI agent.
 
 Conversation history:
@@ -42,12 +45,23 @@ Output a JSON object with:
 - context_summary: Brief note on what context was used (optional)`
 
 // RewrittenRequirement represents the structured output of task requirement rewriting.
+// Mirrors Python's RewrittenRequirement pydantic model.
 type RewrittenRequirement struct {
-	Requirement    string  `json:"requirement"`
-	ContextSummary *string `json:"context_summary"`
+	Requirement    string  `json:"requirement"`     // The rewritten, self-contained task requirement
+	ContextSummary *string `json:"context_summary"` // Brief summary of relevant context used for rewriting
 }
 
 // TaskRequirementRewriter rewrites user messages into clear task requirements.
+//
+// Unlike QueryPreprocessingService (which is for RAG retrieval optimization),
+// this service focuses on making task requirements explicit and actionable
+// for the agent execution system.
+//
+// Example:
+//
+//	User message: "改一下那个文件"
+//	History: [User: "帮我创建一个 README.md", Assistant: "已创建..."]
+//	Rewritten: "修改 README.md 文件，具体修改内容需要用户确认"
 type TaskRequirementRewriter struct{}
 
 func NewTaskRequirementRewriter() *TaskRequirementRewriter {
@@ -55,6 +69,8 @@ func NewTaskRequirementRewriter() *TaskRequirementRewriter {
 }
 
 // FormatHistory formats conversation history for the rewrite prompt.
+// Takes the last maxMessages messages and formats them with role prefixes.
+// Returns "(No conversation history)" if history is empty.
 func (trw *TaskRequirementRewriter) FormatHistory(history []map[string]string, maxMessages int) string {
 	if len(history) == 0 {
 		return "(No conversation history)"
@@ -77,13 +93,20 @@ func (trw *TaskRequirementRewriter) FormatHistory(history []map[string]string, m
 }
 
 // Rewrite rewrites a user message into a clear task requirement.
+//
+// This is the main entry point. It uses conversation history to
+// resolve references and create a self-contained task requirement.
+// Uses LLM structured output (JSON Schema response format) with temperature=0.1
+// for consistent, deterministic outputs.
+//
+// Returns the original userMessage on error (graceful degradation).
 func (trw *TaskRequirementRewriter) Rewrite(
 	llmConfig *model.LLMConfig,
 	userMessage string,
 	history []map[string]string,
 	maxHistoryMessages int,
 ) string {
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 2048, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
 
 	historyText := trw.FormatHistory(history, maxHistoryMessages)
 	prompt := fmt.Sprintf(rewritePrompt, historyText, userMessage)
@@ -129,6 +152,7 @@ func (trw *TaskRequirementRewriter) Rewrite(
 	return userMessage
 }
 
+// minLen returns the smaller of two integers.
 func minLen(a, b int) int {
 	if a < b {
 		return a

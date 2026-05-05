@@ -14,11 +14,14 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-const queryTypeClear = "clear"
-const queryTypeAmbiguous = "ambiguous"
-const queryTypeVague = "vague"
-const queryTypeNoQuery = "no_query"
+// Query type constants for classification
+const queryTypeClear = "clear"         // Query is complete and unambiguous
+const queryTypeAmbiguous = "ambiguous" // Query contains references to previous context
+const queryTypeVague = "vague"         // Query is too vague to understand intent
+const queryTypeNoQuery = "no_query"    // Query doesn't need retrieval (greetings, etc.)
 
+// routingPrompt is the LLM prompt template for query type classification.
+// It takes two parameters: history (formatted conversation) and query (user message).
 const routingPrompt = `Analyze the user query type and process accordingly.
 
 Conversation history:
@@ -32,6 +35,8 @@ Classify the query type and process:
 3. "ambiguous" - Ambiguous reference: the query contains pronouns (like "it", "that", "this") or references to previous content, requiring context to understand. For this type, you MUST rewrite the user's query into a complete, clear query that can be understood independently without relying on conversation history.
 4. "vague" - Too vague: the query is too brief or ambiguous, making it difficult to determine user intent even with context. For this type, explain the reason for vagueness.`
 
+// clarifyPrompt is the LLM prompt template for generating clarification questions.
+// It takes three parameters: history, query, and reason.
 const clarifyPrompt = `The user's query is too vague and needs clarification.
 
 Conversation history:
@@ -50,13 +55,15 @@ IMPORTANT: The clarification question MUST be in the SAME LANGUAGE as the user's
 Output only the clarification question, without any additional content.`
 
 // QueryRoutingResult represents the structured output of query routing.
+// Defines the expected format when the LLM classifies and processes a user query.
 type QueryRoutingResult struct {
 	Type           string  `json:"type"`
 	RewrittenQuery *string `json:"rewritten_query"`
 	Reason         *string `json:"reason"`
 }
 
-// PreprocessingResult represents the full output of query preprocessing.
+// PreprocessingResult represents the full output of query preprocessing,
+// including the processed query, type classification, and clarification if needed.
 type PreprocessingResult struct {
 	OriginalQuery      string `json:"original_query"`
 	ProcessedQuery     string `json:"processed_query"`
@@ -67,13 +74,24 @@ type PreprocessingResult struct {
 }
 
 // QueryPreprocessingService handles query classification and transformation.
+//
+// This service handles the preprocessing of user queries before they are sent to the
+// retrieval or LLM systems. It includes:
+//   - Query type classification (clear, ambiguous, vague, no_query)
+//   - Query rewriting for ambiguous queries with context
+//   - Clarification generation for vague queries
+//
+// The preprocessing pipeline ensures that queries are optimized for retrieval
+// and LLM processing.
 type QueryPreprocessingService struct{}
 
+// NewQueryPreprocessingService creates a QueryPreprocessingService instance.
 func NewQueryPreprocessingService() *QueryPreprocessingService {
 	return &QueryPreprocessingService{}
 }
 
 // FormatHistoryForPreprocessing formats conversation history for preprocessing prompts.
+// Limits to the most recent maxMessages if specified.
 func (qps *QueryPreprocessingService) FormatHistoryForPreprocessing(history []map[string]string, maxMessages *int) string {
 	if len(history) == 0 {
 		return "(No conversation history)"
@@ -96,14 +114,15 @@ func (qps *QueryPreprocessingService) FormatHistoryForPreprocessing(history []ma
 }
 
 // RouteQuery classifies the query type and rewrites if ambiguous.
-// Uses OpenAI function calling for structured output.
+// Uses JSON Schema structured output for deterministic classification.
+// Uses temperature=0.1 for consistent, deterministic outputs.
 func (qps *QueryPreprocessingService) RouteQuery(
 	llmConfig *model.LLMConfig,
 	query string,
 	history []map[string]string,
 	maxMessages *int,
 ) *QueryRoutingResult {
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 1024, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
 
 	historyText := qps.FormatHistoryForPreprocessing(history, maxMessages)
 	prompt := fmt.Sprintf(routingPrompt, historyText, query)
@@ -155,6 +174,8 @@ func (qps *QueryPreprocessingService) RouteQuery(
 }
 
 // GenerateClarification generates a clarification question for vague queries.
+// If characterSettings is provided, it is prepended to the prompt for personality alignment.
+// Uses temperature=0.1 for consistent outputs.
 func (qps *QueryPreprocessingService) GenerateClarification(
 	llmConfig *model.LLMConfig,
 	query string,
@@ -163,11 +184,12 @@ func (qps *QueryPreprocessingService) GenerateClarification(
 	characterSettings *string,
 	maxMessages *int,
 ) string {
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 2048, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
 
 	historyText := qps.FormatHistoryForPreprocessing(history, maxMessages)
 	prompt := fmt.Sprintf(clarifyPrompt, historyText, query, reason)
 
+	// Prepend character settings for personality alignment
 	if characterSettings != nil && *characterSettings != "" {
 		prompt = fmt.Sprintf("[Your Character]\n%s\n\n%s", *characterSettings, prompt)
 	}
@@ -185,6 +207,11 @@ func (qps *QueryPreprocessingService) GenerateClarification(
 }
 
 // PreprocessQuery is the main entry point for query preprocessing.
+// It classifies the query type and applies the appropriate transformation:
+//   - no_query: skip retrieval, use original query
+//   - clear: use original query with retrieval
+//   - ambiguous: rewrite query with context for retrieval
+//   - vague: generate clarification question, mark as needs_clarification
 func (qps *QueryPreprocessingService) PreprocessQuery(
 	llmConfig *model.LLMConfig,
 	query string,

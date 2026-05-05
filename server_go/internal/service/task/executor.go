@@ -1,3 +1,21 @@
+// Package task implements the autonomous task execution system for world-interaction requests.
+//
+// This package provides the task execution pipeline that handles agent-based
+// task execution when the chat system determines that a user request requires
+// world interaction (e.g., file operations, web searches, code execution).
+//
+// The main entry point is TaskExecutor.Execute, which:
+//  1. Initializes the session workspace structure
+//  2. Builds the system prompt and tool list
+//  3. Creates the context manager with iteration window
+//  4. Runs the ReAct task loop to completion
+//  5. Returns a TaskResult with success/failure status
+//
+// Design principles:
+//   - Input: task requirement (structured, not raw user message)
+//   - Output: final result (success result or failure with reason)
+//   - Internal isolation: all process info is hidden from the outside
+//   - No pollution of the chat system
 package task
 
 import (
@@ -15,6 +33,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// TaskResult represents the outcome of a task execution.
+// On success, Output contains the final content. On failure, Error contains the reason.
+// Notes, Workspace, NotesPath, and TaskPath are always populated for observability.
 type TaskResult struct {
 	Status      string `json:"status"`
 	Output      string `json:"output,omitempty"`
@@ -26,6 +47,14 @@ type TaskResult struct {
 	NotesLength int    `json:"notes_length,omitempty"`
 }
 
+// TaskExecutor is the self-contained task execution service.
+//
+// This is the only public interface of the task module.
+// It accepts a task requirement and an LLM configuration,
+// runs the task loop internally, and returns a TaskResult.
+// The task executor is self-contained and autonomous — it creates its own
+// Task Loop, LLM client, tools, and context manager for each execution.
+// Nothing from the internal execution leaks into the chat context.
 type TaskExecutor struct {
 	db *gorm.DB
 }
@@ -34,17 +63,33 @@ func NewTaskExecutor(db *gorm.DB) *TaskExecutor {
 	return &TaskExecutor{db: db}
 }
 
+// TaskParams contains all parameters needed for task execution.
 type TaskParams struct {
-	TaskRequirement string
-	LLMConfig       *model.LLMConfig
-	MaxIterations   int
-	SessionID       int64
-	UserMsgID       int64
-	AgentMsgID      int64
-	SearchConfig    *model.SearchConfig
-	DeliveryType    string
+	TaskRequirement string              // The rewritten task description to execute
+	LLMConfig       *model.LLMConfig    // LLM configuration for the task
+	MaxIterations   int                 // Override for max loop iterations (0 = use default)
+	SessionID       int64               // Session ID for interaction records and workspace
+	UserMsgID       int64               // User message ID that triggered execution
+	AgentMsgID      int64               // Agent message ID for the result target
+	SearchConfig    *model.SearchConfig // Search configuration for web search tool
+	DeliveryType    string              // Expected delivery type ("text" or "file"), affects system prompt
 }
 
+// Execute runs a task and returns the result.
+//
+// This method is the single entry point for task execution.
+// It creates all necessary components internally and runs
+// the task loop to completion.
+//
+// Execution steps:
+//  1. Initialize workspace structure (.meta/task.md, .meta/notes.md, output/)
+//  2. Read workspace files (task content, notes content)
+//  3. Build system prompt with delivery type and available tools
+//  4. Create tool list (bash, write_notes, optionally web_search)
+//  5. Create ContextManager with iteration window
+//  6. Create LLM client with tool binding
+//  7. Run task loop to completion
+//  8. Read final notes and return TaskResult
 func (te *TaskExecutor) Execute(params TaskParams) *TaskResult {
 	maxIterations := params.MaxIterations
 	if maxIterations <= 0 {
@@ -77,11 +122,11 @@ func (te *TaskExecutor) Execute(params TaskParams) *TaskResult {
 		notesContent,
 	)
 
-	llmClient := llm.NewChatModel(
+	llmClient := llm.NewChatModelWithTemperature(
 		params.LLMConfig.BaseURL,
 		params.LLMConfig.APIKey,
 		params.LLMConfig.ModelID,
-		0,
+		0.7,
 	)
 
 	toolList := te.buildToolList(workspace, params.SessionID, params.SearchConfig, workspaceRoot, notesMaxChars)
@@ -137,6 +182,8 @@ func (te *TaskExecutor) Execute(params TaskParams) *TaskResult {
 	return result
 }
 
+// buildSystemPrompt constructs the system prompt for the task loop.
+// Includes basic rules, available tools, working directory, and delivery type guidance.
 func (te *TaskExecutor) buildSystemPrompt(sessionID int64, deliveryType string) string {
 	workspace := getSessionWorkspace(sessionID)
 	workingDir := fmt.Sprintf("%s/output", workspace)
@@ -195,6 +242,7 @@ func (te *TaskExecutor) buildSystemPrompt(sessionID int64, deliveryType string) 
 	return strings.Join(parts, "\n")
 }
 
+// hasWebSearch checks if web search is available via an active search config.
 func (te *TaskExecutor) hasWebSearch() bool {
 	var searchConfig model.SearchConfig
 	if err := te.db.First(&searchConfig).Error; err != nil {
@@ -203,6 +251,8 @@ func (te *TaskExecutor) hasWebSearch() bool {
 	return searchConfig.IsAvailable()
 }
 
+// buildToolList creates the list of available tools for the task loop.
+// Always includes bash and write_notes; adds web_search if search config is available.
 func (te *TaskExecutor) buildToolList(workspace string, sessionID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
 		tools.NewBashTool(workspace),

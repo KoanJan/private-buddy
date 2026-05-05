@@ -1,3 +1,19 @@
+// Package handler implements the HTTP API handlers for the chat system.
+//
+// This package provides the Gin-based HTTP handlers that expose the chat
+// functionality via REST API endpoints. It handles:
+//   - Creating new sessions and sending the first message
+//   - Sending messages to existing sessions
+//   - Streaming AI responses via Server-Sent Events (SSE)
+//   - Managing SSE connection lifecycle
+//   - Triggering background summary generation
+//
+// The handler layer is responsible for:
+//   - Request validation and parameter extraction
+//   - Database record creation (session, messages)
+//   - Asynchronous chat processing via goroutines
+//   - SSE event broadcasting to connected clients
+//   - Error handling and graceful degradation
 package handler
 
 import (
@@ -18,22 +34,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// userFriendlyErrorMessage is the default error message shown to users on internal errors.
 const userFriendlyErrorMessage = "抱歉，服务器遇到了一些问题，请稍后再试。"
 
+// ConnectionManager manages SSE connections per session.
+// Each session can have multiple connected clients (e.g., multiple browser tabs).
+// Messages are broadcast to all connections of the same session.
 type ConnectionManager struct {
-	connections map[int64][]chan string
+	connections map[int64][]chan string // sessionID -> list of SSE channels
 }
 
+// connManager is the global singleton for managing SSE connections.
 var connManager = &ConnectionManager{
 	connections: make(map[int64][]chan string),
 }
 
+// Register creates and registers a new SSE channel for a session.
+// Returns the channel for the caller to listen on.
 func (cm *ConnectionManager) Register(sessionID int64) chan string {
 	ch := make(chan string, 256)
 	cm.connections[sessionID] = append(cm.connections[sessionID], ch)
 	return ch
 }
 
+// Unregister removes an SSE channel from a session and closes it.
+// Cleans up the session entry if no connections remain.
 func (cm *ConnectionManager) Unregister(sessionID int64, ch chan string) {
 	conns := cm.connections[sessionID]
 	for i, c := range conns {
@@ -48,6 +73,8 @@ func (cm *ConnectionManager) Unregister(sessionID int64, ch chan string) {
 	}
 }
 
+// Broadcast sends a message to all SSE channels of a session.
+// Drops the message if a channel is full (non-blocking send).
 func (cm *ConnectionManager) Broadcast(sessionID int64, data string) {
 	conns := cm.connections[sessionID]
 	for _, ch := range conns {
@@ -59,6 +86,16 @@ func (cm *ConnectionManager) Broadcast(sessionID int64, data string) {
 	}
 }
 
+// CreateAndSend creates a new session and sends the first message.
+//
+// This is the entry point for new conversations. It:
+//  1. Creates a new session with the message as title
+//  2. Creates the user message record
+//  3. Triggers summary generation if needed
+//  4. Creates the AI message placeholder (streaming status)
+//  5. Starts async chat processing
+//
+// Returns session_id, trigger_message_id, and ai_message_id.
 func (h *Handler) CreateAndSend(c *gin.Context) {
 	message := c.Query("message")
 	if message == "" {
@@ -135,6 +172,17 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 	})
 }
 
+// SendMessage sends a message to an existing session.
+//
+// This is the entry point for continuing conversations. It:
+//  1. Validates the session exists and is not busy
+//  2. Creates the user message record
+//  3. Triggers summary generation if needed
+//  4. Creates the AI message placeholder (streaming status)
+//  5. Updates session status to streaming
+//  6. Starts async chat processing
+//
+// Returns trigger_message_id and ai_message_id.
 func (h *Handler) SendMessage(c *gin.Context) {
 	sessionID := getPathIDFromParam(c, "session_id")
 
@@ -191,6 +239,14 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	})
 }
 
+// StreamMessages handles SSE streaming for a session.
+//
+// Establishes a Server-Sent Events connection that:
+//  1. Sends any existing streaming message content (reconnection support)
+//  2. Registers an SSE channel for real-time updates
+//  3. Streams chunks, notifications, and done/error events
+//  4. Sends heartbeat keep-alive every 30 seconds
+//  5. Cleans up on client disconnect or stream completion
 func (h *Handler) StreamMessages(c *gin.Context) {
 	sessionID := getPathIDFromParam(c, "session_id")
 
@@ -244,6 +300,17 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 	})
 }
 
+// processChatTask is the async chat processing goroutine.
+//
+// This method runs in a background goroutine and:
+//  1. Retrieves the trigger message, session, agent, and LLM config
+//  2. Creates a ChatService instance with SSE callbacks
+//  3. Runs the full chat processing pipeline
+//  4. Finalizes the AI message with the result
+//  5. Broadcasts the "done" event to all SSE clients
+//  6. Recovers from panics with graceful error handling
+//
+// Always sets session status back to idle on completion.
 func (h *Handler) processChatTask(triggerMessageID, aiMessageID, sessionID int64) {
 	applogger.L.Info("processChatTask started",
 		"trigger_message_id", triggerMessageID,
@@ -334,6 +401,7 @@ func (h *Handler) processChatTask(triggerMessageID, aiMessageID, sessionID int64
 	connManager.Broadcast(sessionID, string(doneData))
 }
 
+// finalizeAIMessage updates the AI message with final content and marks it as completed.
 func (h *Handler) finalizeAIMessage(aiMessageID int64, content string) {
 	h.db.Model(&model.Message{}).Where("id = ?", aiMessageID).Updates(map[string]interface{}{
 		"content": content,
@@ -341,6 +409,9 @@ func (h *Handler) finalizeAIMessage(aiMessageID int64, content string) {
 	})
 }
 
+// triggerSummaryIfNeeded checks if summary generation should be triggered
+// based on the current message count and the configured summary window size.
+// Summary is triggered when message count >= summary_window_size.
 func (h *Handler) triggerSummaryIfNeeded(sessionID int64) {
 	settings := config.Get()
 
@@ -353,26 +424,13 @@ func (h *Handler) triggerSummaryIfNeeded(sessionID int64) {
 	}
 }
 
+// generateSummary runs summary generation in a background goroutine.
 func (h *Handler) generateSummary(sessionID int64, version int, windowSize int) {
-	session := h.dataService.GetSession(h.db, sessionID)
-	if session == nil {
-		return
-	}
-	agent := h.dataService.GetAgent(h.db, session.AgentID)
-	if agent == nil {
-		return
-	}
-	llmConfig := h.dataService.GetLLMConfig(h.db, agent.LLMConfigID)
-	if llmConfig == nil {
-		return
-	}
-
-	summaryService := chatcontext.NewSummaryService(h.db, session, agent, llmConfig)
-	if err := summaryService.Generate(version, windowSize); err != nil {
-		applogger.L.Error("Summary generation failed", "session_id", sessionID, "error", err)
-	}
+	chatcontext.GenerateSummaryForSession(h.db, h.dataService, sessionID, version, windowSize)
 }
 
+// getPathIDFromParam extracts an int64 path parameter from the URL.
+// Returns 0 if the parameter is not a valid integer.
 func getPathIDFromParam(c *gin.Context, param string) int64 {
 	idStr := c.Param(param)
 	id, _ := strconv.ParseInt(idStr, 10, 64)

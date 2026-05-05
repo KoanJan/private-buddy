@@ -1,3 +1,20 @@
+// Package taskcontext manages the agent's internal message history within a task execution.
+//
+// This package implements the "fixed part + dynamic part" architecture with
+// iteration window control for the task loop's context management.
+//
+// Fixed part (always fully included):
+//   - system prompt: basic rules + context information
+//   - Task content: task requirements (system-managed)
+//   - Notes content: agent's structured working notes (system-managed)
+//
+// Dynamic part (window-controlled):
+//   - Recent interaction rounds (assistant + tool messages)
+//   - Only the last w iterations are visible to the LLM
+//   - Older iterations are discarded from context
+//
+// Context information is merged into the system prompt so the agent
+// always sees it as top-level instructions.
 package taskcontext
 
 import (
@@ -7,15 +24,30 @@ import (
 	"private-buddy-server/internal/config"
 )
 
+// ContextManager manages the internal message history for a single task execution.
+//
+// Messages follow the OpenAI chat completion format:
+//   - system: { role, content }
+//   - user: { role, content }
+//   - assistant: { role, content } or { role, tool_calls }
+//   - tool: { role, tool_call_id, content }
+//
+// Window applies to the dynamic part only. The fixed part
+// (system prompt with context info, Task, Notes) is always
+// fully included because these are essential prerequisites for
+// the agent's work.
 type ContextManager struct {
-	systemPrompt    string
-	iterationWindow int
-	taskContent     string
-	notesContent    string
-	totalIterations int
-	dynamicMessages [][]map[string]interface{}
+	systemPrompt    string                     // Static system prompt (basic rules)
+	iterationWindow int                        // Number of recent iterations to keep visible
+	taskContent     string                     // Full content of task requirements
+	notesContent    string                     // Full content of agent's notes
+	totalIterations int                        // Total iterations accumulated
+	dynamicMessages [][]map[string]interface{} // Groups of (assistant_msg + tool_results) per iteration
 }
 
+// NewContextManager creates a new ContextManager.
+// Context information will be appended to the system prompt at build time,
+// so the agent always sees it as part of the system-level instructions.
 func NewContextManager(systemPrompt string, iterationWindow int, taskContent, notesContent string) *ContextManager {
 	return &ContextManager{
 		systemPrompt:    systemPrompt,
@@ -25,14 +57,21 @@ func NewContextManager(systemPrompt string, iterationWindow int, taskContent, no
 	}
 }
 
+// IterationWindow returns the iteration window size.
 func (cm *ContextManager) IterationWindow() int {
 	return cm.iterationWindow
 }
 
+// RefreshNotes updates notes content (agent may have appended via write_notes tool).
 func (cm *ContextManager) RefreshNotes(newNotesContent string) {
 	cm.notesContent = newNotesContent
 }
 
+// AddIteration adds a complete iteration (assistant message + tool results).
+//
+// An iteration is a group of messages that must be kept together
+// to maintain conversation coherence. The assistant message and
+// its associated tool results are always included or excluded as a unit.
 func (cm *ContextManager) AddIteration(assistantMsg map[string]interface{}, toolResults []map[string]interface{}) {
 	group := []map[string]interface{}{assistantMsg}
 	group = append(group, toolResults...)
@@ -40,6 +79,15 @@ func (cm *ContextManager) AddIteration(assistantMsg map[string]interface{}, tool
 	cm.totalIterations++
 }
 
+// BuildMessages assembles the final message list for LLM call.
+//
+// Order:
+//  1. system prompt (basic rules + context information)
+//  2. user: Task content
+//  3. user: Notes content
+//  4. dynamic messages (recent iterations within window)
+//
+// Window applies to dynamic part only; fixed part is always fully included.
 func (cm *ContextManager) BuildMessages() []map[string]interface{} {
 	window := cm.iterationWindow
 	var visible [][]map[string]interface{}
@@ -68,6 +116,16 @@ func (cm *ContextManager) BuildMessages() []map[string]interface{} {
 	return messages
 }
 
+// buildFullSystemPrompt builds the full system prompt by merging static rules
+// with dynamic context information.
+//
+// Context information is appended to the system prompt so the agent always sees
+// it as system-level instructions rather than a separate user message that may
+// be overlooked. Includes:
+//   - Working memory limit and visible iteration count
+//   - Notes size warning if approaching limit (>80%)
+//   - Instructions for understanding current project state
+//   - NOTES usage guide (entry types and best practices)
 func (cm *ContextManager) buildFullSystemPrompt(visibleIterations, invisibleIterations, notesLength int) string {
 	settings := config.Get()
 	notesMaxChars := settings.NotesMaxChars

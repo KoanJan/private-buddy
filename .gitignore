@@ -95,6 +95,10 @@ server/chroma_db/
 server/data/
 server/pyinstaller_cache/
 
+# Go build artifacts
+server_go/private-buddy-server
+server_go/private-buddy-server.exe
+
 # Temporary files
 *.tmp
 *.temp

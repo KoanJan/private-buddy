@@ -12,10 +12,14 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+// WebSearchTool searches the web for information using configured search providers.
+// Currently supports Tavily as the search provider.
+// Returns a list of search results with title, URL, and snippet.
 type WebSearchTool struct {
-	searchConfig *model.SearchConfig
+	searchConfig *model.SearchConfig // Search configuration containing provider and API key
 }
 
+// NewWebSearchTool creates a WebSearchTool with the given search configuration.
 func NewWebSearchTool(searchConfig *model.SearchConfig) *WebSearchTool {
 	return &WebSearchTool{searchConfig: searchConfig}
 }
@@ -44,17 +48,21 @@ func (w *WebSearchTool) Schema() openai.FunctionDefinition {
 	}
 }
 
+// SearchResult represents a single web search result.
 type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
 }
 
+// SearchResponse is the structured response for web search execution.
 type SearchResponse struct {
 	Results []SearchResult `json:"results"`
 	Error   string         `json:"error,omitempty"`
 }
 
+// Execute performs a web search and returns results as JSON.
+// Returns error message if search config is not available or provider is unknown.
 func (w *WebSearchTool) Execute(args map[string]interface{}) (string, error) {
 	query, _ := args["query"].(string)
 	numResults := 5
@@ -95,6 +103,8 @@ func (w *WebSearchTool) Execute(args map[string]interface{}) (string, error) {
 	return string(resp), nil
 }
 
+// searchTavily performs a search using the Tavily API.
+// Sends a POST request to the Tavily search endpoint and parses the response.
 func (w *WebSearchTool) searchTavily(apiKey, query string, numResults int) ([]SearchResult, error) {
 	payload := map[string]interface{}{
 		"api_key":     apiKey,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,10 +13,21 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// BashTool executes shell commands within a workspace.
+//
+// Provides the agent with the ability to run shell commands on the local system.
+// Commands are confined to the task's workspace directory to ensure isolation.
+// Supports configurable timeout and returns stdout, stderr, and exit code.
+//
+// Security:
+//   - Path traversal outside workspace is blocked
+//   - Access to .meta directory is blocked (system-managed files)
 type BashTool struct {
-	workspace string
+	workspace string // Working directory for command execution
 }
 
+// NewBashTool creates a BashTool with the given workspace directory.
+// If workspace is set, commands run with CWD=workspace and path traversal is blocked.
 func NewBashTool(workspace string) *BashTool {
 	return &BashTool{workspace: workspace}
 }
@@ -48,12 +60,15 @@ func (b *BashTool) Schema() openai.FunctionDefinition {
 	}
 }
 
+// BashResult holds the structured output of a bash command execution.
 type BashResult struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
 }
 
+// Execute runs a bash command and returns structured output.
+// Handles timeout, security checks, and returns JSON with stdout/stderr/exit_code.
 func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	command, _ := args["command"].(string)
 	timeoutMs := 30000
@@ -125,6 +140,8 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	}
 }
 
+// isBlockedCommand checks if a command should be blocked for security reasons.
+// Blocks access to .meta directory and path traversal outside workspace.
 func (b *BashTool) isBlockedCommand(command string) string {
 	checkPart := stripHeredocContent(command)
 
@@ -139,6 +156,8 @@ func (b *BashTool) isBlockedCommand(command string) string {
 	return ""
 }
 
+// isPathTraversal checks if a command attempts to access paths outside the workspace.
+// Examines command parts for absolute paths and ".." traversal patterns.
 func (b *BashTool) isPathTraversal(command string) bool {
 	if b.workspace == "" {
 		return false
@@ -151,12 +170,26 @@ func (b *BashTool) isPathTraversal(command string) bool {
 			}
 		}
 		if strings.Contains(part, "..") {
-			return true
+			resolved := safeResolve(part, b.workspace)
+			if resolved != "" && !strings.HasPrefix(resolved, b.workspace) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+// safeResolve resolves a path relative to the workspace and returns the cleaned path.
+func safeResolve(pathStr, workspace string) string {
+	if filepath.IsAbs(pathStr) {
+		return filepath.Clean(pathStr)
+	}
+	joined := filepath.Join(workspace, pathStr)
+	return filepath.Clean(joined)
+}
+
+// stripHeredocContent removes heredoc content from a command for security checking.
+// Heredoc content may contain paths that should not be checked for traversal.
 func stripHeredocContent(command string) string {
 	idx := strings.Index(command, "<<")
 	if idx < 0 {
@@ -165,6 +198,8 @@ func stripHeredocContent(command string) string {
 	return command[:idx]
 }
 
+// isSafeAbsolutePath checks if an absolute path is a known safe system directory.
+// Paths under /bin/, /usr/bin/, /usr/local/bin/, /sbin/, /usr/sbin/, /opt/homebrew/ are allowed.
 func isSafeAbsolutePath(pathStr string) bool {
 	safePrefixes := []string{"/bin/", "/usr/bin/", "/usr/local/bin/", "/sbin/", "/usr/sbin/", "/opt/homebrew/"}
 	for _, prefix := range safePrefixes {

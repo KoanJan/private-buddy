@@ -10,6 +10,8 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// cachedNarrativePrompt generates a narrative from summary content only.
+// Used for cached narrative generation after summary creation.
 const cachedNarrativePrompt = `You are a conversation background narrative assistant. Generate a coherent background narrative based on the summary.
 
 Summary:
@@ -30,6 +32,8 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 
 Output only the narrative content.`
 
+// narrativePrompt generates a narrative from summary + RAG segments.
+// Used for legacy real-time narrative generation.
 const narrativePrompt = `You are a conversation background narrative assistant. Generate a coherent background narrative based on the following information.
 
 %s
@@ -48,15 +52,37 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 - If the conversation contains multiple languages, the narrative may also contain multiple languages.
 - Do NOT translate between languages. Maintain information fidelity.`
 
+// NarrativeService generates background narratives from context components.
+//
+// Two generation modes are supported:
+//  1. Cached narrative (from summary only, no segments):
+//     - Generated in background immediately after summary generation
+//     - Stored in historical_summaries.narrative field alongside the summary
+//     - Retrieved at chat time without LLM call (major performance gain)
+//     - Segments are handled as an independent section in context assembly
+//
+//  2. Legacy real-time narrative (from summary + segments):
+//     - Generated on-the-fly during chat processing
+//     - Segments are naturally integrated into the narrative
+//     - Kept for backward compatibility but no longer used in main flow
+//
+// Narrative Perspective Design:
+//   - Uses internal focalization (agent's viewpoint) rather than external focalization
+//   - The agent is addressed as "You" to enhance immersion and continuity
+//   - This helps the LLM naturally continue the conversation rather than "retell" it
 type NarrativeService struct{}
 
+// NewNarrativeService creates a NarrativeService instance.
 func NewNarrativeService() *NarrativeService {
 	return &NarrativeService{}
 }
 
 // GenerateNarrativeFromSummary generates a cached narrative from summary content only.
-// Called in background immediately after summary generation. The narrative is stored
-// alongside the summary and retrieved at chat time without LLM call.
+//
+// This is the cached narrative generation method, called in background
+// immediately after summary generation. The narrative is stored alongside
+// the summary and retrieved at chat time without LLM call.
+// Uses temperature=0.3 for creative but controlled output.
 func (ns *NarrativeService) GenerateNarrativeFromSummary(llmConfig *model.LLMConfig, summaryContent string) string {
 	if summaryContent == "" {
 		return ""
@@ -64,7 +90,7 @@ func (ns *NarrativeService) GenerateNarrativeFromSummary(llmConfig *model.LLMCon
 
 	prompt := fmt.Sprintf(cachedNarrativePrompt, summaryContent)
 
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 4096, 0.3)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.3)
 
 	result, err := chatModel.Chat(context.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
@@ -79,7 +105,10 @@ func (ns *NarrativeService) GenerateNarrativeFromSummary(llmConfig *model.LLMCon
 }
 
 // GenerateBackgroundStory generates a background story from summary and RAG segments.
-// Legacy real-time generation method for backward compatibility.
+//
+// Legacy real-time generation method. Segments are naturally integrated
+// into the narrative for maximum coherence, but this requires an LLM
+// call during chat processing. Uses temperature=0.3 for creative but controlled output.
 func (ns *NarrativeService) GenerateBackgroundStory(
 	llmConfig *model.LLMConfig,
 	summary map[string]interface{},
@@ -111,7 +140,7 @@ func (ns *NarrativeService) GenerateBackgroundStory(
 
 	prompt := fmt.Sprintf(narrativePrompt, summarySection, segmentsSection)
 
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 4096, 0.3)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.3)
 
 	result, err := chatModel.Chat(context.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},

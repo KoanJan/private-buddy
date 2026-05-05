@@ -16,7 +16,7 @@ import (
 
 	applogger "private-buddy-server/internal/logger"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/glebarez/go-sqlite/compat"
 )
 
 type VectorStoreService struct {

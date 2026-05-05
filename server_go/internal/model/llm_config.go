@@ -2,6 +2,8 @@ package model
 
 import "time"
 
+// LLMConfig stores the configuration for connecting to an LLM API provider.
+// Includes model ID, base URL, and API key for the OpenAI-compatible API.
 type LLMConfig struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name        string    `gorm:"type:varchar(100);not null" json:"name"`

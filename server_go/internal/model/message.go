@@ -1,16 +1,22 @@
+// Package model defines the database models for the application.
 package model
 
 import "time"
 
+// Message status constants.
 const (
-	MessageStatusStreaming = 0
-	MessageStatusCompleted = 1
+	MessageStatusStreaming  = 0 // Message is currently being generated (SSE streaming)
+	MessageStatusCompleted = 1 // Message generation is complete
 
-	HasInteractionsPending = 0
-	HasInteractionsExists  = 1
-	HasInteractionsNone    = 2
+	// HasInteractions values indicate whether a message has associated agent interactions.
+	HasInteractionsPending = 0 // Not yet determined (will be checked during processing)
+	HasInteractionsExists  = 1 // Message has associated world-interaction records
+	HasInteractionsNone    = 2 // Message has no world-interaction records
 )
 
+// Message represents a chat message in a session.
+// Messages can be from the user (role="user") or the AI assistant (role="assistant").
+// Assistant messages go through a streaming phase before being completed.
 type Message struct {
 	ID              int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	SessionID       int64     `gorm:"not null;index;column:session_id" json:"session_id"`

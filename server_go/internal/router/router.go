@@ -1,3 +1,4 @@
+// Package router sets up the Gin HTTP router with all API endpoints.
 package router
 
 import (
@@ -14,6 +15,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// SetupRouter creates and configures the Gin engine with all routes.
+// Includes CORS middleware, static file serving for avatars, and all API endpoints.
 func SetupRouter(db *gorm.DB) *gin.Engine {
 	r := gin.Default()
 

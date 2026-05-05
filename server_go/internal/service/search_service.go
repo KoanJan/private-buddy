@@ -4,15 +4,19 @@ import (
 	"private-buddy-server/internal/model"
 
 	applogger "private-buddy-server/internal/logger"
+
 	"gorm.io/gorm"
 )
 
+// SearchService manages web search configuration.
 type SearchService struct{}
 
+// NewSearchService creates a new SearchService instance.
 func NewSearchService() *SearchService {
 	return &SearchService{}
 }
 
+// GetConfig retrieves the search configuration. Creates a default if not found.
 func (s *SearchService) GetConfig(db *gorm.DB) *model.SearchConfig {
 	var config model.SearchConfig
 	if err := db.Where("id = ?", 1).First(&config).Error; err != nil {
@@ -28,6 +32,7 @@ func (s *SearchService) GetConfig(db *gorm.DB) *model.SearchConfig {
 	return &config
 }
 
+// UpdateConfig updates the search configuration with non-nil fields.
 func (s *SearchService) UpdateConfig(db *gorm.DB, provider, apiKey, description *string, isActive *bool) *model.SearchConfig {
 	config := s.GetConfig(db)
 

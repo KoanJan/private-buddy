@@ -5,11 +5,6 @@ directories:
 files:
   - electron/dist/**/*
   - web-dist/**/*
-extraResources:
-  - from: server/dist/private-buddy-server
-    to: python-server/private-buddy-server
-    filter:
-      - "**/*"
 mac:
   target:
     - dmg
@@ -17,16 +12,33 @@ mac:
   category: public.app-category.productivity
   icon: build/icon.icns
   hardenedRuntime: true
+  extraResources:
+    - from: server_go/private-buddy-server
+      to: go-server/private-buddy-server
+    - from: server_go/.env
+      to: go-server/.env
   extendInfo:
     NSMicrophoneUsageDescription: "Private Buddy does not use the microphone."
     NSCameraUsageDescription: "Private Buddy does not use the camera."
 win:
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
   icon: build/icon.ico
+  extraResources:
+    - from: server_go/private-buddy-server.exe
+      to: go-server/private-buddy-server.exe
+    - from: server_go/.env
+      to: go-server/.env
 linux:
   target:
     - AppImage
     - deb
   icon: build/icon-1024.png
   category: Utility
+  extraResources:
+    - from: server_go/private-buddy-server
+      to: go-server/private-buddy-server
+    - from: server_go/.env
+      to: go-server/.env

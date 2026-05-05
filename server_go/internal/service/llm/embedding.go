@@ -7,12 +7,15 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+// EmbeddingService provides text embedding functionality using OpenAI-compatible APIs.
+// Used for RAG (Retrieval-Augmented Generation) vector operations.
 type EmbeddingService struct {
 	client  *openai.Client
 	modelID string
 	dim     int
 }
 
+// NewEmbeddingService creates an EmbeddingService with the given API configuration.
 func NewEmbeddingService(baseURL, apiKey, modelID string, dim int) *EmbeddingService {
 	cfg := openai.DefaultConfig(apiKey)
 	if baseURL != "" {
@@ -25,6 +28,7 @@ func NewEmbeddingService(baseURL, apiKey, modelID string, dim int) *EmbeddingSer
 	}
 }
 
+// Embed generates embeddings for multiple texts in a single API call.
 func (es *EmbeddingService) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	resp, err := es.client.CreateEmbeddings(ctx, openai.EmbeddingRequestStrings{
 		Input: texts,
@@ -42,6 +46,7 @@ func (es *EmbeddingService) Embed(ctx context.Context, texts []string) ([][]floa
 	return result, nil
 }
 
+// EmbedSingle generates an embedding for a single text.
 func (es *EmbeddingService) EmbedSingle(ctx context.Context, text string) ([]float32, error) {
 	embeddings, err := es.Embed(ctx, []string{text})
 	if err != nil {
@@ -53,6 +58,7 @@ func (es *EmbeddingService) EmbedSingle(ctx context.Context, text string) ([]flo
 	return embeddings[0], nil
 }
 
+// Dimension returns the embedding vector dimension.
 func (es *EmbeddingService) Dimension() int {
 	return es.dim
 }

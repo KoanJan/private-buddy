@@ -1,3 +1,15 @@
+// Package database provides SQLite database initialization and migration.
+//
+// This package handles:
+//   - Database connection setup with WAL mode for concurrent access
+//   - Auto-migration of all model tables
+//   - Default data seeding (search config, DB version)
+//
+// SQLite configuration:
+//   - WAL journal mode for better concurrent read performance
+//   - 5-second busy timeout for write contention
+//   - Immediate transaction locking to prevent deadlocks
+//   - Single connection pool (SQLite limitation)
 package database
 
 import (
@@ -10,13 +22,17 @@ import (
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
 
+// DB is the global database connection instance.
 var DB *gorm.DB
 
+// Init initializes the SQLite database connection.
+// Creates the database directory if it doesn't exist.
+// Configures WAL mode, busy timeout, and immediate transaction locking.
 func Init() {
 	settings := config.Get()
 
@@ -48,6 +64,8 @@ func Init() {
 	applogger.L.Info("Database initialized", "path", dbPath)
 }
 
+// AutoMigrate creates all database tables that don't already exist.
+// Also seeds default data for search_config and db_version tables.
 func AutoMigrate() {
 	models := []interface{}{
 		&model.LLMConfig{},
@@ -75,6 +93,7 @@ func AutoMigrate() {
 	applogger.L.Info("Database migration completed")
 }
 
+// hasTable checks if a database table already exists for the given model.
 func hasTable(m interface{}) bool {
 	stmt := &gorm.Statement{DB: DB}
 	if err := stmt.Parse(m); err != nil {
@@ -83,6 +102,7 @@ func hasTable(m interface{}) bool {
 	return DB.Migrator().HasTable(stmt.Table)
 }
 
+// ensureSearchConfig creates the default search config record if it doesn't exist.
 func ensureSearchConfig() {
 	var count int64
 	DB.Model(&model.SearchConfig{}).Where("id = ?", 1).Count(&count)
@@ -96,6 +116,7 @@ func ensureSearchConfig() {
 	}
 }
 
+// ensureDBVersion creates the initial DB version record if the table is empty.
 func ensureDBVersion() {
 	var count int64
 	DB.Model(&model.DBVersion{}).Count(&count)

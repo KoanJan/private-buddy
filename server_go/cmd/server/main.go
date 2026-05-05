@@ -36,8 +36,13 @@ func main() {
 
 	r := router.SetupRouter(database.DB)
 
-	applogger.L.Info("Server listening on :8000")
-	if err := r.Run(":8000"); err != nil {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+	addr := fmt.Sprintf(":%s", port)
+	applogger.L.Info("Server listening", "addr", addr)
+	if err := r.Run(addr); err != nil {
 		applogger.L.Error("Server failed to start", "error", err)
 		panic(err)
 	}

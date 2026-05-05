@@ -2,11 +2,17 @@ package model
 
 import "time"
 
+// Interaction type constants.
 const (
-	InteractionTypeRequest  = 1
-	InteractionTypeResponse = 2
+	InteractionTypeRequest  = 1 // Messages sent to the LLM
+	InteractionTypeResponse = 2 // LLM output including thoughts, tool_calls, finish_reason
 )
 
+// Interaction captures one step of the ReAct loop for agent-world interactions.
+//
+// Interactions are grouped by (session_id, user_msg_id, agent_msg_id, iteration)
+// to support both frontend display and debugging.
+// Each iteration produces two records: a request (type=1) and a response (type=2).
 type Interaction struct {
 	ID         int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	SessionID  int64     `gorm:"not null;index;column:session_id" json:"session_id"`

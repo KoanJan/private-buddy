@@ -10,6 +10,7 @@ import (
 )
 
 // RetrievalResult holds all context components retrieved for chat processing.
+// Mirrors Python's retrieval result dictionary with typed fields.
 type RetrievalResult struct {
 	RecentMessages   []map[string]interface{} `json:"recent_messages"`
 	RelevantSegments []map[string]interface{} `json:"relevant_segments"`
@@ -19,6 +20,17 @@ type RetrievalResult struct {
 }
 
 // RetrievalService retrieves context components for chat processing.
+//
+// This service coordinates the retrieval of:
+//   - Recent messages (with optional status filter)
+//   - RAG segments (if embedding is configured)
+//   - Latest summary (if available)
+//   - Cached narrative (from summary record, if available)
+//
+// The retrieval process supports both RAG-enabled and RAG-disabled modes.
+// Narrative is retrieved from the summary record's narrative field (cached,
+// generated in background alongside summary), eliminating the need for
+// real-time narrative generation during chat processing.
 type RetrievalService struct {
 	db *gorm.DB
 }
@@ -28,6 +40,8 @@ func NewRetrievalService(db *gorm.DB) *RetrievalService {
 }
 
 // GetEmbeddingConfigForSession returns the embedding config for a session's agent.
+// Traverses session -> agent -> embedding_config to find the configuration.
+// Returns nil if any step fails (session not found, agent not found, no config).
 func (rs *RetrievalService) GetEmbeddingConfigForSession(sessionID int64) *model.EmbeddingConfig {
 	var session model.Session
 	if err := rs.db.First(&session, sessionID).Error; err != nil {
@@ -51,6 +65,8 @@ func (rs *RetrievalService) GetEmbeddingConfigForSession(sessionID int64) *model
 }
 
 // GetRecentMessages returns recent messages from a session in chronological order.
+// Messages are fetched in DESC order by ID and then reversed to ASC order.
+// If status is provided, only messages with that status are returned.
 func (rs *RetrievalService) GetRecentMessages(sessionID int64, limit int, status *int) []map[string]interface{} {
 	query := rs.db.Model(&model.Message{}).Where("session_id = ?", sessionID)
 
@@ -77,6 +93,8 @@ func (rs *RetrievalService) GetRecentMessages(sessionID int64, limit int, status
 }
 
 // buildSummaryAndNarrative extracts summary dict and cached narrative from a HistoricalSummary.
+// Returns (nil, nil) if latestSummary is nil.
+// The narrative is only set if the HistoricalSummary has a non-empty Narrative field.
 func (rs *RetrievalService) buildSummaryAndNarrative(latestSummary *model.HistoricalSummary) (map[string]interface{}, *string) {
 	if latestSummary == nil {
 		return nil, nil
@@ -96,6 +114,8 @@ func (rs *RetrievalService) buildSummaryAndNarrative(latestSummary *model.Histor
 }
 
 // GetContextWithoutRAG retrieves context without RAG retrieval.
+// Used for queries that don't need RAG (e.g., greetings, chitchat).
+// Retrieves recent messages, latest summary, and cached narrative.
 func (rs *RetrievalService) GetContextWithoutRAG(sessionID int64, recentCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []map[string]interface{}{},
@@ -113,6 +133,12 @@ func (rs *RetrievalService) GetContextWithoutRAG(sessionID int64, recentCount in
 }
 
 // GetContextForChat retrieves full context for chat processing with RAG.
+//
+// This method retrieves all context components:
+//  1. Recent messages from the session
+//  2. RAG segments relevant to the query (if embedding configured)
+//  3. Latest summary (if available)
+//  4. Cached narrative from summary record (if available)
 func (rs *RetrievalService) GetContextForChat(sessionID int64, query string, recentCount int, ragCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []map[string]interface{}{},
@@ -157,6 +183,8 @@ func (rs *RetrievalService) GetContextForChat(sessionID int64, query string, rec
 }
 
 // IndexMessages adds messages to the vector store for RAG retrieval.
+// This method adds messages to the vector store after they are completed,
+// enabling future RAG retrieval. Returns true if indexing succeeded.
 func (rs *RetrievalService) IndexMessages(sessionID int64, messageIDs []int64) bool {
 	embeddingConfig := rs.GetEmbeddingConfigForSession(sessionID)
 	if embeddingConfig == nil {

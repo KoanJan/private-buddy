@@ -11,12 +11,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getPathID extracts an int64 "id" path parameter from the URL.
 func getPathID(c *gin.Context) int64 {
 	idStr := c.Param("id")
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	return id
 }
 
+// getPagination extracts skip and limit query parameters with defaults (0, 100).
 func getPagination(c *gin.Context) (skip, limit int) {
 	skip = 0
 	limit = 100
@@ -33,6 +35,7 @@ func getPagination(c *gin.Context) (skip, limit int) {
 	return
 }
 
+// derefString safely dereferences a string pointer, returning "" for nil.
 func derefString(s *string) string {
 	if s == nil {
 		return ""
@@ -40,20 +43,24 @@ func derefString(s *string) string {
 	return *s
 }
 
+// getAvatarsDir returns the avatars directory path from configuration.
 func getAvatarsDir() string {
 	return config.Get().GetAvatarsDir()
 }
 
+// osRemoveIfExists removes a file, ignoring errors if it doesn't exist.
 func osRemoveIfExists(path string) {
 	os.Remove(path)
 }
 
+// removeSessionWorkspace removes the workspace directory for a session.
 func removeSessionWorkspace(sessionID int64) {
 	settings := config.Get()
 	workspaceDir := settings.GetWorkspaceRoot() + "/" + strconv.FormatInt(sessionID, 10)
 	os.RemoveAll(workspaceDir)
 }
 
+// toLLMConfigResponse converts an LLMConfig model to its API response schema.
 func toLLMConfigResponse(m *model.LLMConfig) *schema.LLMConfigResponse {
 	return &schema.LLMConfigResponse{
 		ID:          m.ID,
@@ -67,6 +74,7 @@ func toLLMConfigResponse(m *model.LLMConfig) *schema.LLMConfigResponse {
 	}
 }
 
+// toLLMConfigResponseList converts a slice of LLMConfig models to API response schemas.
 func toLLMConfigResponseList(entities []model.LLMConfig) []*schema.LLMConfigResponse {
 	result := make([]*schema.LLMConfigResponse, 0, len(entities))
 	for i := range entities {
@@ -75,6 +83,7 @@ func toLLMConfigResponseList(entities []model.LLMConfig) []*schema.LLMConfigResp
 	return result
 }
 
+// buildLLMConfigUpdates builds a map of non-nil fields from an update request for partial updates.
 func buildLLMConfigUpdates(req *schema.LLMConfigUpdate) map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.Name != nil {
