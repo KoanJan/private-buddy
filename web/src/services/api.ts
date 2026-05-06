@@ -8,9 +8,6 @@ declare global {
       getAppVersion: () => Promise<string>;
       isPackaged: () => Promise<boolean>;
       getPlatform: () => Promise<string>;
-      windowMinimize: () => Promise<void>;
-      windowMaximize: () => Promise<void>;
-      windowClose: () => Promise<void>;
       onBackendStatus: (callback: (status: string) => void) => () => void;
       onBackendError: (callback: (error: string) => void) => () => void;
     };

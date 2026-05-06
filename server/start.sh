@@ -19,7 +19,7 @@ fi
 
 echo "Building server..."
 export GOPROXY=https://goproxy.cn,direct
-go build -o private-buddy-server ./cmd/server/
+go build -o private-buddy-server ./cmd/
 
 # RUN_DIR="/tmp/private-buddy-server"
 # mkdir -p "$RUN_DIR"

@@ -15,7 +15,7 @@ UNPACKED_DIR="dist-electron/linux/linux-arm64-unpacked"
 
 # Step 1: Build Go server for Linux
 echo "=== Building Go server for Linux ==="
-cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o private-buddy-server ./cmd/server/
+cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o private-buddy-server ./cmd/
 cd "$SCRIPT_DIR"
 
 # Step 2: Build web and electron

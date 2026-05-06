@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Tooltip, message } from 'antd';
-import { SettingOutlined, PlusOutlined, ArrowLeftOutlined, MinusOutlined, BorderOutlined, CloseOutlined } from '@ant-design/icons';
+import { SettingOutlined, PlusOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage, getCurrentLanguage } from './i18n';
 import AgentList from './components/AgentList';
@@ -35,12 +35,14 @@ function App() {
   const [showCreateEmbedding, setShowCreateEmbedding] = useState(false);
   const [currentLang, setCurrentLang] = useState(getCurrentLanguage());
   const [version, setVersion] = useState<string>('');
-  const [isNonMacElectron, setIsNonMacElectron] = useState(false);
+  const [isMacElectron, setIsMacElectron] = useState(false);
+  const [isWinLinuxElectron, setIsWinLinuxElectron] = useState(false);
 
   useEffect(() => {
     if (window.electronAPI) {
       window.electronAPI.getPlatform().then(platform => {
-        setIsNonMacElectron(platform !== 'darwin');
+        setIsMacElectron(platform === 'darwin');
+        setIsWinLinuxElectron(platform !== 'darwin');
       });
       initApiClient();
     }
@@ -286,7 +288,7 @@ function App() {
 
   return (
     <div className="app-container">
-      <header className={`app-header${isNonMacElectron ? '' : ' app-header-mac'}`}>
+      <header className={`app-header${isMacElectron ? ' app-header-mac' : ''}${isWinLinuxElectron ? ' app-header-win-linux' : ''}`}>
         <Tooltip title={version ? `v${version}` : ''} placement="right">
           <div className="app-logo">
             <img src="./favicon.svg" alt="logo" className="app-logo-img" />
@@ -303,19 +305,6 @@ function App() {
               fontSize: '18px',
             }}
           />
-          {isNonMacElectron && (
-            <div className="window-controls">
-              <button onClick={() => window.electronAPI?.windowMinimize()} title="Minimize">
-                <MinusOutlined />
-              </button>
-              <button onClick={() => window.electronAPI?.windowMaximize()} title="Maximize">
-                <BorderOutlined />
-              </button>
-              <button className="window-close" onClick={() => window.electronAPI?.windowClose()} title="Close">
-                <CloseOutlined />
-              </button>
-            </div>
-          )}
         </div>
       </header>
 

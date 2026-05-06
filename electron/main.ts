@@ -55,8 +55,12 @@ function createMainWindow(autoShow: boolean = false): void {
     minWidth: 800,
     minHeight: 600,
     title: APP_NAME,
-    titleBarStyle: isMac ? 'hidden' : undefined,
-    frame: !isMac ? false : undefined,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      height: 38,
+      color: '#ffffff',
+      symbolColor: '#6b7280',
+    },
     show: false,
     webPreferences: {
       nodeIntegration: false,
@@ -104,15 +108,6 @@ app.on('ready', async () => {
   ipcMain.handle('get-app-version', () => app.getVersion());
   ipcMain.handle('is-packaged', () => app.isPackaged);
   ipcMain.handle('get-platform', () => process.platform);
-  ipcMain.handle('window-minimize', () => mainWindow?.minimize());
-  ipcMain.handle('window-maximize', () => {
-    if (mainWindow?.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow?.maximize();
-    }
-  });
-  ipcMain.handle('window-close', () => mainWindow?.close());
 
   createSplashWindow();
 
