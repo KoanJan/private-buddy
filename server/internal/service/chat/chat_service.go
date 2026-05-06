@@ -30,7 +30,7 @@ import (
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
-	chatcontext "private-buddy-server/internal/service/chat/context"
+	chatcontext "private-buddy-server/internal/service/chat/chatctx"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/task"
 
@@ -184,7 +184,7 @@ func (cs *ChatService) Process(triggerMessageID, aiMessageID int64) (string, err
 			Update("has_interactions", model.HasInteractionsNone)
 	}
 
-	chatModel := llm.NewChatModelWithTemperature(cs.llmConfig.BaseURL, cs.llmConfig.APIKey, cs.llmConfig.ModelID, 0.7)
+	chatModel := llm.NewChatModelWithTemperature(cs.llmConfig.BaseURL, cs.llmConfig.APIKey, cs.llmConfig.ModelID, llm.TemperatureCreative)
 
 	var messages []llm.ChatMessage
 	var hasEmbedding bool

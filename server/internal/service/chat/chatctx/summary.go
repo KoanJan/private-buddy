@@ -3,10 +3,10 @@
 // This package provides the context assembly services that build the LLM message
 // sequence from various context sources: summaries, narratives, retrieval results,
 // user state, and task results. It matches Python's chat/context module.
-package context
+package chatctx
 
 import (
-	"context"
+	stdctx "context"
 	"fmt"
 
 	"private-buddy-server/internal/model"
@@ -146,7 +146,7 @@ func (ss *SummaryService) Generate(version int, windowSize int) error {
 
 	// Generate summary content using LLM
 	chatModel := ss.createChatModel()
-	summaryContent, err := chatModel.Chat(context.Background(), []llm.ChatMessage{
+	summaryContent, err := chatModel.Chat(stdctx.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
@@ -224,7 +224,7 @@ func (ss *SummaryService) formatMessagesForSummary(messages []model.Message) str
 
 // createChatModel creates a ChatModel for summary generation with default temperature.
 func (ss *SummaryService) createChatModel() *llm.ChatModel {
-	return llm.NewChatModelWithTemperature(ss.llmConfig.BaseURL, ss.llmConfig.APIKey, ss.llmConfig.ModelID, 0.7)
+	return llm.NewChatModelWithTemperature(ss.llmConfig.BaseURL, ss.llmConfig.APIKey, ss.llmConfig.ModelID, llm.TemperatureCreative)
 }
 
 // GetLatestSummary returns the latest summary for the session.

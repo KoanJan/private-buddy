@@ -1,7 +1,7 @@
-package context
+package chatctx
 
 import (
-	"context"
+	stdctx "context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -115,7 +115,7 @@ func (uss *UserStateService) formatRecentMessages(recentMessages []map[string]in
 }
 
 // InferUserState infers the user's current state from recent conversation messages.
-// Uses temperature=0.1 for consistent, deterministic outputs.
+// Uses TemperatureDeterministic for consistent, deterministic outputs.
 // Returns nil if inference fails, allowing the chat flow to continue without user state.
 func (uss *UserStateService) InferUserState(
 	llmConfig *model.LLMConfig,
@@ -125,12 +125,12 @@ func (uss *UserStateService) InferUserState(
 		return nil
 	}
 
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
 	dialogText := uss.formatRecentMessages(recentMessages)
 	prompt := fmt.Sprintf(userStateInferencePrompt, dialogText)
 
-	result, err := chatModel.ChatWithJSONSchema(context.Background(), []llm.ChatMessage{
+	result, err := chatModel.ChatWithJSONSchema(stdctx.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "UserState",

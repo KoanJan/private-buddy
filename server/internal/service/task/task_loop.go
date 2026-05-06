@@ -297,7 +297,7 @@ func (tl *TaskLoop) runNotesIteration(iteration int, messages []map[string]inter
 	}
 
 	if tl.checkpointClient == nil {
-		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, 0.7)
+		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, llm.TemperatureCreative)
 	}
 
 	iterType := "checkpoint"
@@ -445,7 +445,7 @@ func (tl *TaskLoop) updateNotesOnSuccess(iteration int, finalContent string, mes
 	}
 
 	if tl.checkpointClient == nil {
-		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, 0.7)
+		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, llm.TemperatureCreative)
 	}
 
 	applogger.L.Info("Updating notes after successful completion", "iteration", iteration)

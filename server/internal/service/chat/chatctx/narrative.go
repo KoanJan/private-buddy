@@ -1,7 +1,7 @@
-package context
+package chatctx
 
 import (
-	"context"
+	stdctx "context"
 	"fmt"
 
 	"private-buddy-server/internal/model"
@@ -55,6 +55,7 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 // NarrativeService generates background narratives from context components.
 //
 // Two generation modes are supported:
+//
 //  1. Cached narrative (from summary only, no segments):
 //     - Generated in background immediately after summary generation
 //     - Stored in historical_summaries.narrative field alongside the summary
@@ -82,7 +83,7 @@ func NewNarrativeService() *NarrativeService {
 // This is the cached narrative generation method, called in background
 // immediately after summary generation. The narrative is stored alongside
 // the summary and retrieved at chat time without LLM call.
-// Uses temperature=0.3 for creative but controlled output.
+// Uses TemperatureControlled for creative but controlled output.
 func (ns *NarrativeService) GenerateNarrativeFromSummary(llmConfig *model.LLMConfig, summaryContent string) string {
 	if summaryContent == "" {
 		return ""
@@ -90,9 +91,9 @@ func (ns *NarrativeService) GenerateNarrativeFromSummary(llmConfig *model.LLMCon
 
 	prompt := fmt.Sprintf(cachedNarrativePrompt, summaryContent)
 
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.3)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 
-	result, err := chatModel.Chat(context.Background(), []llm.ChatMessage{
+	result, err := chatModel.Chat(stdctx.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
@@ -108,7 +109,7 @@ func (ns *NarrativeService) GenerateNarrativeFromSummary(llmConfig *model.LLMCon
 //
 // Legacy real-time generation method. Segments are naturally integrated
 // into the narrative for maximum coherence, but this requires an LLM
-// call during chat processing. Uses temperature=0.3 for creative but controlled output.
+// call during chat processing. Uses TemperatureControlled for creative but controlled output.
 func (ns *NarrativeService) GenerateBackgroundStory(
 	llmConfig *model.LLMConfig,
 	summary map[string]interface{},
@@ -140,9 +141,9 @@ func (ns *NarrativeService) GenerateBackgroundStory(
 
 	prompt := fmt.Sprintf(narrativePrompt, summarySection, segmentsSection)
 
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.3)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 
-	result, err := chatModel.Chat(context.Background(), []llm.ChatMessage{
+	result, err := chatModel.Chat(stdctx.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {

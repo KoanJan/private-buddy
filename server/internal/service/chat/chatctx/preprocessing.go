@@ -1,7 +1,7 @@
-package context
+package chatctx
 
 import (
-	"context"
+	stdctx "context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -115,19 +115,19 @@ func (qps *QueryPreprocessingService) FormatHistoryForPreprocessing(history []ma
 
 // RouteQuery classifies the query type and rewrites if ambiguous.
 // Uses JSON Schema structured output for deterministic classification.
-// Uses temperature=0.1 for consistent, deterministic outputs.
+// Uses TemperatureDeterministic for consistent, deterministic outputs.
 func (qps *QueryPreprocessingService) RouteQuery(
 	llmConfig *model.LLMConfig,
 	query string,
 	history []map[string]string,
 	maxMessages *int,
 ) *QueryRoutingResult {
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
 	historyText := qps.FormatHistoryForPreprocessing(history, maxMessages)
 	prompt := fmt.Sprintf(routingPrompt, historyText, query)
 
-	result, err := chatModel.ChatWithJSONSchema(context.Background(), []llm.ChatMessage{
+	result, err := chatModel.ChatWithJSONSchema(stdctx.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "QueryRoutingResult",
@@ -175,7 +175,7 @@ func (qps *QueryPreprocessingService) RouteQuery(
 
 // GenerateClarification generates a clarification question for vague queries.
 // If characterSettings is provided, it is prepended to the prompt for personality alignment.
-// Uses temperature=0.1 for consistent outputs.
+// Uses TemperatureDeterministic for consistent outputs.
 func (qps *QueryPreprocessingService) GenerateClarification(
 	llmConfig *model.LLMConfig,
 	query string,
@@ -184,7 +184,7 @@ func (qps *QueryPreprocessingService) GenerateClarification(
 	characterSettings *string,
 	maxMessages *int,
 ) string {
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
 	historyText := qps.FormatHistoryForPreprocessing(history, maxMessages)
 	prompt := fmt.Sprintf(clarifyPrompt, historyText, query, reason)
@@ -194,7 +194,7 @@ func (qps *QueryPreprocessingService) GenerateClarification(
 		prompt = fmt.Sprintf("[Your Character]\n%s\n\n%s", *characterSettings, prompt)
 	}
 
-	result, err := chatModel.Chat(context.Background(), []llm.ChatMessage{
+	result, err := chatModel.Chat(stdctx.Background(), []llm.ChatMessage{
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {

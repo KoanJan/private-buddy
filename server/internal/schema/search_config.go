@@ -1,6 +1,10 @@
 package schema
 
-import "time"
+import (
+	"time"
+
+	"private-buddy-server/internal/model"
+)
 
 type SearchConfigUpdate struct {
 	Provider    *string `json:"provider"`
@@ -16,4 +20,15 @@ type SearchConfigResponse struct {
 	Description string    `json:"description"`
 	IsActive    bool      `json:"is_active"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func NewSearchConfigResponse(m *model.SearchConfig) *SearchConfigResponse {
+	return &SearchConfigResponse{
+		ID:          m.ID,
+		Provider:    m.Provider,
+		APIKey:      m.APIKey,
+		Description: m.Description,
+		IsActive:    m.IsActive,
+		UpdatedAt:   m.UpdatedAt,
+	}
 }

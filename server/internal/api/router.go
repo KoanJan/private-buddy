@@ -1,5 +1,5 @@
 // Package router sets up the Gin HTTP router with all API endpoints.
-package router
+package api
 
 import (
 	"net/http"
@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"private-buddy-server/internal/api/handler"
+	"private-buddy-server/internal/api/middleware"
 	"private-buddy-server/internal/config"
-	"private-buddy-server/internal/handler"
-	"private-buddy-server/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

@@ -1,6 +1,10 @@
 package schema
 
-import "time"
+import (
+	"time"
+
+	"private-buddy-server/internal/model"
+)
 
 type EmbeddingConfigBase struct {
 	Name        string `json:"name" binding:"required"`
@@ -29,4 +33,45 @@ type EmbeddingConfigResponse struct {
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func NewEmbeddingConfigResponse(m *model.EmbeddingConfig) *EmbeddingConfigResponse {
+	return &EmbeddingConfigResponse{
+		ID:          m.ID,
+		Name:        m.Name,
+		ModelID:     m.ModelID,
+		BaseURL:     m.BaseURL,
+		APIKey:      m.APIKey,
+		Description: m.Description,
+		CreatedAt:   m.CreatedAt,
+		UpdatedAt:   m.UpdatedAt,
+	}
+}
+
+func NewEmbeddingConfigResponseList(entities []model.EmbeddingConfig) []*EmbeddingConfigResponse {
+	result := make([]*EmbeddingConfigResponse, 0, len(entities))
+	for i := range entities {
+		result = append(result, NewEmbeddingConfigResponse(&entities[i]))
+	}
+	return result
+}
+
+func (req *EmbeddingConfigUpdate) BuildUpdates() map[string]interface{} {
+	updates := make(map[string]interface{})
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.ModelID != nil {
+		updates["model_id"] = *req.ModelID
+	}
+	if req.BaseURL != nil {
+		updates["base_url"] = *req.BaseURL
+	}
+	if req.APIKey != nil {
+		updates["api_key"] = *req.APIKey
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	return updates
 }

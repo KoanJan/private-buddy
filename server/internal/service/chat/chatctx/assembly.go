@@ -3,7 +3,7 @@
 // This package provides the context assembly services that build the LLM message
 // sequence from various context sources: summaries, narratives, retrieval results,
 // user state, and task results. It matches Python's chat/context module.
-package context
+package chatctx
 
 import (
 	"fmt"

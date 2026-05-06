@@ -17,6 +17,20 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// Temperature presets for different LLM service categories.
+//
+// These constants centralize all temperature values used across the application,
+// replacing scattered magic numbers. Each preset corresponds to a specific
+// trade-off between determinism and creativity:
+//   - TemperatureDeterministic: structured output services that need consistent JSON
+//   - TemperatureControlled: creative generation that should stay on-topic
+//   - TemperatureCreative: general conversation and open-ended generation
+const (
+	TemperatureDeterministic float32 = 0.1
+	TemperatureControlled    float32 = 0.3
+	TemperatureCreative      float32 = 0.7
+)
+
 // ChatModel wraps an OpenAI client with model configuration for chat completions.
 // It supports multiple call modes: plain chat, streaming, tool-calling, and JSON schema output.
 // Temperature is only sent to the API when explicitly set (> 0), matching LangChain's behavior
@@ -41,10 +55,8 @@ func NewChatModel(baseURL, apiKey, modelID string) *ChatModel {
 }
 
 // NewChatModelWithTemperature creates a ChatModel with explicit temperature control.
-// This matches Python's pattern of specifying temperature per service:
-//   - 0.1 for structured output services (user state, preprocessing, rewriter)
-//   - 0.3 for narrative generation (creative but controlled)
-//   - 0.7 for general chat and task loop (default, matches LangChain)
+// Use the predefined constants (TemperatureDeterministic, TemperatureControlled, TemperatureCreative)
+// instead of raw float values for consistency and readability.
 func NewChatModelWithTemperature(baseURL, apiKey, modelID string, temperature float32) *ChatModel {
 	cfg := openai.DefaultConfig(apiKey)
 	if baseURL != "" {

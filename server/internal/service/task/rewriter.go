@@ -96,7 +96,7 @@ func (trw *TaskRequirementRewriter) FormatHistory(history []map[string]string, m
 //
 // This is the main entry point. It uses conversation history to
 // resolve references and create a self-contained task requirement.
-// Uses LLM structured output (JSON Schema response format) with temperature=0.1
+// Uses LLM structured output (JSON Schema response format) with TemperatureDeterministic
 // for consistent, deterministic outputs.
 //
 // Returns the original userMessage on error (graceful degradation).
@@ -106,7 +106,7 @@ func (trw *TaskRequirementRewriter) Rewrite(
 	history []map[string]string,
 	maxHistoryMessages int,
 ) string {
-	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, 0.1)
+	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
 	historyText := trw.FormatHistory(history, maxHistoryMessages)
 	prompt := fmt.Sprintf(rewritePrompt, historyText, userMessage)

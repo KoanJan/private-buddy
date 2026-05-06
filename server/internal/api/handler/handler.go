@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Handler groups all HTTP API handlers with shared dependencies.
 type Handler struct {
 	db            *gorm.DB
 	crudLLM       *service.CRUDBase[model.LLMConfig]
@@ -24,7 +23,6 @@ type Handler struct {
 	searchService *service.SearchService
 }
 
-// NewHandler creates a Handler with all CRUD services initialized.
 func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{
 		db:            db,
@@ -37,12 +35,10 @@ func NewHandler(db *gorm.DB) *Handler {
 	}
 }
 
-// Root returns a health check response.
 func (h *Handler) Root(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Private Buddy API is running"})
 }
 
-// GetVersion returns the current database schema version.
 func (h *Handler) GetVersion(c *gin.Context) {
 	var versionRecord model.DBVersion
 	err := h.db.Order("id DESC").First(&versionRecord).Error
@@ -72,7 +68,7 @@ func (h *Handler) CreateLLMConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toLLMConfigResponse(&entity))
+	c.JSON(http.StatusOK, schema.NewLLMConfigResponse(&entity))
 }
 
 func (h *Handler) ListLLMConfigs(c *gin.Context) {
@@ -82,7 +78,7 @@ func (h *Handler) ListLLMConfigs(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toLLMConfigResponseList(entities))
+	c.JSON(http.StatusOK, schema.NewLLMConfigResponseList(entities))
 }
 
 func (h *Handler) GetLLMConfig(c *gin.Context) {
@@ -92,7 +88,7 @@ func (h *Handler) GetLLMConfig(c *gin.Context) {
 		service.HandleNotFound(c, "LLM config", id)
 		return
 	}
-	c.JSON(http.StatusOK, toLLMConfigResponse(entity))
+	c.JSON(http.StatusOK, schema.NewLLMConfigResponse(entity))
 }
 
 func (h *Handler) UpdateLLMConfig(c *gin.Context) {
@@ -107,12 +103,12 @@ func (h *Handler) UpdateLLMConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": err.Error()})
 		return
 	}
-	updates := buildLLMConfigUpdates(&req)
+	updates := req.BuildUpdates()
 	if len(updates) > 0 {
 		h.crudLLM.Update(entity, updates)
 		h.db.First(entity, id)
 	}
-	c.JSON(http.StatusOK, toLLMConfigResponse(entity))
+	c.JSON(http.StatusOK, schema.NewLLMConfigResponse(entity))
 }
 
 func (h *Handler) DeleteLLMConfig(c *gin.Context) {
@@ -157,7 +153,7 @@ func (h *Handler) CreateEmbeddingConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toEmbeddingConfigResponse(&entity))
+	c.JSON(http.StatusOK, schema.NewEmbeddingConfigResponse(&entity))
 }
 
 func (h *Handler) ListEmbeddingConfigs(c *gin.Context) {
@@ -167,7 +163,7 @@ func (h *Handler) ListEmbeddingConfigs(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toEmbeddingConfigResponseList(entities))
+	c.JSON(http.StatusOK, schema.NewEmbeddingConfigResponseList(entities))
 }
 
 func (h *Handler) GetEmbeddingConfig(c *gin.Context) {
@@ -177,7 +173,7 @@ func (h *Handler) GetEmbeddingConfig(c *gin.Context) {
 		service.HandleNotFound(c, "Embedding config", id)
 		return
 	}
-	c.JSON(http.StatusOK, toEmbeddingConfigResponse(entity))
+	c.JSON(http.StatusOK, schema.NewEmbeddingConfigResponse(entity))
 }
 
 func (h *Handler) UpdateEmbeddingConfig(c *gin.Context) {
@@ -192,12 +188,12 @@ func (h *Handler) UpdateEmbeddingConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": err.Error()})
 		return
 	}
-	updates := buildEmbeddingConfigUpdates(&req)
+	updates := req.BuildUpdates()
 	if len(updates) > 0 {
 		h.crudEmbedding.Update(entity, updates)
 		h.db.First(entity, id)
 	}
-	c.JSON(http.StatusOK, toEmbeddingConfigResponse(entity))
+	c.JSON(http.StatusOK, schema.NewEmbeddingConfigResponse(entity))
 }
 
 func (h *Handler) DeleteEmbeddingConfig(c *gin.Context) {
@@ -232,7 +228,7 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toAgentResponse(&entity))
+	c.JSON(http.StatusOK, schema.NewAgentResponse(&entity))
 }
 
 func (h *Handler) ListAgents(c *gin.Context) {
@@ -242,7 +238,7 @@ func (h *Handler) ListAgents(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toAgentResponseList(entities))
+	c.JSON(http.StatusOK, schema.NewAgentResponseList(entities))
 }
 
 func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
@@ -274,8 +270,8 @@ func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 			sessions = []model.Session{}
 		}
 		result = append(result, schema.AgentWithSessions{
-			AgentResponse: *toAgentResponse(&agent),
-			Sessions:      toSessionBriefList(sessions),
+			AgentResponse: *schema.NewAgentResponse(&agent),
+			Sessions:      schema.NewSessionBriefList(sessions),
 		})
 	}
 	c.JSON(http.StatusOK, result)
@@ -288,7 +284,7 @@ func (h *Handler) GetAgent(c *gin.Context) {
 		service.HandleNotFound(c, "Agent", id)
 		return
 	}
-	c.JSON(http.StatusOK, toAgentResponse(entity))
+	c.JSON(http.StatusOK, schema.NewAgentResponse(entity))
 }
 
 func (h *Handler) UpdateAgent(c *gin.Context) {
@@ -303,12 +299,12 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": err.Error()})
 		return
 	}
-	updates := buildAgentUpdates(&req)
+	updates := req.BuildUpdates()
 	if len(updates) > 0 {
 		h.crudAgent.Update(entity, updates)
 		h.db.First(entity, id)
 	}
-	c.JSON(http.StatusOK, toAgentResponse(entity))
+	c.JSON(http.StatusOK, schema.NewAgentResponse(entity))
 }
 
 func (h *Handler) DeleteAgent(c *gin.Context) {
@@ -361,7 +357,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toSessionResponse(&entity))
+	c.JSON(http.StatusOK, schema.NewSessionResponse(&entity))
 }
 
 func (h *Handler) ListSessions(c *gin.Context) {
@@ -371,7 +367,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toSessionResponseList(entities))
+	c.JSON(http.StatusOK, schema.NewSessionResponseList(entities))
 }
 
 func (h *Handler) GetSession(c *gin.Context) {
@@ -381,7 +377,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 		service.HandleNotFound(c, "Session", id)
 		return
 	}
-	c.JSON(http.StatusOK, toSessionResponse(entity))
+	c.JSON(http.StatusOK, schema.NewSessionResponse(entity))
 }
 
 func (h *Handler) UpdateSession(c *gin.Context) {
@@ -396,12 +392,12 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": err.Error()})
 		return
 	}
-	updates := buildSessionUpdates(&req)
+	updates := req.BuildUpdates()
 	if len(updates) > 0 {
 		h.crudSession.Update(entity, updates)
 		h.db.First(entity, id)
 	}
-	c.JSON(http.StatusOK, toSessionResponse(entity))
+	c.JSON(http.StatusOK, schema.NewSessionResponse(entity))
 }
 
 func (h *Handler) DeleteSession(c *gin.Context) {
@@ -443,7 +439,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, toMessageResponse(&entity))
+	c.JSON(http.StatusOK, schema.NewMessageResponse(&entity))
 }
 
 func (h *Handler) ListMessages(c *gin.Context) {
@@ -455,12 +451,12 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	}
 	var messages []model.Message
 	h.db.Where("session_id = ?", sessionID).Order("created_at ASC").Find(&messages)
-	c.JSON(http.StatusOK, toMessageResponseList(messages))
+	c.JSON(http.StatusOK, schema.NewMessageResponseList(messages))
 }
 
 func (h *Handler) GetSearchConfig(c *gin.Context) {
 	config := h.searchService.GetConfig(h.db)
-	c.JSON(http.StatusOK, toSearchConfigResponse(config))
+	c.JSON(http.StatusOK, schema.NewSearchConfigResponse(config))
 }
 
 func (h *Handler) UpdateSearchConfig(c *gin.Context) {
@@ -470,7 +466,7 @@ func (h *Handler) UpdateSearchConfig(c *gin.Context) {
 		return
 	}
 	config := h.searchService.UpdateConfig(h.db, req.Provider, req.APIKey, req.Description, req.IsActive)
-	c.JSON(http.StatusOK, toSearchConfigResponse(config))
+	c.JSON(http.StatusOK, schema.NewSearchConfigResponse(config))
 }
 
 func (h *Handler) GetInteractions(c *gin.Context) {
@@ -483,7 +479,7 @@ func (h *Handler) GetInteractions(c *gin.Context) {
 	var interactions []model.Interaction
 	h.db.Where("agent_msg_id = ?", agentMsgID).Order("iteration, type").Find(&interactions)
 	c.JSON(http.StatusOK, schema.InteractionListResponse{
-		Interactions: toInteractionResponseList(interactions),
+		Interactions: schema.NewInteractionResponseList(interactions),
 	})
 }
 

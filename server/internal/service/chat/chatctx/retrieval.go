@@ -1,8 +1,9 @@
-package context
+package chatctx
 
 import (
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/vectorstore"
 
 	applogger "private-buddy-server/internal/logger"
 
@@ -153,7 +154,7 @@ func (rs *RetrievalService) GetContextForChat(sessionID int64, query string, rec
 	if embeddingConfig != nil {
 		result.HasEmbedding = true
 		embeddingSvc := llm.NewEmbeddingService(embeddingConfig.BaseURL, embeddingConfig.APIKey, embeddingConfig.ModelID, 0)
-		vectorStore := NewVectorStoreService(embeddingSvc)
+		vectorStore := vectorstore.NewVectorStoreService(embeddingSvc)
 		if err := vectorStore.Init(); err == nil {
 			searchResults, err := vectorStore.Search(sessionID, query, ragCount)
 			if err != nil {
@@ -201,7 +202,7 @@ func (rs *RetrievalService) IndexMessages(sessionID int64, messageIDs []int64) b
 	}
 
 	embeddingSvc := llm.NewEmbeddingService(embeddingConfig.BaseURL, embeddingConfig.APIKey, embeddingConfig.ModelID, 0)
-	vectorStore := NewVectorStoreService(embeddingSvc)
+	vectorStore := vectorstore.NewVectorStoreService(embeddingSvc)
 	if err := vectorStore.Init(); err != nil {
 		applogger.L.Error("Failed to init vector store for indexing", "error", err)
 		return false
@@ -209,12 +210,12 @@ func (rs *RetrievalService) IndexMessages(sessionID int64, messageIDs []int64) b
 	defer vectorStore.Close()
 
 	contents := make([]string, len(messages))
-	metadatas := make([]VectorMetadata, len(messages))
+	metadatas := make([]vectorstore.VectorMetadata, len(messages))
 	msgIDs := make([]int64, len(messages))
 
 	for i, msg := range messages {
 		contents[i] = msg.Content
-		metadatas[i] = VectorMetadata{
+		metadatas[i] = vectorstore.VectorMetadata{
 			MessageID: msg.ID,
 			Role:      msg.Role,
 			Content:   msg.Content,

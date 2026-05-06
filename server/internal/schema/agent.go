@@ -1,6 +1,10 @@
 package schema
 
-import "time"
+import (
+	"time"
+
+	"private-buddy-server/internal/model"
+)
 
 type AgentBase struct {
 	Name              string `json:"name" binding:"required"`
@@ -45,4 +49,63 @@ type SessionBrief struct {
 type AgentWithSessions struct {
 	AgentResponse
 	Sessions []SessionBrief `json:"sessions"`
+}
+
+func NewAgentResponse(m *model.Agent) *AgentResponse {
+	return &AgentResponse{
+		ID:                m.ID,
+		Name:              m.Name,
+		CharacterSettings: m.CharacterSettings,
+		LLMConfigID:       m.LLMConfigID,
+		EmbeddingConfigID: m.EmbeddingConfigID,
+		Description:       m.Description,
+		Avatar:            m.Avatar,
+		CreatedAt:         m.CreatedAt,
+		UpdatedAt:         m.UpdatedAt,
+	}
+}
+
+func NewAgentResponseList(entities []model.Agent) []*AgentResponse {
+	result := make([]*AgentResponse, 0, len(entities))
+	for i := range entities {
+		result = append(result, NewAgentResponse(&entities[i]))
+	}
+	return result
+}
+
+func NewSessionBriefList(entities []model.Session) []SessionBrief {
+	result := make([]SessionBrief, 0, len(entities))
+	for _, m := range entities {
+		result = append(result, SessionBrief{
+			ID:        m.ID,
+			Title:     m.Title,
+			Status:    m.Status,
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func (req *AgentUpdate) BuildUpdates() map[string]interface{} {
+	updates := make(map[string]interface{})
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.CharacterSettings != nil {
+		updates["character_settings"] = *req.CharacterSettings
+	}
+	if req.LLMConfigID != nil {
+		updates["llm_config_id"] = *req.LLMConfigID
+	}
+	if req.EmbeddingConfigID != nil {
+		updates["embedding_config_id"] = *req.EmbeddingConfigID
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.Avatar != nil {
+		updates["avatar"] = *req.Avatar
+	}
+	return updates
 }

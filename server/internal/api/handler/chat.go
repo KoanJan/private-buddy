@@ -27,7 +27,7 @@ import (
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/chat"
-	chatcontext "private-buddy-server/internal/service/chat/context"
+	chatcontext "private-buddy-server/internal/service/chat/chatctx"
 
 	applogger "private-buddy-server/internal/logger"
 

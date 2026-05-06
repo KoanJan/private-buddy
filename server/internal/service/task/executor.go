@@ -126,7 +126,7 @@ func (te *TaskExecutor) Execute(params TaskParams) *TaskResult {
 		params.LLMConfig.BaseURL,
 		params.LLMConfig.APIKey,
 		params.LLMConfig.ModelID,
-		0.7,
+		llm.TemperatureCreative,
 	)
 
 	toolList := te.buildToolList(workspace, params.SessionID, params.SearchConfig, workspaceRoot, notesMaxChars)

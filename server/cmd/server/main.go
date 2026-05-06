@@ -5,10 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"private-buddy-server/internal/api"
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/logger"
-	"private-buddy-server/internal/router"
 
 	applogger "private-buddy-server/internal/logger"
 
@@ -34,7 +34,7 @@ func main() {
 	database.Init()
 	database.AutoMigrate()
 
-	r := router.SetupRouter(database.DB)
+	r := api.SetupRouter(database.DB)
 
 	port := os.Getenv("PORT")
 	if port == "" {
