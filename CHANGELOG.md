@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.9] - 2026-05-06
+
+### Added
+- **Electron Desktop Application**: cross-platform desktop packaging for macOS, Windows, and Linux with one-click build commands (`npm run dist:mac|win|linux`)
+- **Go Backend**: complete rewrite of backend from Python to Go with native cross-compilation support (GOOS/GOARCH)
+- **Dynamic Port Allocation**: Electron main process automatically assigns free port to Go server, frontend dynamically resolves via IPC
+- **Custom Title Bar**: VS Code-style title bar with `titleBarStyle: 'hidden'` + `titleBarOverlay`, native window controls (traffic lights on macOS, min/max/close on Win/Linux) overlaid on web content
+- **Splash Screen**: loading screen during Go server startup with health check polling
+- **IPC Bridge**: secure communication between renderer and main process via contextBridge (`getServerPort`, `getAppVersion`, `getPlatform`, `onBackendStatus`, `onBackendError`)
+
+### Changed
+- **Backend Stack**: FastAPI → Gin, SQLAlchemy → GORM, langchain-openai → go-openai, numpy → custom cosine similarity
+- **SQLite Driver**: switched to pure-Go `modernc.org/sqlite` (no CGO required) enabling hassle-free cross-compilation
+- **Service Scripts**: `start.sh`/`stop.sh`/`restart.sh` converted from Python (uvicorn) to Go binary management with PID file tracking
+- **Vite Config**: `base: './'` for relative paths, `outDir` to project-level `web-dist/` for electron-builder packaging
+- **Header Styling**: height reduced from 56px to 38px, logo/icon/text scaled down to match native window controls
+
+### Removed
+- **Python Backend**: entire `server/app/` directory (API, services, models, schemas) deleted
+- **Python Dependencies**: `pyproject.toml`, `setup.sh`, `venv/` no longer needed
+- **Manual Database Init**: `server/database/` removed (Go uses GORM AutoMigrate)
+- **Unused Assets**: `web/public/icons.svg` (social icon sprite with no references)
+
+### Performance
+- Backend binary size reduced from ~100 MB+ (PyInstaller) to ~33 MB (go build)
+- Startup time reduced from 2-5 seconds (Python interpreter) to <1 second (native binary)
+- Cross-platform builds now possible from a single macOS machine
+
+
 ## [0.0.8] - 2026-05-01
 
 ### Changed
