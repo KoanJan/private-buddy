@@ -163,7 +163,10 @@ func (m *IndexManager) addToMemoryIndex(chunkID uint64, embedding []float32) {
 		m.pendingAdds = append(m.pendingAdds, PendingVector{ChunkID: chunkID, Embedding: embedding})
 	case IndexTypeHNSW:
 		if m.graph != nil {
-			m.graph.Add(hnsw.MakeNode(chunkID, embedding))
+			if err := safeAddToGraph(m.graph, chunkID, embedding); err != nil {
+				applogger.L.Error("Failed to add node to HNSW graph",
+					"kb_id", m.kbID, "chunk_id", chunkID, "error", err)
+			}
 		}
 	}
 }
