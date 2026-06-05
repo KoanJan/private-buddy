@@ -69,6 +69,13 @@ export interface AgentWithSessions extends Agent {
   sessions: SessionBrief[];
 }
 
+// Session with agent info for flat session list display
+export interface SessionWithAgent extends SessionBrief {
+  agent_id: number;
+  agent_name: string;
+  agent_avatar: string;
+}
+
 export const SESSION_STATUS_STREAMING = 0;
 export const SESSION_STATUS_IDLE = 1;
 

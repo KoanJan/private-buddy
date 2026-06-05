@@ -9,7 +9,8 @@
   "sidebar": {
     "noAgent": "No Agent",
     "noSession": "No Session",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "newChat": "New Chat"
   },
   "chat": {
     "me": "Me",

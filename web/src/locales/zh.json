@@ -9,7 +9,8 @@
   "sidebar": {
     "noAgent": "暂无Agent",
     "noSession": "暂无会话",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "newChat": "新建会话"
   },
   "chat": {
     "me": "我",

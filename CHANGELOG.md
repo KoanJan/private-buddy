@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.12] - 2026-06-05
+
+### Changed
+- **Session List UI**: flattened two-level Collapse structure to single list sorted by updated_at, agent avatar displayed on left side of each session item
+- **New Session Button**: toolbar-style MessageCircle icon with agent dropdown selection
+
+### Fixed
+- **HNSW Index**: catch panic when adding node at runtime via safeAddToGraph, consistent with batch build behavior
+
+
 ## [0.0.11] - 2026-05-11
 
 ### Added
