@@ -19,6 +19,7 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -56,6 +57,7 @@ type TaskParams struct {
 	AgentMsgID      int64               // Agent message ID for the result target
 	SearchConfig    *model.SearchConfig // Search configuration for web search tool
 	DeliveryType    string              // Expected delivery type ("text" or "file"), affects system prompt
+	Ctx             context.Context     // Cancellation context from the caller
 }
 
 // Execute runs a task and returns the result.
@@ -114,6 +116,7 @@ func Execute(params TaskParams) *TaskResult {
 		params.UserMsgID,
 		params.AgentMsgID,
 		writeNotesTool,
+		params.Ctx,
 	)
 
 	loopResult := taskLoop.Run()

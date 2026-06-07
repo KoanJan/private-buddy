@@ -409,6 +409,9 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		return
 	}
 
+	// Cancel any running processChatTask goroutines for this session
+	taskCancelMgr.CancelSession(id)
+
 	database.DB.Where("session_id = ?", id).Delete(&model.Interaction{})
 	database.DB.Where("session_id = ?", id).Delete(&model.HistoricalSummary{})
 	database.DB.Where("session_id = ?", id).Delete(&model.Message{})

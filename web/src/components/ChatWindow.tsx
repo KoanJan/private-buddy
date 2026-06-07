@@ -4,15 +4,14 @@ import { RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMessageTime } from '../utils/time';
-import LoadingSpinner from './LoadingSpinner';
 import AgentAvatar from './AgentAvatar';
 import InteractionModal from './InteractionModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message, Session, Agent, Interaction } from '../types';
 import { HAS_INTERACTIONS_PENDING, HAS_INTERACTIONS_EXISTS, MESSAGE_STATUS_COMPLETED } from '../types';
-import { messageApi, sessionApi, agentApi, interactionApi, getDynamicApiBaseUrl } from '../services/api';
-import { logger, MESSAGE_STATUS_STREAMING, SESSION_STATUS_STREAMING } from '../logger';
+import { messageApi, agentApi, interactionApi, getDynamicApiBaseUrl } from '../services/api';
+import { logger, MESSAGE_STATUS_STREAMING } from '../logger';
 
 /**
  * Props for the ChatWindow component.
@@ -24,21 +23,20 @@ interface ChatWindowProps {
 
 /**
  * ChatWindow component handles the complete chat interface including:
- * - Message display with streaming support
+ * - Message display with loading indicator for in-progress AI responses
  * - SSE (Server-Sent Events) connection management
  * - Interaction polling for agent messages
  * - Session state transitions (temp to real)
  * 
  * Key state management:
  * - messages: Array of all messages in the session
- * - streamingMessage: Content being streamed from SSE
  * - isStreaming: Whether SSE connection is active
  * - eventSourceRef: Reference to the current EventSource connection
  * 
  * SSE Flow:
  * 1. User sends message -> POST /chat/send creates user_msg + ai_msg placeholders
  * 2. Frontend connects to GET /chat/stream/{sessionId} via EventSource
- * 3. Server sends 'existing' event (if reconnecting) or 'chunk' events
+ * 3. Server sends 'message' event with complete AI response
  * 4. 'done' event signals completion, frontend updates message status
  * 
  * Interaction Polling:
@@ -51,13 +49,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  const [streamingMessage, setStreamingMessage] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   const [interactionModalVisible, setInteractionModalVisible] = useState(false);
   const [selectedInteractions, setSelectedInteractions] = useState<Interaction[]>([]);
   const [interactionsLoading, setInteractionsLoading] = useState(false);
   
+  // Derived: streaming state is determined by whether any assistant message is still streaming
+  const isStreaming = messages.some(m => m.role === 'assistant' && m.status === MESSAGE_STATUS_STREAMING);
+
   // Refs for managing async state and preventing race conditions
   const pollingRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -68,7 +67,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const isInitialLoadRef = useRef<boolean>(true);
   const skipLoadRef = useRef<boolean>(false);
   const loadMessagesRef = useRef<() => void>(() => {});
-  const streamingMessageRef = useRef<string>('');
 
   const isTempSession = session?.id === -1;
 
@@ -132,11 +130,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
       eventSourceRef.current = null;
     }
     
-    setIsStreaming(false);
     currentLoadIdRef.current += 1;
     
     setMessages([]);
-    setStreamingMessage('');
     isInitialLoadRef.current = true;
     setInputValue('');
     
@@ -184,11 +180,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     
     setLoading(true);
     try {
-      // Fetch messages and session status in parallel
-      const [messagesRes, sessionRes] = await Promise.all([
-        messageApi.list(session.id),
-        sessionApi.get(session.id)
-      ]);
+      const messagesRes = await messageApi.list(session.id);
       
       // Ignore stale responses from previous load requests
       if (loadId !== currentLoadIdRef.current) {
@@ -196,29 +188,16 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         return;
       }
       
-      logger.info('Messages loaded:', messagesRes.data.length, 'Session status:', sessionRes.data.status);
+      logger.info('Messages loaded:', messagesRes.data.length);
       setMessages(messagesRes.data);
       
-      // Handle SSE reconnection for streaming sessions
-      if (sessionRes.data.status === SESSION_STATUS_STREAMING) {
-        const streamingMsg = messagesRes.data.find(m => m.status === MESSAGE_STATUS_STREAMING);
-        if (streamingMsg) {
-          logger.info('Found streaming message, reconnecting...', streamingMsg.id, 'content length:', streamingMsg.content.length);
-          setStreamingMessage(streamingMsg.content);
-          setIsStreaming(true);
-          connectToStream(session.id, loadId);
-        } else {
-          logger.warn('Session is streaming but no streaming message found');
-          setIsStreaming(false);
-        }
-      } else {
-        setIsStreaming(false);
+      // Always establish persistent SSE connection for this session.
+      // The connection stays open to receive new messages as they arrive.
+      if (!eventSourceRef.current) {
+        connectToStream(session.id);
       }
     } catch (error) {
       logger.error('Failed to load messages:', error);
-      if (loadId === currentLoadIdRef.current) {
-        setIsStreaming(false);
-      }
     } finally {
       if (loadId === currentLoadIdRef.current) {
         setLoading(false);
@@ -313,31 +292,19 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     }
   }, [messages]);
 
-  useEffect(() => {
-    if (!chatMessagesRef.current || !streamingMessage) return;
-    
-    chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
-  }, [streamingMessage]);
-
   /**
-   * Establishes SSE connection for streaming chat responses.
+   * Establishes a persistent SSE connection for chat responses.
    * 
    * SSE Event Types:
-   * - 'existing': Sent on reconnection, contains already-streamed content
-   * - 'chunk': Incremental content chunks during streaming
-   * - 'done': Signals completion, triggers message status update
+   * - 'message': Complete AI response (message_id + content)
    * - 'error': Server-side error, displays error message
-   * - 'session_created': New session ID for temp sessions
    * 
-   * State management:
-   * - streamingMessageRef: Accumulates all chunks for final update
-   * - isStreaming: Controls streaming UI state
-   * - eventSourceRef: Manages connection lifecycle
+   * The connection stays open after receiving a message to support
+   * continuous listening for new messages (e.g., multi-agent scenarios).
    * 
    * @param sessionId - The session ID to connect to
-   * @param loadId - Optional load ID for race condition prevention
    */
-  const connectToStream = (sessionId: number, loadId?: number) => {
+  const connectToStream = (sessionId: number) => {
     // Close existing connection if any
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -360,42 +327,18 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         const data = JSON.parse(event.data);
         logger.debug('SSE parsed message:', data);
         
-        if (data.type === 'existing') {
-          logger.info('Received existing content:', data.content.length, 'chars');
-          streamingMessageRef.current = data.content;
-          setStreamingMessage(data.content);
-        } else if (data.type === 'chunk') {
-          streamingMessageRef.current += data.content;
-          setStreamingMessage(prev => prev + data.content);
-        } else if (data.type === 'done') {
-          logger.info('SSE stream completed, streamingMessageRef.current length:', streamingMessageRef.current.length);
-          setIsStreaming(false);
-          setStreamingMessage('');
-          
-          const finalContent = streamingMessageRef.current;
-          streamingMessageRef.current = '';
-          
-          setMessages(prev => {
-            const updated = prev.map(m => {
-              if (m.role === 'assistant' && m.status === MESSAGE_STATUS_STREAMING) {
-                logger.info('Updating AI message with content length:', finalContent.length);
-                return { ...m, content: finalContent, status: MESSAGE_STATUS_COMPLETED };
-              }
-              return m;
-            });
-            logger.info('Messages updated, AI message content length:', updated.find(m => m.role === 'assistant' && m.status === MESSAGE_STATUS_COMPLETED)?.content.length);
-            return updated;
-          });
-          
-          eventSource.close();
-          eventSourceRef.current = null;
+        if (data.type === 'message') {
+          // Received complete message, update message list
+          logger.info('Received complete message, id:', data.message_id, 'content length:', data.content?.length);
+          setMessages(prev => prev.map(m => {
+            if (m.id === data.message_id) {
+              return { ...m, content: data.content, status: MESSAGE_STATUS_COMPLETED };
+            }
+            return m;
+          }));
         } else if (data.type === 'error') {
           logger.error('SSE error from server:', data.message);
           message.error(`${t('messages.aiResponseError')}: ${data.message}`);
-          setIsStreaming(false);
-          setStreamingMessage('');
-          eventSource.close();
-          eventSourceRef.current = null;
         }
       } catch (error) {
         logger.error('Failed to parse SSE message:', error, event.data);
@@ -404,11 +347,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
 
     eventSource.onerror = (error) => {
       logger.error('SSE connection error:', error);
-      if (loadId === undefined || loadId === currentLoadIdRef.current) {
-        setIsStreaming(false);
+      // Only close and clear if this is still the current connection
+      if (eventSourceRef.current === eventSource) {
+        eventSource.close();
+        eventSourceRef.current = null;
       }
-      eventSource.close();
-      eventSourceRef.current = null;
     };
   };
 
@@ -452,9 +395,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         
         setMessages([userMessage, aiMessage]);
         setInputValue('');
-        setStreamingMessage('');
-        streamingMessageRef.current = '';
-        setIsStreaming(true);
         
         startPolling(aiMessageId);
 
@@ -462,6 +402,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           onSessionCreated(newSessionId);
         }
 
+        // Establish SSE connection for the new session
         connectToStream(newSessionId);
       } else {
         const response = await messageApi.send(session.id, inputValue);
@@ -491,18 +432,17 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         
         setMessages(prev => [...prev, userMessage, aiMessage]);
         setInputValue('');
-        setStreamingMessage('');
-        streamingMessageRef.current = '';
-        setIsStreaming(true);
         
         startPolling(aiMessageId);
         
-        connectToStream(session.id);
+        // Establish SSE connection if not already connected
+        if (!eventSourceRef.current) {
+          connectToStream(session.id);
+        }
       }
     } catch (error: any) {
       logger.error('Failed to send message:', error);
       message.error(t('messages.sendError'));
-      setIsStreaming(false);
     }
   };
 
@@ -527,9 +467,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           </div>
         ) : (
           <>
-            {messages
-              .filter(msg => !(msg.role === 'assistant' && msg.status === MESSAGE_STATUS_STREAMING))
-              .map((msg) => (
+            {messages.map((msg) => (
                 <div key={msg.id} className={`message-item ${msg.role}`}>
                   <div className="message-header">
                     {msg.role === 'user' ? (
@@ -547,6 +485,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                       </>
                     )}
                   </div>
+                  {msg.role === 'assistant' && msg.status === MESSAGE_STATUS_STREAMING ? (
+                    <div style={{ textAlign: 'center', padding: '8px' }}>
+                      <Spin size="small" />
+                    </div>
+                  ) : (
                   <div className="message-content">
                     {msg.role === 'assistant' ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -556,6 +499,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                       msg.content
                     )}
                   </div>
+                  )}
                   {msg.role === 'assistant' && msg.has_interactions === HAS_INTERACTIONS_EXISTS && (
                     <div style={{ marginTop: '4px' }}>
                       <Button
@@ -571,24 +515,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                   )}
                 </div>
               ))}
-            {isStreaming && (
-              <div className="message-item assistant">
-                <div className="message-header">
-                  <span className="message-role">
-                    <AgentAvatar avatar={currentAgent?.avatar || ''} size={32} iconSize={16} borderRadius="8px" />
-                    {currentAgent?.name || 'AI'}
-                  </span>
-                  <span className="message-time">
-                    <LoadingSpinner />
-                  </span>
-                </div>
-                <div className="message-content">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {streamingMessage}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
             <div ref={messagesEndRef} />
           </>
         )}

@@ -50,6 +50,7 @@ type TaskLoop struct {
 	writeNotesTool   *tools.WriteNotesTool       // Write notes tool for checkpoint iterations
 	checkpointClient *llm.ChatModel              // Lazy-initialized LLM client for checkpoint iterations
 	lastNotesIter    int                         // Last iteration where write_notes was called (voluntary or forced)
+	ctx              context.Context             // Cancellation context from the caller
 }
 
 // NewTaskLoop creates a new TaskLoop instance.
@@ -62,6 +63,7 @@ func NewTaskLoop(
 	maxIterations int,
 	sessionID, userMsgID, agentMsgID int64,
 	writeNotesTool *tools.WriteNotesTool,
+	ctx context.Context,
 ) *TaskLoop {
 	registry := make(map[string]tools.Tool)
 	for _, t := range toolList {
@@ -78,6 +80,7 @@ func NewTaskLoop(
 		userMsgID:      userMsgID,
 		agentMsgID:     agentMsgID,
 		writeNotesTool: writeNotesTool,
+		ctx:            ctx,
 	}
 }
 
@@ -105,6 +108,15 @@ func (tl *TaskLoop) Run() *LoopResult {
 	)
 
 	for iteration := 1; iteration <= tl.maxIterations; iteration++ {
+		// Check if the task has been cancelled (e.g., session deleted)
+		if tl.ctx != nil && tl.ctx.Err() != nil {
+			applogger.L.Info("TaskLoop cancelled, stopping execution",
+				"session_id", tl.sessionID,
+				"iteration", iteration,
+			)
+			return &LoopResult{Status: "failure", Reason: "task cancelled"}
+		}
+
 		applogger.L.Info("TaskLoop iteration", "iteration", iteration, "max", tl.maxIterations)
 
 		if tl.writeNotesTool != nil {
@@ -199,9 +211,24 @@ func (tl *TaskLoop) Run() *LoopResult {
 				applogger.L.Info("TaskLoop thoughts", "iteration", iteration, "thoughts", content[:min(500, len(content))])
 			}
 
+			// Discard reasoning content from tool_calls to establish an information
+			// boundary between TaskLoop internals and the chat layer.
+			//
+			// When tool_calls are accompanied by reasoning content, that content
+			// propagates into subsequent iterations and eventually leaks into
+			// LoopResult.Result via the final stop response. The chat LLM then
+			// misinterprets internal reasoning (e.g., "the command is correct")
+			// as accomplished facts (e.g., "the service is running"), causing
+			// hallucination in the final user-facing response.
+			//
+			// By discarding reasoning content here, we cut off the hallucination
+			// at its source: internal process information stays inside TaskLoop,
+			// and only tool calls and their results are carried forward. The LLM
+			// can still reason about next steps from the task description and
+			// tool results alone — the reasoning content is redundant signal.
 			assistantMsg := llm.Message{
 				Role:      "assistant",
-				Content:   content,
+				Content:   "",
 				ToolCalls: toolCalls,
 			}
 
@@ -586,10 +613,10 @@ func initSessionWorkspace(sessionID int64, rewrittenRequirement string) string {
 	metaDir := filepath.Join(workspace, ".meta")
 	os.MkdirAll(metaDir, 0755)
 
+	// Always update task.md with the latest requirement for the current round.
+	// Previous rounds may have written a different task; the new message must take precedence.
 	taskFile := filepath.Join(metaDir, "task.md")
-	if _, err := os.Stat(taskFile); err != nil {
-		os.WriteFile(taskFile, []byte(fmt.Sprintf("# Task\n\n%s", rewrittenRequirement)), 0644)
-	}
+	os.WriteFile(taskFile, []byte(fmt.Sprintf("# Task\n\n%s", rewrittenRequirement)), 0644)
 
 	notesFile := filepath.Join(metaDir, "notes.md")
 	if _, err := os.Stat(notesFile); err != nil {

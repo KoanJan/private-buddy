@@ -17,11 +17,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"private-buddy-server/internal/config"
@@ -75,16 +77,75 @@ func (cm *ConnectionManager) Unregister(sessionID int64, ch chan string) {
 	}
 }
 
-// Broadcast sends a message to all SSE channels of a session.
+// PushToSession sends a message to all SSE channels of a session.
 // Drops the message if a channel is full (non-blocking send).
-func (cm *ConnectionManager) Broadcast(sessionID int64, data string) {
+func (cm *ConnectionManager) PushToSession(sessionID int64, data string) {
 	conns := cm.connections[sessionID]
 	for _, ch := range conns {
 		select {
 		case ch <- data:
 		default:
+			// TODO: Notify the client to refresh and reset the SSE connection when messages
+			// are dropped. Without this, the client will have an incomplete message list,
+			// causing a cognitive gap for the user who sees stale/partial data.
 			applogger.L.Warn("SSE channel full, dropping message", "session_id", sessionID)
 		}
+	}
+}
+
+// TaskCancelManager tracks running processChatTask goroutines per session.
+// When a session is deleted, CancelSession is called to abort all associated tasks.
+type TaskCancelManager struct {
+	mu      sync.Mutex
+	cancels map[int64][]*taskCancel // sessionID -> list of cancel handles
+	nextID  int64
+}
+
+// taskCancel wraps a cancel function with a unique ID for identification.
+type taskCancel struct {
+	id     int64
+	cancel context.CancelFunc
+}
+
+// taskCancelMgr is the global singleton for managing task cancellation.
+var taskCancelMgr = &TaskCancelManager{
+	cancels: make(map[int64][]*taskCancel),
+}
+
+// Register adds a cancel function for a session's running task.
+// Returns a handle ID for later unregistration.
+func (tcm *TaskCancelManager) Register(sessionID int64, cancel context.CancelFunc) int64 {
+	tcm.mu.Lock()
+	defer tcm.mu.Unlock()
+	tcm.nextID++
+	handle := &taskCancel{id: tcm.nextID, cancel: cancel}
+	tcm.cancels[sessionID] = append(tcm.cancels[sessionID], handle)
+	return handle.id
+}
+
+// CancelSession cancels all running tasks for a session and cleans up.
+func (tcm *TaskCancelManager) CancelSession(sessionID int64) {
+	tcm.mu.Lock()
+	defer tcm.mu.Unlock()
+	for _, tc := range tcm.cancels[sessionID] {
+		tc.cancel()
+	}
+	delete(tcm.cancels, sessionID)
+}
+
+// Unregister removes a cancel handle after the task completes normally.
+func (tcm *TaskCancelManager) Unregister(sessionID int64, handleID int64) {
+	tcm.mu.Lock()
+	defer tcm.mu.Unlock()
+	cancels := tcm.cancels[sessionID]
+	for i, tc := range cancels {
+		if tc.id == handleID {
+			tcm.cancels[sessionID] = append(cancels[:i], cancels[i+1:]...)
+			break
+		}
+	}
+	if len(tcm.cancels[sessionID]) == 0 {
+		delete(tcm.cancels, sessionID)
 	}
 }
 
@@ -264,17 +325,6 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 		return
 	}
 
-	var streamingMsg model.Message
-	if err := database.DB.Where("session_id = ? AND status = ?", sessionID, model.MessageStatusStreaming).
-		Order("created_at DESC").First(&streamingMsg).Error; err == nil {
-		existingData, _ := json.Marshal(map[string]interface{}{
-			"type":       "existing",
-			"content":    streamingMsg.Content,
-			"message_id": streamingMsg.ID,
-		})
-		c.SSEvent("", string(existingData))
-	}
-
 	ch := connManager.Register(sessionID)
 	defer connManager.Unregister(sessionID, ch)
 
@@ -305,15 +355,19 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 // processChatTask is the async chat processing goroutine.
 //
 // This method runs in a background goroutine and:
-//  1. Retrieves the trigger message, session, agent, and LLM config
-//  2. Creates a ChatService instance with SSE callbacks
-//  3. Runs the full chat processing pipeline
-//  4. Finalizes the AI message with the result
-//  5. Broadcasts the "done" event to all SSE clients
-//  6. Recovers from panics with graceful error handling
+//  1. Registers a cancel handle so the task can be aborted on session deletion
+//  2. Retrieves the trigger message, session, agent, and LLM config
+//  3. Creates a ChatService instance with SSE callbacks
+//  4. Runs the full chat processing pipeline
+//  5. Finalizes the AI message with the result
+//  6. Broadcasts the "message" event to all SSE clients
+//  7. Recovers from panics with graceful error handling
 //
 // Always sets session status back to idle on completion.
 func (h *Handler) processChatTask(triggerMessageID, aiMessageID, sessionID int64) {
+	ctx, cancel := context.WithCancel(context.Background())
+	handleID := taskCancelMgr.Register(sessionID, cancel)
+
 	applogger.L.Info("processChatTask started",
 		"trigger_message_id", triggerMessageID,
 		"ai_message_id", aiMessageID,
@@ -321,6 +375,9 @@ func (h *Handler) processChatTask(triggerMessageID, aiMessageID, sessionID int64
 	)
 
 	defer func() {
+		cancel()
+		taskCancelMgr.Unregister(sessionID, handleID)
+
 		if r := recover(); r != nil {
 			applogger.L.Error("processChatTask panic recovered",
 				"session_id", sessionID,
@@ -328,18 +385,22 @@ func (h *Handler) processChatTask(triggerMessageID, aiMessageID, sessionID int64
 				"stack", string(debug.Stack()),
 			)
 			h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-			doneData, _ := json.Marshal(map[string]string{"type": "done"})
-			connManager.Broadcast(sessionID, string(doneData))
+			h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
 		}
 		database.DB.Model(&model.Session{}).Where("id = ?", sessionID).Update("status", model.SessionStatusIdle)
 		applogger.L.Info("processChatTask completed", "session_id", sessionID)
 	}()
 
+	// Check if the task was cancelled before starting work
+	if ctx.Err() != nil {
+		applogger.L.Info("processChatTask cancelled before execution", "session_id", sessionID)
+		return
+	}
+
 	var triggerMsg model.Message
 	if err := database.DB.First(&triggerMsg, triggerMessageID).Error; err != nil {
 		h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-		doneData, _ := json.Marshal(map[string]string{"type": "done"})
-		connManager.Broadcast(sessionID, string(doneData))
+		h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
 		return
 	}
 
@@ -350,58 +411,72 @@ func (h *Handler) processChatTask(triggerMessageID, aiMessageID, sessionID int64
 			"role", triggerMsg.Role,
 		)
 		h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-		doneData, _ := json.Marshal(map[string]string{"type": "done"})
-		connManager.Broadcast(sessionID, string(doneData))
+		h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
 		return
 	}
 
 	session := service.GetSession(sessionID)
 	if session == nil {
 		h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-		doneData, _ := json.Marshal(map[string]string{"type": "done"})
-		connManager.Broadcast(sessionID, string(doneData))
+		h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
 		return
 	}
 
 	agent := service.GetAgent(session.AgentID)
 	if agent == nil {
 		h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-		doneData, _ := json.Marshal(map[string]string{"type": "done"})
-		connManager.Broadcast(sessionID, string(doneData))
+		h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
 		return
 	}
 
 	llmConfig := service.GetLLMConfig(agent.LLMConfigID)
 	if llmConfig == nil {
 		h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-		doneData, _ := json.Marshal(map[string]string{"type": "done"})
-		connManager.Broadcast(sessionID, string(doneData))
+		h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
 		return
 	}
 
 	callbacks := &chat.ChatCallbacks{
-		OnChunk: func(chunk string) {
-			data, _ := json.Marshal(map[string]string{"type": "chunk", "content": chunk})
-			connManager.Broadcast(sessionID, string(data))
-		},
 		OnNotify: func(data string) {
-			connManager.Broadcast(sessionID, data)
+			connManager.PushToSession(sessionID, data)
 		},
 	}
 
-	result, err := chat.Process(session, agent, llmConfig, triggerMessageID, aiMessageID, callbacks)
+	result, err := chat.Process(ctx, session, agent, llmConfig, triggerMessageID, aiMessageID, callbacks)
 	if err != nil {
+		// If cancelled, skip finalization to avoid overwriting a new session's data
+		if ctx.Err() != nil {
+			applogger.L.Info("processChatTask cancelled, skipping finalization",
+				"session_id", sessionID,
+			)
+			return
+		}
 		applogger.L.Error("Chat processing failed", "error", err)
 		h.finalizeAIMessage(aiMessageID, userFriendlyErrorMessage)
-		doneData, _ := json.Marshal(map[string]string{"type": "done"})
-		connManager.Broadcast(sessionID, string(doneData))
+		h.pushMessage(sessionID, aiMessageID, userFriendlyErrorMessage)
+		return
+	}
+
+	// If cancelled after processing, skip finalization to avoid overwriting
+	if ctx.Err() != nil {
+		applogger.L.Info("processChatTask cancelled after processing, skipping finalization",
+			"session_id", sessionID,
+		)
 		return
 	}
 
 	h.finalizeAIMessage(aiMessageID, result)
+	h.pushMessage(sessionID, aiMessageID, result)
+}
 
-	doneData, _ := json.Marshal(map[string]string{"type": "done"})
-	connManager.Broadcast(sessionID, string(doneData))
+// pushMessage pushes a complete message event to all SSE clients of a session.
+func (h *Handler) pushMessage(sessionID, messageID int64, content string) {
+	msgData, _ := json.Marshal(map[string]interface{}{
+		"type":       "message",
+		"message_id": messageID,
+		"content":    content,
+	})
+	connManager.PushToSession(sessionID, string(msgData))
 }
 
 // finalizeAIMessage updates the AI message with final content and marks it as completed.

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.13] - 2026-06-07
+
+### Fixed
+- **LLM Hallucination Prevention**: discard tool_call reasoning content in TaskLoop to prevent internal process information from leaking into chat layer, which caused the chat LLM to misinterpret reasoning (e.g., "the command is correct") as accomplished facts (e.g., "the service is running")
+- **Service Degradation Fix**: relax trigger message check in assembleSimpleContext from "must be the latest completed message" to "must exist in the completed messages list", fixing false degradation in concurrent/multi-agent scenarios
+- **SQLite ID Reuse Prevention**: add ensureAutoIncrement to rebuild tables with AUTOINCREMENT keyword, ensuring primary key IDs are strictly monotonically increasing and never reused after row deletion
+- **Goroutine Leak on Session Deletion**: add TaskCancelManager to cancel running processChatTask goroutines when their session is deleted, preventing stale goroutines from overwriting data
+
+### Changed
+- **Message Rendering**: remove streaming chunk rendering in favor of whole-message updates with loading spinner, eliminating chunk interleaving issues in multi-agent scenarios
+- **SSE Connection Management**: establish persistent SSE connection per session instead of per-message, with auto-reconnect on session switch
+
 ## [0.0.12] - 2026-06-05
 
 ### Changed

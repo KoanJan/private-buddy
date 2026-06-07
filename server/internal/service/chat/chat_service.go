@@ -43,9 +43,8 @@ import (
 // User-friendly error message for unexpected failures
 const userFriendlyErrorMessage = "抱歉，服务器遇到了一些问题，请稍后再试。"
 
-// ChatCallbacks holds optional callbacks for streaming and notification events.
+// ChatCallbacks holds optional callbacks for notification events.
 type ChatCallbacks struct {
-	OnChunk  func(chunk string)
 	OnNotify func(data string)
 }
 
@@ -59,6 +58,7 @@ type pipeline struct {
 	triggerMessageID int64
 	aiMessageID      int64
 	callbacks        *ChatCallbacks
+	ctx              context.Context
 
 	// Loaded in loadMessages
 	triggerMessage model.Message
@@ -93,6 +93,7 @@ type pipeline struct {
 // Query preprocessing and user state inference run in parallel when either
 // V >= N or knowledge bases are configured, since both are independent LLM calls.
 func Process(
+	ctx context.Context,
 	session *model.Session,
 	agent *model.Agent,
 	llmConfig *model.LLMConfig,
@@ -106,6 +107,7 @@ func Process(
 		triggerMessageID: triggerMessageID,
 		aiMessageID:      aiMessageID,
 		callbacks:        callbacks,
+		ctx:              ctx,
 	}
 
 	if err := p.loadMessages(); err != nil {
@@ -251,7 +253,7 @@ func (p *pipeline) executeAgentIfNeeded() {
 		database.DB.Model(&model.Message{}).Where("id = ?", p.aiMessageID).
 			Update("has_interactions", model.HasInteractionsExists)
 		p.taskResult = executeAgent(
-			p.sessionID, p.agent, p.llmConfig,
+			p.ctx, p.sessionID, p.agent, p.llmConfig,
 			p.triggerMessage, p.aiMessageID,
 			int(p.messageCount), p.windowSize, p.callbacks,
 		)
@@ -282,8 +284,19 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 		p.sessionID, int(p.messageCount), model.MessageStatusCompleted,
 	)
 
-	if len(recentMessages) == 0 || recentMessages[len(recentMessages)-1].ID != p.triggerMessageID {
-		applogger.L.Error("Trigger message is not the latest completed message",
+	// Verify that the trigger message exists in the recent completed messages.
+	// We no longer require it to be the last one, because in concurrent or
+	// multi-agent scenarios other completed messages (e.g., AI responses from
+	// another goroutine or agent) may appear after the trigger message.
+	triggerFound := false
+	for _, msg := range recentMessages {
+		if msg.ID == p.triggerMessageID {
+			triggerFound = true
+			break
+		}
+	}
+	if !triggerFound {
+		applogger.L.Error("Trigger message not found in recent completed messages",
 			"session_id", p.sessionID,
 			"trigger_message_id", p.triggerMessageID,
 		)
@@ -395,38 +408,30 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 	return messages, "", false
 }
 
-// streamResponse sends the assembled messages to the LLM and streams the response
-// back to the client, updating the AI message in the database progressively.
+// streamResponse sends the assembled messages to the LLM and collects the
+// complete response. The LLM stream API is still used (to avoid long blocking),
+// but chunks are accumulated internally without per-chunk callbacks or DB updates.
+// The AI message is finalized with the complete content in the handler layer.
 func (p *pipeline) streamResponse(messages []llm.Message) (string, error) {
+	// Check cancellation before starting the LLM call
+	if p.ctx.Err() != nil {
+		return "", p.ctx.Err()
+	}
+
 	chatModel := llm.NewChatModelWithTemperature(
 		p.llmConfig.BaseURL, p.llmConfig.APIKey, p.llmConfig.ModelID, llm.TemperatureCreative,
 	)
 
-	stream, err := chatModel.ChatStream(context.Background(), messages)
+	stream, err := chatModel.ChatStream(p.ctx, messages)
 	if err != nil {
 		return "", fmt.Errorf("failed to start stream: %w", err)
 	}
 	applogger.L.Info("Starting LLM stream", "session_id", p.sessionID)
 
-	var fullContent string
-	var accumulatedContent string
-	fullContent, err = chatModel.ConsumeStream(stream, func(chunk string) error {
-		accumulatedContent += chunk
-		database.DB.Model(&model.Message{}).Where("id = ?", p.aiMessageID).
-			Update("content", accumulatedContent)
-		if p.callbacks != nil && p.callbacks.OnChunk != nil {
-			p.callbacks.OnChunk(chunk)
-		}
-		return nil
-	})
+	fullContent, err := chatModel.ConsumeStream(stream, nil)
 	if err != nil {
 		return fullContent, err
 	}
-
-	database.DB.Model(&model.Message{}).Where("id = ?", p.aiMessageID).Updates(map[string]interface{}{
-		"content": fullContent,
-		"status":  model.MessageStatusCompleted,
-	})
 
 	applogger.L.Info("Chat processing completed",
 		"session_id", p.sessionID,
@@ -459,6 +464,7 @@ func (p *pipeline) postProcess() {
 //  3. Execute agent via TaskExecutor
 //  4. Return TaskResult for context assembly
 func executeAgent(
+	ctx context.Context,
 	sessionID int64,
 	agent *model.Agent,
 	llmConfig *model.LLMConfig,
@@ -512,6 +518,7 @@ func executeAgent(
 		UserMsgID:       triggerMessage.ID,
 		AgentMsgID:      aiMessageID,
 		SearchConfig:    &searchConfig,
+		Ctx:             ctx,
 	})
 
 	result := &chatcontext.TaskResultForAssembly{
