@@ -13,10 +13,11 @@ type MessageCreate struct {
 type MessageResponse struct {
 	ID              int64     `json:"id"`
 	SessionID       int64     `json:"session_id"`
-	Role            string    `json:"role"`
+	Role            int       `json:"role"`
 	Content         string    `json:"content"`
 	Status          int       `json:"status"`
 	HasInteractions int       `json:"has_interactions"`
+	DraftID         *int64    `json:"draft_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -29,6 +30,7 @@ func NewMessageResponse(m *model.Message) *MessageResponse {
 		Content:         m.Content,
 		Status:          m.Status,
 		HasInteractions: m.HasInteractions,
+		DraftID:         m.DraftID,
 		CreatedAt:       m.CreatedAt,
 		UpdatedAt:       m.UpdatedAt,
 	}

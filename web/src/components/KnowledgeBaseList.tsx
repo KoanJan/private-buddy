@@ -14,10 +14,10 @@ interface KnowledgeBaseListProps {
   onCreateClose?: () => void;
 }
 
-const STATUS_MAP: Record<string, { color: string; labelKey: string }> = {
-  flat: { color: 'default', labelKey: 'kb.indexTypeFlat' },
-  switching: { color: 'processing', labelKey: 'kb.indexTypeSwitching' },
-  hnsw: { color: 'success', labelKey: 'kb.indexTypeHNSW' },
+const STATUS_MAP: Record<number, { color: string; labelKey: string }> = {
+  0: { color: 'default', labelKey: 'kb.indexTypeFlat' },
+  1: { color: 'processing', labelKey: 'kb.indexTypeSwitching' },
+  2: { color: 'success', labelKey: 'kb.indexTypeHNSW' },
 };
 
 const KnowledgeBaseList: React.FC<KnowledgeBaseListProps> = ({ onSelectKB, showCreate, onCreateClose }) => {
@@ -166,7 +166,7 @@ const KnowledgeBaseList: React.FC<KnowledgeBaseListProps> = ({ onSelectKB, showC
               {t('kb.indexType')}
             </div>
             <Tag color={STATUS_MAP[currentKB.index_type]?.color || 'default'}>
-              {t(STATUS_MAP[currentKB.index_type]?.labelKey || currentKB.index_type)}
+              {t(STATUS_MAP[currentKB.index_type]?.labelKey || String(currentKB.index_type))}
             </Tag>
             <span style={{ marginLeft: 12, fontSize: 13, color: 'var(--color-text-secondary)' }}>
               {t('kb.docCount', { count: currentKB.document_count })} · {t('kb.vectorCount', { count: currentKB.vector_count })}
@@ -200,7 +200,7 @@ const KnowledgeBaseList: React.FC<KnowledgeBaseListProps> = ({ onSelectKB, showC
                     {kb.description || t('kb.noDescription')}
                     <span style={{ marginLeft: 8 }}>
                       <Tag color={STATUS_MAP[kb.index_type]?.color || 'default'} style={{ fontSize: 11 }}>
-                        {t(STATUS_MAP[kb.index_type]?.labelKey || kb.index_type)}
+                        {t(STATUS_MAP[kb.index_type]?.labelKey || String(kb.index_type))}
                       </Tag>
                       {t('kb.docCount', { count: kb.document_count })} · {t('kb.vectorCount', { count: kb.vector_count })}
                     </span>

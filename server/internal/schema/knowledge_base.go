@@ -22,7 +22,7 @@ type KnowledgeBaseResponse struct {
 	Name              string    `json:"name"`
 	Description       string    `json:"description"`
 	EmbeddingConfigID int64     `json:"embedding_config_id"`
-	IndexType         string    `json:"index_type"`
+	IndexType         int       `json:"index_type"`
 	IndexFilePath     string    `json:"index_file_path"`
 	DocumentCount     int       `json:"document_count"`
 	VectorCount       int       `json:"vector_count"`

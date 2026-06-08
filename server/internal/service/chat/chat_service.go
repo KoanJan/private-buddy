@@ -11,17 +11,10 @@
 //   - LLM streaming responses
 //   - Summary generation triggers
 //
-// Flow:
-//  1. User sends message -> API creates user_msg + ai_msg placeholders
-//  2. Process() infers user state (including needs_world_interaction)
-//  3. If needs_world_interaction=true:
-//     - Set ai_msg.has_interactions=1 (exists)
-//     - Execute agent via TaskExecutor with session workspace
-//     - Record interactions to database
-//     - Pass task_result to context assembly for LLM response
-//  4. If needs_world_interaction=false:
-//     - Set ai_msg.has_interactions=2 (none)
-//     - Continue with normal LLM chat flow (context engineering + streaming)
+// Draft-based architecture:
+// The pipeline does NOT write to the messages table directly. It returns all
+// results through ChatResult, and the caller (Work) commits them to a draft
+// and then to messages atomically. This eliminates the placeholder message pattern.
 package chat
 
 import (
@@ -48,6 +41,15 @@ type ChatCallbacks struct {
 	OnNotify func(data string)
 }
 
+// ChatResult holds the output of the chat processing pipeline.
+// In the draft-based architecture, the pipeline does not write to the messages
+// table directly. Instead, it returns all results through this struct, and the
+// caller (Work) commits them to a draft and then to messages atomically.
+type ChatResult struct {
+	Content         string // The generated response content
+	HasInteractions int    // HasInteractionsPending, HasInteractionsExists, or HasInteractionsNone
+}
+
 // pipeline holds the state for a single chat processing execution.
 // It is short-lived (only exists during one Process call) and carries
 // shared data between pipeline stages.
@@ -56,13 +58,13 @@ type pipeline struct {
 	agent            *model.Agent
 	llmConfig        *model.LLMConfig
 	triggerMessageID int64
-	aiMessageID      int64
+	draftID          int64 // Draft ID for interaction records
+	contextBoundary  int64 // Last message ID visible when this pipeline started (from draft.last_read_message_id)
 	callbacks        *ChatCallbacks
 	ctx              context.Context
 
 	// Loaded in loadMessages
 	triggerMessage model.Message
-	aiMessage      model.Message
 	sessionID      int64
 	messageCount   int64
 	windowSize     int
@@ -92,26 +94,34 @@ type pipeline struct {
 //
 // Query preprocessing and user state inference run in parallel when either
 // V >= N or knowledge bases are configured, since both are independent LLM calls.
+//
+// Parameters:
+//   - contextBoundary: the last message ID visible when the draft was created
+//     (from draft.last_read_message_id). Used for preprocessing history queries.
+//   - draftID: the draft ID for interaction record association.
 func Process(
 	ctx context.Context,
 	session *model.Session,
 	agent *model.Agent,
 	llmConfig *model.LLMConfig,
-	triggerMessageID, aiMessageID int64,
+	triggerMessageID int64,
+	contextBoundary int64,
+	draftID int64,
 	callbacks *ChatCallbacks,
-) (string, error) {
+) (*ChatResult, error) {
 	p := &pipeline{
 		session:          session,
 		agent:            agent,
 		llmConfig:        llmConfig,
 		triggerMessageID: triggerMessageID,
-		aiMessageID:      aiMessageID,
+		contextBoundary:  contextBoundary,
+		draftID:          draftID,
 		callbacks:        callbacks,
 		ctx:              ctx,
 	}
 
 	if err := p.loadMessages(); err != nil {
-		return userFriendlyErrorMessage, err
+		return &ChatResult{Content: userFriendlyErrorMessage, HasInteractions: model.HasInteractionsNone}, err
 	}
 
 	// Start async preprocessing first so it runs in parallel with user state inference
@@ -123,28 +133,32 @@ func Process(
 
 	messages, earlyContent, earlyReturn := p.assembleContext()
 	if earlyReturn {
-		return earlyContent, nil
+		return &ChatResult{Content: earlyContent, HasInteractions: model.HasInteractionsNone}, nil
 	}
 
 	fullContent, err := p.streamResponse(messages)
 	if err != nil {
-		return fullContent, err
+		return &ChatResult{Content: fullContent, HasInteractions: model.HasInteractionsNone}, err
 	}
 
 	p.postProcess()
 
-	return fullContent, nil
+	hasInteractions := model.HasInteractionsNone
+	if p.needsWorldInteraction {
+		hasInteractions = model.HasInteractionsExists
+	}
+
+	return &ChatResult{
+		Content:         fullContent,
+		HasInteractions: hasInteractions,
+	}, nil
 }
 
-// loadMessages loads trigger and AI messages from the database,
+// loadMessages loads the trigger message from the database,
 // and initializes session-level parameters (message count, window size, KB IDs).
 func (p *pipeline) loadMessages() error {
 	if err := database.DB.First(&p.triggerMessage, p.triggerMessageID).Error; err != nil {
 		return fmt.Errorf("trigger message not found: %w", err)
-	}
-
-	if err := database.DB.First(&p.aiMessage, p.aiMessageID).Error; err != nil {
-		return fmt.Errorf("AI message not found: %w", err)
 	}
 
 	p.sessionID = p.session.ID
@@ -155,7 +169,7 @@ func (p *pipeline) loadMessages() error {
 	applogger.L.Info("Starting chat processing",
 		"session_id", p.sessionID,
 		"trigger_message_id", p.triggerMessageID,
-		"ai_message_id", p.aiMessageID,
+		"draft_id", p.draftID,
 		"message_count", p.messageCount,
 		"window_size", p.windowSize,
 		"kb_count", len(p.kbIDs),
@@ -175,7 +189,7 @@ func (p *pipeline) preprocessQuery() {
 	}
 
 	p.preprocessingCh = make(chan struct{})
-	preprocessingHistory := getPreprocessingHistory(p.sessionID, p.aiMessageID, p.windowSize)
+	preprocessingHistory := getPreprocessingHistory(p.sessionID, p.windowSize)
 
 	go func() {
 		defer close(p.preprocessingCh)
@@ -246,20 +260,16 @@ func (p *pipeline) retrieveKnowledgeBases() {
 	)
 }
 
-// executeAgentIfNeeded executes the agent path when needs_world_interaction=true,
-// otherwise marks the AI message as having no interactions.
+// executeAgentIfNeeded executes the agent path when needs_world_interaction=true.
+// In the draft-based architecture, this does NOT write to the messages table.
+// The has_interactions flag is returned via ChatResult for the caller to handle.
 func (p *pipeline) executeAgentIfNeeded() {
 	if p.needsWorldInteraction {
-		database.DB.Model(&model.Message{}).Where("id = ?", p.aiMessageID).
-			Update("has_interactions", model.HasInteractionsExists)
 		p.taskResult = executeAgent(
 			p.ctx, p.sessionID, p.agent, p.llmConfig,
-			p.triggerMessage, p.aiMessageID,
+			p.triggerMessage, p.draftID,
 			int(p.messageCount), p.windowSize, p.callbacks,
 		)
-	} else {
-		database.DB.Model(&model.Message{}).Where("id = ?", p.aiMessageID).
-			Update("has_interactions", model.HasInteractionsNone)
 	}
 }
 
@@ -283,25 +293,6 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 	recentMessages := chatcontext.GetRecentMessages(
 		p.sessionID, int(p.messageCount), model.MessageStatusCompleted,
 	)
-
-	// Verify that the trigger message exists in the recent completed messages.
-	// We no longer require it to be the last one, because in concurrent or
-	// multi-agent scenarios other completed messages (e.g., AI responses from
-	// another goroutine or agent) may appear after the trigger message.
-	triggerFound := false
-	for _, msg := range recentMessages {
-		if msg.ID == p.triggerMessageID {
-			triggerFound = true
-			break
-		}
-	}
-	if !triggerFound {
-		applogger.L.Error("Trigger message not found in recent completed messages",
-			"session_id", p.sessionID,
-			"trigger_message_id", p.triggerMessageID,
-		)
-		return nil, userFriendlyErrorMessage, true
-	}
 
 	characterSettings := p.agent.CharacterSettings
 	messages := chatcontext.AssembleContext(
@@ -327,13 +318,9 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 		<-p.preprocessingCh
 	}
 
-	// Handle clarification needed case
+	// Handle clarification needed case — return clarification as content
+	// without writing to messages table (caller handles draft commit)
 	if p.preprocessingResult != nil && p.preprocessingResult.NeedsClarification {
-		database.DB.Model(&model.Message{}).Where("id = ?", p.aiMessageID).Updates(map[string]interface{}{
-			"content": p.preprocessingResult.Clarification,
-			"status":  model.MessageStatusCompleted,
-		})
-		database.DB.Model(&model.Session{}).Where("id = ?", p.sessionID).Update("status", model.SessionStatusIdle)
 		applogger.L.Info("Query needed clarification", "session_id", p.sessionID)
 		return []llm.Message{}, p.preprocessingResult.Clarification, true
 	}
@@ -350,10 +337,10 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 	// Context retrieval (with or without RAG)
 	var contextResult *chatcontext.RetrievalResult
 	if p.preprocessingResult != nil && p.preprocessingResult.SkipRetrieval {
-		contextResult = chatcontext.GetContextWithoutRAG(p.sessionID, p.windowSize)
+		contextResult = chatcontext.GetContextWithoutRAG(p.sessionID, p.agent.ID, p.windowSize)
 		p.hasEmbedding = false
 	} else {
-		contextResult = chatcontext.GetContextForChat(p.sessionID, processedQuery, p.windowSize, 5)
+		contextResult = chatcontext.GetContextForChat(p.sessionID, p.agent.ID, processedQuery, p.windowSize, 5)
 		p.hasEmbedding = contextResult.HasEmbedding
 	}
 
@@ -362,15 +349,6 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 	if len(p.kbSegments) > 0 {
 		relevantSegments = append(relevantSegments, p.kbSegments...)
 		p.hasEmbedding = true
-	}
-
-	// Validate trigger_message is the latest completed message
-	if len(contextResult.RecentMessages) == 0 || contextResult.RecentMessages[len(contextResult.RecentMessages)-1].ID != p.triggerMessageID {
-		applogger.L.Error("Trigger message is not the latest completed message",
-			"session_id", p.sessionID,
-			"trigger_message_id", p.triggerMessageID,
-		)
-		return nil, userFriendlyErrorMessage, true
 	}
 
 	// Use cached narrative (generated in background with summary)
@@ -411,7 +389,6 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 // streamResponse sends the assembled messages to the LLM and collects the
 // complete response. The LLM stream API is still used (to avoid long blocking),
 // but chunks are accumulated internally without per-chunk callbacks or DB updates.
-// The AI message is finalized with the complete content in the handler layer.
 func (p *pipeline) streamResponse(messages []llm.Message) (string, error) {
 	// Check cancellation before starting the LLM call
 	if p.ctx.Err() != nil {
@@ -441,19 +418,17 @@ func (p *pipeline) streamResponse(messages []llm.Message) (string, error) {
 }
 
 // postProcess handles post-response tasks: RAG indexing and summary generation.
+// Note: message indexing uses triggerMessageID only, since the AI message
+// doesn't exist yet (draft has not been committed).
 func (p *pipeline) postProcess() {
 	if p.hasEmbedding {
 		go func() {
-			chatcontext.IndexMessages(p.sessionID, []int64{p.triggerMessageID, p.aiMessageID})
+			chatcontext.IndexMessages(p.sessionID, []int64{p.triggerMessageID})
 		}()
 	}
 
-	// Trigger summary generation if V >= N
-	var updatedCount int64
-	database.DB.Model(&model.Message{}).Where("session_id = ?", p.sessionID).Count(&updatedCount)
-	if updatedCount >= int64(p.windowSize) {
-		go generateSummary(p.sessionID, int(updatedCount), p.windowSize)
-	}
+	// Note: summary generation is now triggered at the message creation level
+	// (after any message is committed, regardless of sender), not here.
 }
 
 // executeAgent handles the agent execution path when needs_world_interaction=true.
@@ -469,14 +444,14 @@ func executeAgent(
 	agent *model.Agent,
 	llmConfig *model.LLMConfig,
 	triggerMessage model.Message,
-	aiMessageID int64,
+	draftID int64,
 	messageCount int,
 	windowSize int,
 	callbacks *ChatCallbacks,
 ) *chatcontext.TaskResultForAssembly {
 	applogger.L.Info("Agent execution path",
 		"session_id", sessionID,
-		"ai_msg_id", aiMessageID,
+		"draft_id", draftID,
 	)
 
 	// Notify frontend that agent is processing
@@ -493,8 +468,12 @@ func executeAgent(
 
 	history := make([]llm.Message, 0, len(recentMessages))
 	for _, msg := range recentMessages {
+		role := "user"
+		if msg.Role == model.MessageRoleAssistant {
+			role = "assistant"
+		}
 		history = append(history, llm.Message{
-			Role:    msg.Role,
+			Role:    role,
 			Content: msg.Content,
 		})
 	}
@@ -516,7 +495,7 @@ func executeAgent(
 		MaxIterations:   0,
 		SessionID:       sessionID,
 		UserMsgID:       triggerMessage.ID,
-		AgentMsgID:      aiMessageID,
+		DraftID:         draftID,
 		SearchConfig:    &searchConfig,
 		Ctx:             ctx,
 	})
@@ -542,28 +521,28 @@ func executeAgent(
 	return result
 }
 
-// generateSummary generates a summary for the session.
-// This is triggered after AI response is complete (second trigger point),
-// ensuring the current round's messages are included in the summary version.
-func generateSummary(sessionID int64, version int, windowSize int) {
-	chatcontext.GenerateSummaryForSession(sessionID, version, windowSize)
-}
-
-// getPreprocessingHistory retrieves messages before the AI message for preprocessing context.
+// getPreprocessingHistory retrieves recent messages for preprocessing context.
 // Returns messages in chronological order (oldest first), limited to the specified count.
-func getPreprocessingHistory(sessionID int64, beforeMessageID int64, limit int) []llm.Message {
+// Unlike context assembly (which uses contextBoundary to avoid overlap with summary),
+// preprocessing needs the full recent conversation to correctly classify and rewrite queries.
+func getPreprocessingHistory(sessionID int64, limit int) []llm.Message {
 	var messages []model.Message
-	database.DB.Where("session_id = ? AND id < ?", sessionID, beforeMessageID).
+	database.DB.Where("session_id = ?", sessionID).
 		Order("id DESC").Limit(limit).Find(&messages)
 
+	// Reverse to chronological order
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 
 	history := make([]llm.Message, 0, len(messages))
 	for _, msg := range messages {
+		role := "user"
+		if msg.Role == model.MessageRoleAssistant {
+			role = "assistant"
+		}
 		history = append(history, llm.Message{
-			Role:    msg.Role,
+			Role:    role,
 			Content: msg.Content,
 		})
 	}

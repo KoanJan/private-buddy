@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"private-buddy-server/internal/database"
+	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
 	"private-buddy-server/internal/service"
@@ -325,8 +326,23 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 	database.DB.Model(&model.Session{}).Where("agent_id = ?", id).Pluck("id", &sessionIDs)
 
 	if len(sessionIDs) > 0 {
+		// NOTE: This logic assumes 1v1 (one agent per session).
+		// In multi-agent/group chat, deleting one agent should NOT cascade delete the entire session.
+		// This will need to be revisited when group chat is implemented.
+
+		// Delete all agent-related resources in dependency order:
+		// 1. Works (may reference drafts)
+		// 2. Message drafts
+		// 3. Interactions
+		// 4. Historical summaries
+		// 5. Participant sessions
+		// 6. Messages
+		// 7. Sessions
+		database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Work{})
+		database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.MessageDraft{})
 		database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Interaction{})
 		database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.HistoricalSummary{})
+		database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.ParticipantSession{})
 		database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Message{})
 		database.DB.Where("agent_id = ?", id).Delete(&model.Session{})
 
@@ -352,9 +368,8 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	entity := model.Session{
 		Title:   title,
 		AgentID: req.AgentID,
-		Status:  model.SessionStatusIdle,
 	}
-	if err := database.DB.Select("Title", "AgentID", "Status").Create(&entity).Error; err != nil {
+	if err := database.DB.Select("Title", "AgentID").Create(&entity).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
@@ -409,11 +424,19 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		return
 	}
 
-	// Cancel any running processChatTask goroutines for this session
-	taskCancelMgr.CancelSession(id)
-
+	// Delete all session-related resources in dependency order:
+	// 1. Works (may reference drafts)
+	// 2. Message drafts
+	// 3. Interactions
+	// 4. Historical summaries
+	// 5. Participant sessions
+	// 6. Messages
+	// 7. Session itself
+	database.DB.Where("session_id = ?", id).Delete(&model.Work{})
+	database.DB.Where("session_id = ?", id).Delete(&model.MessageDraft{})
 	database.DB.Where("session_id = ?", id).Delete(&model.Interaction{})
 	database.DB.Where("session_id = ?", id).Delete(&model.HistoricalSummary{})
+	database.DB.Where("session_id = ?", id).Delete(&model.ParticipantSession{})
 	database.DB.Where("session_id = ?", id).Delete(&model.Message{})
 	h.crudSession.Delete(id)
 	removeSessionWorkspace(id)
@@ -434,7 +457,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 	}
 	entity := model.Message{
 		SessionID:       sessionID,
-		Role:            "user",
+		Role:            model.MessageRoleUser,
 		Content:         req.Content,
 		Status:          model.MessageStatusCompleted,
 		HasInteractions: model.HasInteractionsNone,
@@ -480,8 +503,27 @@ func (h *Handler) GetInteractions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid agent_msg_id"})
 		return
 	}
+
+	// In the draft-based architecture, interactions are linked via draft_id.
+	// Look up the message's draft_id first, then query interactions by draft_id.
+	var message model.Message
+	if err := database.DB.First(&message, agentMsgID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"detail": "Message not found"})
+		return
+	}
+	if message.DraftID == nil {
+		applogger.L.Warn("GetInteractions: message has no draft_id, returning empty",
+			"message_id", agentMsgID,
+			"role", message.Role,
+		)
+		c.JSON(http.StatusOK, schema.InteractionListResponse{
+			Interactions: []schema.InteractionResponse{},
+		})
+		return
+	}
+
 	var interactions []model.Interaction
-	database.DB.Where("agent_msg_id = ?", agentMsgID).Order("iteration, type").Find(&interactions)
+	database.DB.Where("draft_id = ?", *message.DraftID).Order("iteration, type").Find(&interactions)
 	c.JSON(http.StatusOK, schema.InteractionListResponse{
 		Interactions: schema.NewInteractionResponseList(interactions),
 	})

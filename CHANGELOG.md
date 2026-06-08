@@ -6,7 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.0.13] - 2026-06-07
+## [0.0.14] - 2026-06-09
+
+### Added
+- **Agent Runtime**: new runtime architecture with AgentRuntime/Work/Manager, implementing ReAct loop with Bash and WebSearch tools, SSE-based status push, and participant status tracking (idle/working)
+- **Agent Status Bar**: chat window top bar showing agent avatars with animated status indicators (green=idle, pulsing blue=working), agent name on hover
+- **Message Draft Model**: interaction records now associated with drafts instead of messages, enabling proper message isolation between user-agent and agent-world boundaries
+- **Participant Session Model**: tracks session participants with type/role/status, supporting future multi-agent scenarios
+- **Pre-release Data Reset**: 0.0.x versions automatically wipe user data on version change to avoid schema migration issues
+
+### Changed
+- **Enum Storage Convention**: all enum fields across 4 tables (participant_sessions, messages, documents, knowledge_bases) migrated from string to int, with database rebuild migration and string→int value mapping
+- **Message Role**: `role` field changed from string ("user"/"assistant") to int (1/2) across backend models, API schemas, and frontend types
+- **Interaction Query**: API adjusted to query interactions via draft_id instead of user_msg_id + agent_msg_id
+
+### Fixed
+- **Database Migration Detection**: enum migration check now correctly handles VARCHAR columns (not just TEXT), fixing silent migration skip
+- **Message List Styling**: CSS class mapping updated after role type change from string to int
 
 ### Fixed
 - **LLM Hallucination Prevention**: discard tool_call reasoning content in TaskLoop to prevent internal process information from leaking into chat layer, which caused the chat LLM to misinterpret reasoning (e.g., "the command is correct") as accomplished facts (e.g., "the service is running")

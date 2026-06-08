@@ -102,3 +102,39 @@ export function getServerUrl(): string {
 export function getDataRoot(): string {
   return path.join(app.getPath('userData'), 'data');
 }
+
+// For pre-release versions (0.0.x), data compatibility is not guaranteed.
+// When the app version changes, wipe the data directory to avoid schema
+// migration issues. A .data-version file tracks which version last wrote data.
+// This behavior is removed once we reach 0.1.0 (stable schema).
+export function checkPreReleaseDataReset(): void {
+  if (isDev()) return; // Skip in dev mode
+
+  const currentVersion = app.getVersion();
+  const isPreRelease = currentVersion.startsWith('0.0.');
+  if (!isPreRelease) return;
+
+  const dataRoot = getDataRoot();
+  const versionFile = path.join(dataRoot, '.data-version');
+  const fs = require('fs');
+
+  let storedVersion = '';
+  try {
+    storedVersion = fs.readFileSync(versionFile, 'utf8').trim();
+  } catch {
+    // Version file doesn't exist yet — first run, no data to wipe
+  }
+
+  if (storedVersion === currentVersion) return;
+
+  // Version changed in 0.0.x — wipe data directory
+  if (storedVersion && fs.existsSync(dataRoot)) {
+    console.log(`[Config] Pre-release version changed (${storedVersion} → ${currentVersion}), wiping data directory: ${dataRoot}`);
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+  }
+
+  // Ensure data directory exists and write current version
+  fs.mkdirSync(dataRoot, { recursive: true });
+  fs.writeFileSync(versionFile, currentVersion, 'utf8');
+  console.log('[Config] Data version marker set to:', currentVersion);
+}

@@ -91,7 +91,16 @@ func AutoMigrate() {
 		&model.KnowledgeBase{},
 		&model.Document{},
 		&model.DocumentChunk{},
+		&model.Work{},
+		&model.MessageDraft{},
+		&model.ParticipantSession{},
 	}
+
+	// Run structural migrations BEFORE addMissingColumns, because some
+	// migrations rebuild tables (e.g., changing NOT NULL columns) which
+	// cannot be done via ALTER TABLE ADD COLUMN.
+	migrateInteractionsTable()
+	migrateHistoricalSummariesTable()
 
 	for _, m := range models {
 		if DB.Migrator().HasTable(m) {
@@ -109,6 +118,13 @@ func AutoMigrate() {
 
 	ensureSearchConfig()
 	ensureDBVersion()
+
+	// Drop sessions.status column (removed from model in Agent Runtime step2)
+	dropSessionsStatusColumn()
+
+	// Migrate enum columns from TEXT to INTEGER across all tables
+	migrateEnumColumnsToInt()
+
 	applogger.L.Info("Database migration completed")
 }
 
@@ -307,6 +323,346 @@ func recreateIndexes(indexes []IndexDef) {
 // containsAutoIncrement checks if a CREATE TABLE DDL already contains AUTOINCREMENT.
 func containsAutoIncrement(ddl string) bool {
 	return strings.Contains(strings.ToUpper(ddl), "AUTOINCREMENT")
+}
+
+// dropSessionsStatusColumn removes the `status` column from the sessions table.
+// This column was removed from the model in the Agent Runtime (step2) refactor,
+// as session status is now managed in-memory by AgentRuntime.
+//
+// SQLite does not support ALTER TABLE DROP COLUMN before version 3.35.0,
+// so we use the standard table rebuild procedure:
+//  1. Create new table without the column
+//  2. Copy data
+//  3. Drop old table
+//  4. Rename new table
+func dropSessionsStatusColumn() {
+	if !DB.Migrator().HasTable(&model.Session{}) {
+		return
+	}
+	if !DB.Migrator().HasColumn(&model.Session{}, "status") {
+		return
+	}
+
+	applogger.L.Info("Dropping sessions.status column (removed from model)")
+
+	// Rebuild sessions table without the status column
+	DB.Exec(`
+		CREATE TABLE sessions_new (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			title      VARCHAR(255) NOT NULL DEFAULT '',
+			agent_id   INTEGER NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)
+	`)
+	DB.Exec(`INSERT INTO sessions_new (id, title, agent_id, created_at, updated_at)
+		SELECT id, title, agent_id, created_at, updated_at FROM sessions`)
+	DB.Exec(`DROP TABLE sessions`)
+	DB.Exec(`ALTER TABLE sessions_new RENAME TO sessions`)
+
+	// Recreate the index on agent_id
+	DB.Exec(`CREATE INDEX idx_sessions_agent_id ON sessions(agent_id)`)
+
+	applogger.L.Info("Successfully dropped sessions.status column")
+}
+
+// migrateEnumColumnsToInt migrates all enum columns from TEXT to INTEGER
+// across all affected tables. This enforces the project convention that
+// all enum types must use int, not string.
+//
+// Affected tables and columns:
+//   - participant_sessions: participant_type, role, status
+//   - messages: role
+//   - documents: status
+//   - knowledge_bases: index_type
+//
+// SQLite does not support ALTER COLUMN, so each table is rebuilt using
+// the standard procedure: create new → copy data → drop old → rename.
+// String values are mapped to their int equivalents during copy.
+func migrateEnumColumnsToInt() {
+	migrateParticipantSessionsEnumToInt()
+	migrateMessagesRoleToInt()
+	migrateDocumentsStatusToInt()
+	migrateKnowledgeBasesIndexTypeToInt()
+}
+
+// isIntegerType checks if a SQLite column type is an integer type.
+func isIntegerType(typeName string) bool {
+	t := strings.ToUpper(typeName)
+	return t == "INTEGER" || t == "INT" || t == "BIGINT" || t == "SMALLINT" || t == "TINYINT"
+}
+
+// getColumnType returns the SQLite column type for a given table and column.
+func getColumnType(tableName, colName string) string {
+	type ColInfo struct {
+		Type string
+	}
+	var info ColInfo
+	DB.Raw("SELECT type FROM pragma_table_info(?) WHERE name = ?", tableName, colName).Scan(&info)
+	return info.Type
+}
+
+// needEnumMigration checks if any of the specified columns in a table
+// are not INTEGER type (i.e., still stored as TEXT/VARCHAR).
+func needEnumMigration(tableName string, columns ...string) bool {
+	for _, col := range columns {
+		if !isIntegerType(getColumnType(tableName, col)) {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateParticipantSessionsEnumToInt rebuilds participant_sessions with
+// participant_type, role, status as INTEGER columns.
+func migrateParticipantSessionsEnumToInt() {
+	if !DB.Migrator().HasTable(&model.ParticipantSession{}) {
+		return
+	}
+	if !needEnumMigration("participant_sessions", "participant_type", "role", "status") {
+		return
+	}
+
+	applogger.L.Info("Migrating participant_sessions: enum TEXT → INTEGER")
+
+	DB.Exec(`
+		CREATE TABLE participant_sessions_new (
+			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id           INTEGER NOT NULL,
+			participant_type     INTEGER NOT NULL DEFAULT 1,
+			participant_id       INTEGER NOT NULL DEFAULT 0,
+			role                 INTEGER NOT NULL DEFAULT 2,
+			status               INTEGER NOT NULL DEFAULT 0,
+			last_read_message_id INTEGER NOT NULL DEFAULT 0,
+			created_at           DATETIME NOT NULL,
+			updated_at           DATETIME NOT NULL
+		)
+	`)
+
+	// Map old string values to int constants
+	DB.Exec(`INSERT INTO participant_sessions_new
+		(id, session_id, participant_type, participant_id, role, status, last_read_message_id, created_at, updated_at)
+		SELECT id, session_id,
+			CASE participant_type WHEN 'agent' THEN 2 ELSE 1 END,
+			participant_id,
+			CASE role WHEN 'owner' THEN 1 WHEN 'watcher' THEN 3 ELSE 2 END,
+			CASE status WHEN 'working' THEN 1 ELSE 0 END,
+			last_read_message_id, created_at, updated_at
+		FROM participant_sessions`)
+
+	DB.Exec(`DROP TABLE participant_sessions`)
+	DB.Exec(`ALTER TABLE participant_sessions_new RENAME TO participant_sessions`)
+	DB.Exec(`CREATE INDEX idx_participant_sessions_session_id ON participant_sessions(session_id)`)
+
+	applogger.L.Info("Successfully migrated participant_sessions enum columns to INTEGER")
+}
+
+// migrateMessagesRoleToInt rebuilds messages with role as INTEGER column.
+func migrateMessagesRoleToInt() {
+	if !DB.Migrator().HasTable(&model.Message{}) {
+		return
+	}
+	if !needEnumMigration("messages", "role") {
+		return
+	}
+
+	applogger.L.Info("Migrating messages: role TEXT → INTEGER")
+
+	DB.Exec(`
+		CREATE TABLE messages_new (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id       INTEGER NOT NULL,
+			role             INTEGER NOT NULL DEFAULT 1,
+			content          TEXT NOT NULL,
+			status           INTEGER NOT NULL DEFAULT 0,
+			has_interactions INTEGER NOT NULL DEFAULT 0,
+			draft_id         INTEGER,
+			created_at       DATETIME NOT NULL,
+			updated_at       DATETIME NOT NULL
+		)
+	`)
+
+	DB.Exec(`INSERT INTO messages_new
+		(id, session_id, role, content, status, has_interactions, draft_id, created_at, updated_at)
+		SELECT id, session_id,
+			CASE role WHEN 'assistant' THEN 2 ELSE 1 END,
+			content, status, has_interactions, draft_id, created_at, updated_at
+		FROM messages`)
+
+	DB.Exec(`DROP TABLE messages`)
+	DB.Exec(`ALTER TABLE messages_new RENAME TO messages`)
+	DB.Exec(`CREATE INDEX idx_messages_session_id ON messages(session_id)`)
+
+	applogger.L.Info("Successfully migrated messages.role to INTEGER")
+}
+
+// migrateDocumentsStatusToInt rebuilds documents with status as INTEGER column.
+func migrateDocumentsStatusToInt() {
+	if !DB.Migrator().HasTable(&model.Document{}) {
+		return
+	}
+	if !needEnumMigration("documents", "status") {
+		return
+	}
+
+	applogger.L.Info("Migrating documents: status TEXT → INTEGER")
+
+	DB.Exec(`
+		CREATE TABLE documents_new (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			knowledge_base_id INTEGER NOT NULL,
+			title            VARCHAR(500) NOT NULL,
+			source           VARCHAR(500) NOT NULL DEFAULT '',
+			file_path        VARCHAR(500) NOT NULL DEFAULT '',
+			file_size        INTEGER NOT NULL DEFAULT 0,
+			file_type        VARCHAR(20) NOT NULL DEFAULT '',
+			chunk_count      INTEGER NOT NULL DEFAULT 0,
+			status           INTEGER NOT NULL DEFAULT 0,
+			error_message    TEXT NOT NULL DEFAULT '',
+			created_at       DATETIME NOT NULL,
+			updated_at       DATETIME NOT NULL
+		)
+	`)
+
+	DB.Exec(`INSERT INTO documents_new
+		(id, knowledge_base_id, title, source, file_path, file_size, file_type, chunk_count, status, error_message, created_at, updated_at)
+		SELECT id, knowledge_base_id, title, source, file_path, file_size, file_type, chunk_count,
+			CASE status WHEN 'processing' THEN 1 WHEN 'ready' THEN 2 WHEN 'failed' THEN 3 WHEN 'deleted' THEN 4 ELSE 0 END,
+			error_message, created_at, updated_at
+		FROM documents`)
+
+	DB.Exec(`DROP TABLE documents`)
+	DB.Exec(`ALTER TABLE documents_new RENAME TO documents`)
+
+	applogger.L.Info("Successfully migrated documents.status to INTEGER")
+}
+
+// migrateKnowledgeBasesIndexTypeToInt rebuilds knowledge_bases with index_type as INTEGER column.
+func migrateKnowledgeBasesIndexTypeToInt() {
+	if !DB.Migrator().HasTable(&model.KnowledgeBase{}) {
+		return
+	}
+	if !needEnumMigration("knowledge_bases", "index_type") {
+		return
+	}
+
+	applogger.L.Info("Migrating knowledge_bases: index_type TEXT → INTEGER")
+
+	DB.Exec(`
+		CREATE TABLE knowledge_bases_new (
+			id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+			name                VARCHAR(255) NOT NULL,
+			description         TEXT NOT NULL DEFAULT '',
+			embedding_config_id INTEGER NOT NULL,
+			index_type          INTEGER NOT NULL DEFAULT 0,
+			index_file_path     VARCHAR(500) NOT NULL DEFAULT '',
+			document_count      INTEGER NOT NULL DEFAULT 0,
+			vector_count        INTEGER NOT NULL DEFAULT 0,
+			deleted_count       INTEGER NOT NULL DEFAULT 0,
+			created_at          DATETIME NOT NULL,
+			updated_at          DATETIME NOT NULL
+		)
+	`)
+
+	DB.Exec(`INSERT INTO knowledge_bases_new
+		(id, name, description, embedding_config_id, index_type, index_file_path, document_count, vector_count, deleted_count, created_at, updated_at)
+		SELECT id, name, description, embedding_config_id,
+			CASE index_type WHEN 'switching' THEN 1 WHEN 'hnsw' THEN 2 ELSE 0 END,
+			index_file_path, document_count, vector_count, deleted_count, created_at, updated_at
+		FROM knowledge_bases`)
+
+	DB.Exec(`DROP TABLE knowledge_bases`)
+	DB.Exec(`ALTER TABLE knowledge_bases_new RENAME TO knowledge_bases`)
+
+	applogger.L.Info("Successfully migrated knowledge_bases.index_type to INTEGER")
+}
+
+// migrateInteractionsTable migrates the interactions table from the old schema
+// (user_msg_id + agent_msg_id) to the new schema (draft_id).
+// This aligns with the draft-based architecture where interactions are grouped
+// by draft_id instead of message pairs.
+func migrateInteractionsTable() {
+	if !DB.Migrator().HasTable(&model.Interaction{}) {
+		return
+	}
+	// If the new draft_id column already exists, migration is done
+	if DB.Migrator().HasColumn(&model.Interaction{}, "draft_id") {
+		return
+	}
+	// If the old user_msg_id column doesn't exist, nothing to migrate
+	if !DB.Migrator().HasColumn(&model.Interaction{}, "user_msg_id") {
+		return
+	}
+
+	applogger.L.Info("Migrating interactions table: user_msg_id+agent_msg_id → draft_id")
+
+	// Rebuild the interactions table with the new schema
+	DB.Exec(`
+		CREATE TABLE interactions_new (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id INTEGER NOT NULL,
+			draft_id   INTEGER NOT NULL,
+			iteration  INTEGER NOT NULL,
+			type       INTEGER NOT NULL,
+			data       TEXT NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)
+	`)
+	DB.Exec(`INSERT INTO interactions_new (id, session_id, draft_id, iteration, type, data, created_at, updated_at)
+		SELECT id, session_id, 0, iteration, type, data, created_at, updated_at FROM interactions`)
+	DB.Exec(`DROP TABLE interactions`)
+	DB.Exec(`ALTER TABLE interactions_new RENAME TO interactions`)
+	DB.Exec(`CREATE INDEX idx_interactions_session_id ON interactions(session_id)`)
+	DB.Exec(`CREATE INDEX idx_interactions_draft_id ON interactions(draft_id)`)
+
+	applogger.L.Info("Successfully migrated interactions table to draft_id schema")
+}
+
+// migrateHistoricalSummariesTable adds the agent_id column to historical_summaries.
+// Summaries are now scoped by (session_id, agent_id) so that different agents
+// in the same session maintain independent summaries and narratives.
+//
+// Since agent_id is NOT NULL and SQLite cannot add NOT NULL columns without
+// defaults via ALTER TABLE, we use the standard table rebuild procedure:
+//  1. Create new table with agent_id column
+//  2. Copy data, backfilling agent_id from sessions.agent_id
+//  3. Drop old table
+//  4. Rename new table
+func migrateHistoricalSummariesTable() {
+	if !DB.Migrator().HasTable(&model.HistoricalSummary{}) {
+		return
+	}
+	// If agent_id column already exists, migration is done
+	if DB.Migrator().HasColumn(&model.HistoricalSummary{}, "agent_id") {
+		return
+	}
+
+	applogger.L.Info("Migrating historical_summaries table: adding agent_id column")
+
+	// Rebuild with agent_id, backfilling from sessions.agent_id
+	DB.Exec(`
+		CREATE TABLE historical_summaries_new (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id INTEGER NOT NULL,
+			agent_id   INTEGER NOT NULL,
+			version    INTEGER NOT NULL,
+			content    TEXT NOT NULL,
+			narrative  TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)
+	`)
+	DB.Exec(`INSERT INTO historical_summaries_new (id, session_id, agent_id, version, content, narrative, created_at, updated_at)
+		SELECT hs.id, hs.session_id, COALESCE(s.agent_id, 0), hs.version, hs.content, hs.narrative, hs.created_at, hs.created_at
+		FROM historical_summaries hs
+		LEFT JOIN sessions s ON hs.session_id = s.id`)
+	DB.Exec(`DROP TABLE historical_summaries`)
+	DB.Exec(`ALTER TABLE historical_summaries_new RENAME TO historical_summaries`)
+	DB.Exec(`CREATE INDEX idx_historical_summaries_session_id ON historical_summaries(session_id)`)
+	DB.Exec(`CREATE INDEX idx_historical_summaries_agent_id ON historical_summaries(agent_id)`)
+
+	applogger.L.Info("Successfully migrated historical_summaries table with agent_id column")
 }
 
 // addAutoIncrementToDDL inserts AUTOINCREMENT after "INTEGER PRIMARY KEY" in the DDL.

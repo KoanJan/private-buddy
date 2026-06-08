@@ -45,7 +45,6 @@ type AgentResponse struct {
 type SessionBrief struct {
 	ID        int64     `json:"id"`
 	Title     string    `json:"title"`
-	Status    int       `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -91,7 +90,6 @@ func NewSessionBriefList(entities []model.Session) []SessionBrief {
 		result = append(result, SessionBrief{
 			ID:        m.ID,
 			Title:     m.Title,
-			Status:    m.Status,
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
 		})

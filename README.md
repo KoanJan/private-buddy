@@ -22,6 +22,8 @@ More features will be added gradually.
 
 ## Quick Start
 
+> **Note**: All 0.0.x versions are pre-release. Data compatibility is not guaranteed between versions — upgrading may clear existing user data. This will change once the project reaches 0.1.0.
+
 ### Option A: Desktop Application (Recommended)
 
 Download the latest release for your platform from the [Releases](https://github.com/KoanJan/private-buddy/releases) page. No development environment required.

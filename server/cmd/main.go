@@ -1,15 +1,18 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"private-buddy-server/internal/api"
+	"private-buddy-server/internal/api/handler"
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/logger"
 	"private-buddy-server/internal/service/kb"
+	"private-buddy-server/internal/service/runtime"
 
 	applogger "private-buddy-server/internal/logger"
 
@@ -34,6 +37,34 @@ func main() {
 
 	database.Init()
 	database.AutoMigrate()
+
+	// Initialize Agent Runtime system with SSE status change callback
+	onStatusChange := func(agentID, sessionID int64, status int) {
+		data, _ := json.Marshal(map[string]interface{}{
+			"type":       "agent_status",
+			"agent_id":   agentID,
+			"session_id": sessionID,
+			"status":     status,
+		})
+		handler.PushSSEToSession(sessionID, string(data))
+	}
+	runtime.InitGlobalRuntimeManager(onStatusChange)
+
+	// Connect runtime's pushMessageEvent to SSE
+	runtime.SetPushMessageEvent(func(sessionID, messageID int64, content string, hasInteractions int) {
+		data, _ := json.Marshal(map[string]interface{}{
+			"type":             "message",
+			"message_id":       messageID,
+			"content":          content,
+			"has_interactions": hasInteractions,
+		})
+		handler.PushSSEToSession(sessionID, string(data))
+	})
+
+	// Connect runtime's pushSSEEvent to SSE (for notifications and other raw events)
+	runtime.SetPushSSEEvent(func(sessionID int64, data string) {
+		handler.PushSSEToSession(sessionID, data)
+	})
 
 	kb.Init(1536, 0)
 	kb.RecoverProcessingDocuments()

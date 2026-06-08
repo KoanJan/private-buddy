@@ -15,7 +15,7 @@ type DocumentResponse struct {
 	FileSize        int64     `json:"file_size"`
 	FileType        string    `json:"file_type"`
 	ChunkCount      int       `json:"chunk_count"`
-	Status          string    `json:"status"`
+	Status          int       `json:"status"`
 	ErrorMessage    string    `json:"error_message"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

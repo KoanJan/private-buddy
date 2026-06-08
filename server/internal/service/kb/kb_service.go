@@ -56,10 +56,10 @@ func RecoverProcessingDocuments() {
 	}
 
 	var switchingKBs []model.KnowledgeBase
-	database.DB.Where("index_type = ?", "switching").Find(&switchingKBs)
+	database.DB.Where("index_type = ?", model.KnowledgeBaseIndexTypeSwitching).Find(&switchingKBs)
 	for _, kb := range switchingKBs {
 		applogger.L.Info("Recovering switching KB, resetting to flat", "kb_id", kb.ID)
-		database.DB.Model(&kb).Update("index_type", "flat")
+		database.DB.Model(&kb).Update("index_type", model.KnowledgeBaseIndexTypeFlat)
 	}
 }
 

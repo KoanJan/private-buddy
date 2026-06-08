@@ -16,6 +16,7 @@ import KnowledgeBaseList from './components/KnowledgeBaseList';
 import KnowledgeBaseDetail from './components/KnowledgeBaseDetail';
 import { ConfigIcon } from './components/AgentAvatar';
 import { versionApi, initApiClient } from './services/api';
+import { logger } from './logger';
 import type { IconType } from './components/AgentAvatar';
 import type { Session, LLMConfig, KnowledgeBase } from './types';
 import './App.css';
@@ -99,11 +100,11 @@ function App() {
   };
 
   const handleCreateSession = (agentId: number) => {
+    logger.info('handleCreateSession called with agentId:', agentId);
     const tempSession: Session = {
       id: -1,
       title: 'New Chat',
       agent_id: agentId,
-      status: 1,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

@@ -94,6 +94,7 @@ func SetupRouter() *gin.Engine {
 			chat.POST("/new", h.CreateAndSend)
 			chat.POST("/send/:session_id", h.SendMessage)
 			chat.GET("/stream/:session_id", h.StreamMessages)
+			chat.GET("/agents/:session_id", h.GetSessionAgents)
 		}
 
 		api.GET("/interactions", h.GetInteractions)

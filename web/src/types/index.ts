@@ -2,15 +2,18 @@ export interface Session {
   id: number;
   title: string;
   agent_id: number;
-  status: number;
   created_at: string;
   updated_at: string | null;
 }
 
+// Message role constants (must match backend model.MessageRole*)
+export const MESSAGE_ROLE_USER = 1;
+export const MESSAGE_ROLE_ASSISTANT = 2;
+
 export interface Message {
   id: number;
   session_id: number;
-  role: 'user' | 'assistant';
+  role: number; // 1=user, 2=assistant
   content: string;
   status: number;
   has_interactions: number;
@@ -60,7 +63,6 @@ export interface Agent {
 export interface SessionBrief {
   id: number;
   title: string;
-  status: number;
   created_at: string;
   updated_at: string | null;
 }
@@ -106,12 +108,17 @@ export interface SearchConfig {
   updated_at: string | null;
 }
 
+// Knowledge base index type constants (must match backend model.KnowledgeBaseIndexType*)
+export const KB_INDEX_TYPE_FLAT = 0;
+export const KB_INDEX_TYPE_SWITCHING = 1;
+export const KB_INDEX_TYPE_HNSW = 2;
+
 export interface KnowledgeBase {
   id: number;
   name: string;
   description: string;
   embedding_config_id: number;
-  index_type: string;
+  index_type: number; // 0=flat, 1=switching, 2=hnsw
   index_file_path: string;
   document_count: number;
   vector_count: number;
@@ -119,6 +126,13 @@ export interface KnowledgeBase {
   created_at: string;
   updated_at: string;
 }
+
+// Document status constants (must match backend model.DocumentStatus*)
+export const DOC_STATUS_PENDING = 0;
+export const DOC_STATUS_PROCESSING = 1;
+export const DOC_STATUS_READY = 2;
+export const DOC_STATUS_FAILED = 3;
+export const DOC_STATUS_DELETED = 4;
 
 export interface Document {
   id: number;
@@ -129,7 +143,7 @@ export interface Document {
   file_size: number;
   file_type: string;
   chunk_count: number;
-  status: string;
+  status: number; // 0=pending, 1=processing, 2=ready, 3=failed, 4=deleted
   error_message: string;
   created_at: string;
   updated_at: string;
@@ -142,4 +156,15 @@ export interface SearchResult {
   content: string;
   score: number;
   knowledge_base_id: number;
+}
+
+// Participant status constants (must match backend model.ParticipantStatus*)
+export const PARTICIPANT_STATUS_IDLE = 0;
+export const PARTICIPANT_STATUS_WORKING = 1;
+
+export interface SessionAgentStatus {
+  agent_id: number;
+  name: string;
+  avatar: string;
+  status: number; // 0=idle, 1=working
 }

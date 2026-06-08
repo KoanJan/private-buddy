@@ -9,6 +9,7 @@ import (
 	stdctx "context"
 	"fmt"
 
+	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
@@ -34,7 +35,10 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
 - If the conversation contains multiple languages, the summary may also contain multiple languages.
 - Do NOT translate between languages. Maintain information fidelity.`
 
-// GenerateSummary generates a summary for the specified version.
+// GenerateSummary generates a summary for the specified (session, agent, version).
+//
+// Summaries are scoped by (session_id, agent_id) so that different agents
+// maintain independent summaries and narratives for the same session.
 //
 // Summary Generation Rules:
 //   - V < N: No summary generated (not enough messages)
@@ -44,24 +48,17 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
 // After summary content is generated, a narrative is immediately generated from
 // the summary content. Both are written to the database in a single atomic
 // operation, ensuring no intermediate state exists where summary exists but
-// narrative is empty. This eliminates the real-time narrative generation
-// bottleneck during chat processing while maintaining data consistency.
-//
-// Atomic write design: summary and narrative are both generated before
-// writing to the database. This eliminates the intermediate state where
-// summary exists but narrative is empty, avoiding race conditions during
-// concurrent reads. If narrative generation fails, the entire operation
-// is aborted and no record is written — the next trigger will retry.
-func GenerateSummary(sessionID int64, llmConfig *model.LLMConfig, version int, windowSize int) error {
-	existing := getSummary(sessionID, version)
+// narrative is empty.
+func GenerateSummary(sessionID, agentID int64, llmConfig *model.LLMConfig, version int, windowSize int) error {
+	existing := getSummary(sessionID, agentID, version)
 	if existing != nil {
-		applogger.L.Info("Summary already exists", "session_id", sessionID, "version", version)
+		applogger.L.Info("Summary already exists", "session_id", sessionID, "agent_id", agentID, "version", version)
 		return nil
 	}
 
 	if version < windowSize {
 		applogger.L.Info("Version < window_size, skipping summary generation",
-			"session_id", sessionID, "version", version, "window_size", windowSize)
+			"session_id", sessionID, "agent_id", agentID, "version", version, "window_size", windowSize)
 		return nil
 	}
 
@@ -79,15 +76,15 @@ func GenerateSummary(sessionID int64, llmConfig *model.LLMConfig, version int, w
 	} else {
 		baselineVersion := version - windowSize
 
-		baselineSummary := getSummary(sessionID, baselineVersion)
+		baselineSummary := getSummary(sessionID, agentID, baselineVersion)
 		if baselineSummary == nil {
 			applogger.L.Info("Baseline summary not found, generating recursively",
-				"session_id", sessionID, "baseline_version", baselineVersion)
-			if err := GenerateSummary(sessionID, llmConfig, baselineVersion, windowSize); err != nil {
+				"session_id", sessionID, "agent_id", agentID, "baseline_version", baselineVersion)
+			if err := GenerateSummary(sessionID, agentID, llmConfig, baselineVersion, windowSize); err != nil {
 				applogger.L.Error("Failed to generate baseline summary recursively",
-					"session_id", sessionID, "baseline_version", baselineVersion, "error", err)
+					"session_id", sessionID, "agent_id", agentID, "baseline_version", baselineVersion, "error", err)
 			}
-			baselineSummary = getSummary(sessionID, baselineVersion)
+			baselineSummary = getSummary(sessionID, agentID, baselineVersion)
 		}
 
 		baselineText := "(No baseline summary)"
@@ -111,20 +108,21 @@ func GenerateSummary(sessionID int64, llmConfig *model.LLMConfig, version int, w
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
-		applogger.L.Error("Summary generation LLM call failed", "session_id", sessionID, "error", err)
+		applogger.L.Error("Summary generation LLM call failed", "session_id", sessionID, "agent_id", agentID, "error", err)
 		return fmt.Errorf("summary generation failed: %w", err)
 	}
 
-	applogger.L.Info("Generated summary content", "session_id", sessionID, "version", version)
+	applogger.L.Info("Generated summary content", "session_id", sessionID, "agent_id", agentID, "version", version)
 
 	narrativeResult := GenerateNarrativeFromSummary(llmConfig, summaryContent)
 	if narrativeResult == "" {
-		applogger.L.Error("Narrative generation failed, aborting atomic write", "session_id", sessionID, "version", version)
+		applogger.L.Error("Narrative generation failed, aborting atomic write", "session_id", sessionID, "agent_id", agentID, "version", version)
 		return fmt.Errorf("narrative generation failed")
 	}
 
 	newSummary := model.HistoricalSummary{
 		SessionID: sessionID,
+		AgentID:   agentID,
 		Version:   version,
 		Content:   summaryContent,
 		Narrative: narrativeResult,
@@ -133,14 +131,14 @@ func GenerateSummary(sessionID int64, llmConfig *model.LLMConfig, version int, w
 		return err
 	}
 
-	applogger.L.Info("Atomically created summary+record", "session_id", sessionID, "version", version)
+	applogger.L.Info("Atomically created summary+record", "session_id", sessionID, "agent_id", agentID, "version", version)
 	return nil
 }
 
-// getSummary retrieves a specific summary by session ID and version.
-func getSummary(sessionID int64, version int) *model.HistoricalSummary {
+// getSummary retrieves a specific summary by (session_id, agent_id, version).
+func getSummary(sessionID, agentID int64, version int) *model.HistoricalSummary {
 	var summary model.HistoricalSummary
-	err := database.DB.Where("session_id = ? AND version = ?", sessionID, version).First(&summary).Error
+	err := database.DB.Where("session_id = ? AND agent_id = ? AND version = ?", sessionID, agentID, version).First(&summary).Error
 	if err != nil {
 		return nil
 	}
@@ -165,7 +163,7 @@ func formatMessagesForSummary(messages []model.Message) string {
 	var formatted []string
 	for _, msg := range messages {
 		role := "User"
-		if msg.Role != "user" {
+		if msg.Role != model.MessageRoleUser {
 			role = "Assistant"
 		}
 		formatted = append(formatted, fmt.Sprintf("%s: %s", role, msg.Content))
@@ -180,10 +178,10 @@ func formatMessagesForSummary(messages []model.Message) string {
 	return result
 }
 
-// GetLatestSummaryByID returns the latest summary for a session by ID.
-func GetLatestSummaryByID(sessionID int64) *model.HistoricalSummary {
+// GetLatestSummaryByID returns the latest summary for a (session, agent).
+func GetLatestSummaryByID(sessionID, agentID int64) *model.HistoricalSummary {
 	var summary model.HistoricalSummary
-	err := database.DB.Where("session_id = ?", sessionID).Order("version DESC").First(&summary).Error
+	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).Order("version DESC").First(&summary).Error
 	if err != nil {
 		return nil
 	}
@@ -191,29 +189,43 @@ func GetLatestSummaryByID(sessionID int64) *model.HistoricalSummary {
 }
 
 // GenerateSummaryForSession is a shared function for triggering summary generation
-// from both the API handler and ChatService, matching Python's generate_summary_task.
+// from both the API handler and ChatService.
 // It loads the session, agent, and LLM config before delegating to GenerateSummary.
-func GenerateSummaryForSession(sessionID int64, version int, windowSize int) {
-	var session model.Session
-	if err := database.DB.First(&session, sessionID).Error; err != nil {
-		applogger.L.Error("Session not found for summary generation", "session_id", sessionID, "error", err)
-		return
-	}
-
-	var agent model.Agent
-	if err := database.DB.First(&agent, session.AgentID).Error; err != nil {
-		applogger.L.Error("Agent not found for summary generation", "agent_id", session.AgentID, "error", err)
-		return
-	}
-
+func GenerateSummaryForSession(sessionID, agentID int64, version int, windowSize int) {
 	var llmConfig model.LLMConfig
+	var agent model.Agent
+	if err := database.DB.First(&agent, agentID).Error; err != nil {
+		applogger.L.Error("Agent not found for summary generation", "agent_id", agentID, "error", err)
+		return
+	}
 	if err := database.DB.First(&llmConfig, agent.LLMConfigID).Error; err != nil {
 		applogger.L.Error("LLMConfig not found for summary generation", "config_id", agent.LLMConfigID, "error", err)
 		return
 	}
 
-	if err := GenerateSummary(sessionID, &llmConfig, version, windowSize); err != nil {
-		applogger.L.Error("Summary generation failed", "session_id", sessionID, "error", err)
+	if err := GenerateSummary(sessionID, agentID, &llmConfig, version, windowSize); err != nil {
+		applogger.L.Error("Summary generation failed", "session_id", sessionID, "agent_id", agentID, "error", err)
+	}
+}
+
+// MaybeTriggerSummary checks if summary generation should be triggered after
+// a new message is committed. Summary generation is purely based on message count:
+// it triggers when the total message count in the session is a multiple of the
+// configured window size. This is sender-agnostic — user and agent messages are
+// treated equally.
+//
+// This function should be called after ANY message is created (user or agent).
+func MaybeTriggerSummary(sessionID, agentID int64) {
+	settings := config.Get()
+	windowSize := settings.SummaryWindowSize
+
+	var messageCount int64
+	database.DB.Model(&model.Message{}).Where("session_id = ?", sessionID).Count(&messageCount)
+
+	if messageCount >= int64(windowSize) && messageCount%int64(windowSize) == 0 {
+		applogger.L.Info("Triggering summary generation",
+			"session_id", sessionID, "agent_id", agentID, "V", messageCount)
+		go GenerateSummaryForSession(sessionID, agentID, int(messageCount), windowSize)
 	}
 }
 
@@ -239,8 +251,12 @@ func GetContextMessages(sessionID int64, maxIterations int) []llm.Message {
 
 	result := make([]llm.Message, 0, len(messages))
 	for _, m := range messages {
+		role := "user"
+		if m.Role == model.MessageRoleAssistant {
+			role = "assistant"
+		}
 		result = append(result, llm.Message{
-			Role:    m.Role,
+			Role:    role,
 			Content: m.Content,
 		})
 	}

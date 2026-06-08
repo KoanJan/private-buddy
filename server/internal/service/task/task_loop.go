@@ -46,7 +46,7 @@ type TaskLoop struct {
 	maxIterations    int                         // Maximum number of loop iterations
 	sessionID        int64                       // Session ID for interaction records
 	userMsgID        int64                       // User message ID that triggered execution
-	agentMsgID       int64                       // Agent message ID for the delivery target
+	draftID          int64                       // Draft ID for interaction record association
 	writeNotesTool   *tools.WriteNotesTool       // Write notes tool for checkpoint iterations
 	checkpointClient *llm.ChatModel              // Lazy-initialized LLM client for checkpoint iterations
 	lastNotesIter    int                         // Last iteration where write_notes was called (voluntary or forced)
@@ -61,7 +61,7 @@ func NewTaskLoop(
 	toolList []tools.Tool,
 	contextManager *taskcontext.ContextManager,
 	maxIterations int,
-	sessionID, userMsgID, agentMsgID int64,
+	sessionID, userMsgID, draftID int64,
 	writeNotesTool *tools.WriteNotesTool,
 	ctx context.Context,
 ) *TaskLoop {
@@ -78,7 +78,7 @@ func NewTaskLoop(
 		maxIterations:  maxIterations,
 		sessionID:      sessionID,
 		userMsgID:      userMsgID,
-		agentMsgID:     agentMsgID,
+		draftID:        draftID,
 		writeNotesTool: writeNotesTool,
 		ctx:            ctx,
 	}
@@ -104,7 +104,7 @@ func (tl *TaskLoop) Run() *LoopResult {
 	applogger.L.Info("TaskLoop starting",
 		"max_iterations", tl.maxIterations,
 		"session_id", tl.sessionID,
-		"agent_msg_id", tl.agentMsgID,
+		"agent_msg_id", tl.draftID,
 	)
 
 	for iteration := 1; iteration <= tl.maxIterations; iteration++ {
@@ -574,12 +574,11 @@ func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[st
 
 	dataJSON, _ := json.Marshal(data)
 	record := model.Interaction{
-		SessionID:  tl.sessionID,
-		UserMsgID:  tl.userMsgID,
-		AgentMsgID: tl.agentMsgID,
-		Iteration:  iteration,
-		Type:       interactionType,
-		Data:       string(dataJSON),
+		SessionID: tl.sessionID,
+		DraftID:   tl.draftID,
+		Iteration: iteration,
+		Type:      interactionType,
+		Data:      string(dataJSON),
 	}
 	if err := database.DB.Create(&record).Error; err != nil {
 		applogger.L.Error("Failed to write interaction record", "error", err)

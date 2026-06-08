@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { logger } from '../logger';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, Interaction, SearchConfig, KnowledgeBase, Document, SearchResult } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, Interaction, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus } from '../types';
 
 declare global {
   interface Window {
@@ -100,9 +100,9 @@ export const sessionApi = {
 export const messageApi = {
   list: (sessionId: number) => api.get<Message[]>(`/messages/${sessionId}`),
   send: (sessionId: number, content: string) =>
-      api.post<{trigger_message_id: number, ai_message_id: number}>(`/chat/send/${sessionId}?message=${encodeURIComponent(content)}`),
+      api.post<{trigger_message_id: number}>(`/chat/send/${sessionId}?message=${encodeURIComponent(content)}`),
   createAndSend: (content: string, agentId?: number, title?: string) =>
-    api.post<{session_id: number, trigger_message_id: number, ai_message_id: number}>(`/chat/new?message=${encodeURIComponent(content)}${agentId ? `&agent_id=${agentId}` : ''}${title ? `&title=${encodeURIComponent(title)}` : ''}`),
+    api.post<{session_id: number, trigger_message_id: number}>(`/chat/new?message=${encodeURIComponent(content)}${agentId ? `&agent_id=${agentId}` : ''}${title ? `&title=${encodeURIComponent(title)}` : ''}`),
 };
 
 export const llmConfigApi = {
@@ -150,6 +150,11 @@ export const uploadApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+};
+
+export const chatApi = {
+  getSessionAgents: (sessionId: number) =>
+    api.get<SessionAgentStatus[]>(`/chat/agents/${sessionId}`),
 };
 
 export const getAvatarUrl = (avatar: string) => {

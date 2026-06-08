@@ -97,7 +97,7 @@ func formatRecentMessages(recentMessages []model.Message) string {
 	var lines []string
 	for _, msg := range recentMessages {
 		role := "User"
-		if msg.Role != "user" {
+		if msg.Role != model.MessageRoleUser {
 			role = "Assistant"
 		}
 		lines = append(lines, fmt.Sprintf("%s: %s", role, msg.Content))

@@ -54,7 +54,7 @@ type TaskParams struct {
 	MaxIterations   int                 // Override for max loop iterations (0 = use default)
 	SessionID       int64               // Session ID for interaction records and workspace
 	UserMsgID       int64               // User message ID that triggered execution
-	AgentMsgID      int64               // Agent message ID for the result target
+	DraftID         int64               // Draft ID for interaction record association
 	SearchConfig    *model.SearchConfig // Search configuration for web search tool
 	DeliveryType    string              // Expected delivery type ("text" or "file"), affects system prompt
 	Ctx             context.Context     // Cancellation context from the caller
@@ -114,7 +114,7 @@ func Execute(params TaskParams) *TaskResult {
 		maxIterations,
 		params.SessionID,
 		params.UserMsgID,
-		params.AgentMsgID,
+		params.DraftID,
 		writeNotesTool,
 		params.Ctx,
 	)

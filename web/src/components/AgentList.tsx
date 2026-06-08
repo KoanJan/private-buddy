@@ -119,7 +119,6 @@ const AgentList: React.FC<AgentListProps> = ({ currentSessionId, onSelectSession
       id: session.id,
       title: session.title,
       agent_id: session.agent_id,
-      status: session.status,
       created_at: session.created_at,
       updated_at: session.updated_at,
     });

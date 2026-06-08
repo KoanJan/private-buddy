@@ -12,7 +12,7 @@
 import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
 import path from 'path';
 import { startServer, stopServer } from './server-manager';
-import { isDev, getWebDistPath, getServerPort, APP_NAME } from './config';
+import { isDev, getWebDistPath, getServerPort, APP_NAME, checkPreReleaseDataReset } from './config';
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
@@ -70,6 +70,7 @@ function createMainWindow(autoShow: boolean = false): void {
   });
 
   const webPath = getWebDistPath();
+  console.log('[Main] Loading web from path:', webPath, 'isDev:', isDev());
   if (isDev()) {
     mainWindow.loadURL(webPath);
   } else {
@@ -100,6 +101,9 @@ function showMainWindow(): void {
 }
 
 app.on('ready', async () => {
+  // For 0.0.x pre-release versions, wipe data on version change
+  checkPreReleaseDataReset();
+
   ipcMain.handle('get-server-port', () => {
     const port = getServerPort();
     console.log('[IPC] get-server-port called, returning:', port);

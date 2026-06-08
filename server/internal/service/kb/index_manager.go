@@ -19,12 +19,12 @@ import (
 )
 
 // IndexType represents the current indexing mode for a knowledge base.
-type IndexType string
+type IndexType int
 
 const (
-	IndexTypeFlat      IndexType = "flat"
-	IndexTypeSwitching IndexType = "switching"
-	IndexTypeHNSW      IndexType = "hnsw"
+	IndexTypeFlat      IndexType = IndexType(model.KnowledgeBaseIndexTypeFlat)
+	IndexTypeSwitching IndexType = IndexType(model.KnowledgeBaseIndexTypeSwitching)
+	IndexTypeHNSW      IndexType = IndexType(model.KnowledgeBaseIndexTypeHNSW)
 )
 
 // PendingVector holds a vector awaiting insertion into the HNSW graph
@@ -53,7 +53,7 @@ type IndexManager struct {
 }
 
 // NewIndexManager creates an IndexManager for a knowledge base.
-func NewIndexManager(indexType, indexFilePath, vectorsDBPath string, kbID int64, threshold int) *IndexManager {
+func NewIndexManager(indexType int, indexFilePath, vectorsDBPath string, kbID int64, threshold int) *IndexManager {
 	return &IndexManager{
 		indexType:     IndexType(indexType),
 		indexPath:     indexFilePath,
@@ -178,8 +178,8 @@ func (m *IndexManager) checkFlatToHNSW() {
 
 	if count >= m.threshold {
 		result := database.DB.Model(&model.KnowledgeBase{}).
-			Where("id = ? AND index_type = ?", m.kbID, string(IndexTypeFlat)).
-			Update("index_type", string(IndexTypeSwitching))
+			Where("id = ? AND index_type = ?", m.kbID, int(IndexTypeFlat)).
+			Update("index_type", int(IndexTypeSwitching))
 		if result.RowsAffected == 1 {
 			m.indexType = IndexTypeSwitching
 			go m.buildHNSWIndex()
@@ -315,8 +315,8 @@ func (m *IndexManager) buildHNSWIndex() {
 	m.mu.Unlock()
 
 	database.DB.Model(&model.KnowledgeBase{}).
-		Where("id = ? AND index_type = ?", m.kbID, string(IndexTypeSwitching)).
-		Update("index_type", string(IndexTypeHNSW))
+		Where("id = ? AND index_type = ?", m.kbID, int(IndexTypeSwitching)).
+		Update("index_type", int(IndexTypeHNSW))
 
 	applogger.L.Info("HNSW index built successfully", "kb_id", m.kbID,
 		"total_vectors", len(addedChunkIDs))
@@ -438,8 +438,8 @@ func (m *IndexManager) loadHNSWGraph() error {
 
 func (m *IndexManager) casIndexType(from, to IndexType) bool {
 	result := database.DB.Model(&model.KnowledgeBase{}).
-		Where("id = ? AND index_type = ?", m.kbID, string(from)).
-		Update("index_type", string(to))
+		Where("id = ? AND index_type = ?", m.kbID, int(from)).
+		Update("index_type", int(to))
 	if result.RowsAffected == 1 {
 		m.mu.Lock()
 		m.indexType = to

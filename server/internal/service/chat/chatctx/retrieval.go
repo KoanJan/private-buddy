@@ -88,7 +88,7 @@ func buildSummaryAndNarrative(latestSummary *model.HistoricalSummary) (int, stri
 // GetContextWithoutRAG retrieves context without RAG retrieval.
 // Used for queries that don't need RAG (e.g., greetings, chitchat).
 // Retrieves recent messages, latest summary, and cached narrative.
-func GetContextWithoutRAG(sessionID int64, recentCount int) *RetrievalResult {
+func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
 		RelevantSegments: []Segment{},
@@ -96,7 +96,7 @@ func GetContextWithoutRAG(sessionID int64, recentCount int) *RetrievalResult {
 
 	result.RecentMessages = GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
-	latestSummary := GetLatestSummaryByID(sessionID)
+	latestSummary := GetLatestSummaryByID(sessionID, agentID)
 	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
 
 	return result
@@ -108,7 +108,7 @@ func GetContextWithoutRAG(sessionID int64, recentCount int) *RetrievalResult {
 //  2. RAG segments relevant to the query (if embedding configured)
 //  3. Latest summary (if available)
 //  4. Cached narrative from summary record (if available)
-func GetContextForChat(sessionID int64, query string, recentCount int, ragCount int) *RetrievalResult {
+func GetContextForChat(sessionID, agentID int64, query string, recentCount int, ragCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
 		RelevantSegments: []Segment{},
@@ -142,7 +142,7 @@ func GetContextForChat(sessionID int64, query string, recentCount int, ragCount 
 		}
 	}
 
-	latestSummary := GetLatestSummaryByID(sessionID)
+	latestSummary := GetLatestSummaryByID(sessionID, agentID)
 	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
 
 	return result
@@ -183,10 +183,14 @@ func IndexMessages(sessionID int64, messageIDs []int64) bool {
 	msgIDs := make([]int64, len(messages))
 
 	for i, msg := range messages {
+		role := "user"
+		if msg.Role == model.MessageRoleAssistant {
+			role = "assistant"
+		}
 		contents[i] = msg.Content
 		metadatas[i] = vectorstore.VectorMetadata{
 			MessageID: msg.ID,
-			Role:      msg.Role,
+			Role:      role,
 			Content:   msg.Content,
 		}
 		msgIDs[i] = msg.ID

@@ -5,13 +5,14 @@ import { Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMessageTime } from '../utils/time';
 import AgentAvatar from './AgentAvatar';
+import AgentStatusBar from './AgentStatusBar';
 import InteractionModal from './InteractionModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Message, Session, Agent, Interaction } from '../types';
-import { HAS_INTERACTIONS_PENDING, HAS_INTERACTIONS_EXISTS, MESSAGE_STATUS_COMPLETED } from '../types';
-import { messageApi, agentApi, interactionApi, getDynamicApiBaseUrl } from '../services/api';
-import { logger, MESSAGE_STATUS_STREAMING } from '../logger';
+import type { Message, Session, Agent, Interaction, SessionAgentStatus } from '../types';
+import { HAS_INTERACTIONS_PENDING, HAS_INTERACTIONS_EXISTS, HAS_INTERACTIONS_NONE, MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING } from '../types';
+import { messageApi, agentApi, interactionApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
+import { logger } from '../logger';
 
 /**
  * Props for the ChatWindow component.
@@ -53,9 +54,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [interactionModalVisible, setInteractionModalVisible] = useState(false);
   const [selectedInteractions, setSelectedInteractions] = useState<Interaction[]>([]);
   const [interactionsLoading, setInteractionsLoading] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<number>(PARTICIPANT_STATUS_IDLE);
+  const [sessionAgents, setSessionAgents] = useState<SessionAgentStatus[]>([]);
   
-  // Derived: streaming state is determined by whether any assistant message is still streaming
-  const isStreaming = messages.some(m => m.role === 'assistant' && m.status === MESSAGE_STATUS_STREAMING);
+  // Derived: streaming state is determined by agent runtime status (from SSE agent_status events)
+  const isStreaming = agentStatus !== PARTICIPANT_STATUS_IDLE;
 
   // Refs for managing async state and preventing race conditions
   const pollingRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
@@ -69,6 +72,34 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const loadMessagesRef = useRef<() => void>(() => {});
 
   const isTempSession = session?.id === -1;
+
+  // Load session agents with their runtime status
+  useEffect(() => {
+    if (!session || isTempSession || !session.agent_id) {
+      setSessionAgents([]);
+      return;
+    }
+
+    const loadSessionAgents = async () => {
+      try {
+        const res = await chatApi.getSessionAgents(session.id);
+        setSessionAgents(res.data);
+      } catch (error) {
+        logger.error('Failed to load session agents, falling back to current agent info', error, 'session_id', session?.id);
+        // Fallback: construct from current agent info
+        if (currentAgent) {
+          setSessionAgents([{
+            agent_id: currentAgent.id,
+            name: currentAgent.name,
+            avatar: currentAgent.avatar,
+            status: PARTICIPANT_STATUS_IDLE,
+          }]);
+        }
+      }
+    };
+
+    loadSessionAgents();
+  }, [session?.id, session?.agent_id]);
 
   useEffect(() => {
     const loadAgent = async () => {
@@ -251,7 +282,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   // Poll for interaction status on agent messages with has_interactions=PENDING
   useEffect(() => {
     const pendingAgentMessages = messages.filter(
-      m => m.role === 'assistant' && m.has_interactions === HAS_INTERACTIONS_PENDING
+      m => m.role === MESSAGE_ROLE_ASSISTANT && m.has_interactions === HAS_INTERACTIONS_PENDING
     );
 
     pendingAgentMessages.forEach(msg => {
@@ -328,14 +359,31 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         logger.debug('SSE parsed message:', data);
         
         if (data.type === 'message') {
-          // Received complete message, update message list
+          // Received complete message from agent (committed from draft)
           logger.info('Received complete message, id:', data.message_id, 'content length:', data.content?.length);
-          setMessages(prev => prev.map(m => {
-            if (m.id === data.message_id) {
-              return { ...m, content: data.content, status: MESSAGE_STATUS_COMPLETED };
-            }
-            return m;
-          }));
+          const newMsg: Message = {
+            id: data.message_id,
+            session_id: data.session_id || session?.id || 0,
+            role: MESSAGE_ROLE_ASSISTANT,
+            content: data.content,
+            status: MESSAGE_STATUS_COMPLETED,
+            has_interactions: data.has_interactions ?? HAS_INTERACTIONS_NONE,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setMessages(prev => [...prev, newMsg]);
+        } else if (data.type === 'agent_status') {
+          // Agent runtime status change
+          logger.info('Agent status changed:', data.status);
+          setAgentStatus(data.status);
+          // Also update sessionAgents status
+          if (data.agent_id) {
+            setSessionAgents(prev => prev.map(a =>
+              a.agent_id === data.agent_id ? { ...a, status: data.status as number } : a
+            ));
+          } else {
+            logger.warn('agent_status event missing agent_id, cannot update sessionAgents', 'status', data.status);
+          }
         } else if (data.type === 'error') {
           logger.error('SSE error from server:', data.message);
           message.error(`${t('messages.aiResponseError')}: ${data.message}`);
@@ -356,12 +404,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   };
 
   const handleSend = async () => {
-    if (!inputValue.trim() || !session || isStreaming) return;
+    if (!inputValue.trim() || !session) return;
 
     logger.info('Sending message:', inputValue);
 
     try {
       if (isTempSession) {
+        logger.info('Creating new session with agent_id:', session.agent_id);
         const response = await messageApi.createAndSend(
           inputValue,
           session.agent_id,
@@ -369,34 +418,23 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         );
         
         const newSessionId = response.data.session_id;
-        const aiMessageId = response.data.ai_message_id;
         
         const userMessage: Message = {
           id: response.data.trigger_message_id,
           session_id: newSessionId,
-          role: 'user',
+          role: MESSAGE_ROLE_USER,
           content: inputValue,
           status: 1,
-          has_interactions: 2,
+          has_interactions: HAS_INTERACTIONS_NONE,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
         
-        const aiMessage: Message = {
-          id: aiMessageId,
-          session_id: newSessionId,
-          role: 'assistant',
-          content: '',
-          status: 0,
-          has_interactions: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        
-        setMessages([userMessage, aiMessage]);
+        // No placeholder AI message — agent response will arrive via SSE 'message' event
+        // when the draft is committed
+        setMessages([userMessage]);
         setInputValue('');
-        
-        startPolling(aiMessageId);
+        setAgentStatus(PARTICIPANT_STATUS_WORKING);
 
         if (onSessionCreated) {
           onSessionCreated(newSessionId);
@@ -410,30 +448,18 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         const userMessage: Message = {
           id: response.data.trigger_message_id,
           session_id: session.id,
-          role: 'user',
+          role: MESSAGE_ROLE_USER,
           content: inputValue,
           status: 1,
-          has_interactions: 2,
+          has_interactions: HAS_INTERACTIONS_NONE,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
         
-        const aiMessageId = response.data.ai_message_id;
-        const aiMessage: Message = {
-          id: aiMessageId,
-          session_id: session.id,
-          role: 'assistant',
-          content: '',
-          status: 0,
-          has_interactions: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        
-        setMessages(prev => [...prev, userMessage, aiMessage]);
+        // No placeholder AI message — agent response will arrive via SSE 'message' event
+        setMessages(prev => [...prev, userMessage]);
         setInputValue('');
-        
-        startPolling(aiMessageId);
+        setAgentStatus(PARTICIPANT_STATUS_WORKING);
         
         // Establish SSE connection if not already connected
         if (!eventSourceRef.current) {
@@ -456,10 +482,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     );
   }
 
-  const isSendDisabled = !inputValue.trim() || isStreaming;
+  const isSendDisabled = !inputValue.trim();
 
   return (
     <>
+      <AgentStatusBar agents={sessionAgents} />
       <div className="chat-messages" ref={chatMessagesRef}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: '40px' }}>
@@ -468,9 +495,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         ) : (
           <>
             {messages.map((msg) => (
-                <div key={msg.id} className={`message-item ${msg.role}`}>
+                <div key={msg.id} className={`message-item ${msg.role === MESSAGE_ROLE_USER ? 'user' : 'assistant'}`}>
                   <div className="message-header">
-                    {msg.role === 'user' ? (
+                    {msg.role === MESSAGE_ROLE_USER ? (
                       <>
                         <span className="message-time">{formatMessageTime(new Date(msg.updated_at || msg.created_at))}</span>
                         <span className="message-role">{t('chat.me')}</span>
@@ -485,13 +512,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                       </>
                     )}
                   </div>
-                  {msg.role === 'assistant' && msg.status === MESSAGE_STATUS_STREAMING ? (
+                  {msg.role === MESSAGE_ROLE_ASSISTANT && msg.content === '' && isStreaming ? (
                     <div style={{ textAlign: 'center', padding: '8px' }}>
                       <Spin size="small" />
                     </div>
                   ) : (
                   <div className="message-content">
-                    {msg.role === 'assistant' ? (
+                    {msg.role === MESSAGE_ROLE_ASSISTANT ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {msg.content}
                       </ReactMarkdown>
@@ -500,7 +527,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                     )}
                   </div>
                   )}
-                  {msg.role === 'assistant' && msg.has_interactions === HAS_INTERACTIONS_EXISTS && (
+                  {msg.role === MESSAGE_ROLE_ASSISTANT && msg.has_interactions === HAS_INTERACTIONS_EXISTS && (
                     <div style={{ marginTop: '4px' }}>
                       <Button
                         type="text"
@@ -526,7 +553,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           <div className="input-container">
             <div className="input-area">
               <Input.TextArea
-                placeholder={isStreaming ? t('app.generating') : ""}
+                placeholder=""
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onPressEnter={(e) => {
@@ -536,7 +563,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                   }
                 }}
                 autoSize={{ minRows: 1, maxRows: 4 }}
-                disabled={isStreaming}
                 bordered={false}
                 style={{
                   width: '100%',

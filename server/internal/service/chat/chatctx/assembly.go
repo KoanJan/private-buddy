@@ -168,7 +168,7 @@ func AssembleContext(
 	var dialogLines []string
 	for _, msg := range recentMessages {
 		role := "User"
-		if msg.Role != "user" {
+		if msg.Role != model.MessageRoleUser {
 			role = "You"
 		}
 		dialogLines = append(dialogLines, fmt.Sprintf("%s: %s", role, msg.Content))

@@ -145,7 +145,7 @@ func (dp *DocumentProcessor) generateEmbeddings(ctx context.Context, chunks []mo
 	return allEmbeddings, nil
 }
 
-func (dp *DocumentProcessor) updateStatus(docID int64, status, errMsg string) {
+func (dp *DocumentProcessor) updateStatus(docID int64, status int, errMsg string) {
 	updates := map[string]interface{}{
 		"status": status,
 	}

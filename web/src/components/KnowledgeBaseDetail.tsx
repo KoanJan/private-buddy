@@ -3,6 +3,7 @@ import { Button, Upload, Tag, message, Empty } from 'antd';
 import { UploadOutlined, DeleteOutlined, FileTextOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { KnowledgeBase, Document } from '../types';
+import { DOC_STATUS_FAILED, DOC_STATUS_DELETED } from '../types';
 import { kbApi } from '../services/api';
 import { logger } from '../logger';
 import { confirmDelete } from '../utils/confirm';
@@ -19,14 +20,14 @@ interface KnowledgeBaseDetailProps {
 
 /**
  * Document status configuration map.
- * Maps status strings to their display properties (color and i18n key).
+ * Maps status int values to their display properties (color and i18n key).
  */
-const DOC_STATUS_MAP: Record<string, { color: string; labelKey: string }> = {
-  pending: { color: 'default', labelKey: 'kb.docStatusPending' },
-  processing: { color: 'processing', labelKey: 'kb.docStatusProcessing' },
-  ready: { color: 'success', labelKey: 'kb.docStatusReady' },
-  failed: { color: 'error', labelKey: 'kb.docStatusFailed' },
-  deleted: { color: 'default', labelKey: 'kb.docStatusDeleted' },
+const DOC_STATUS_MAP: Record<number, { color: string; labelKey: string }> = {
+  0: { color: 'default', labelKey: 'kb.docStatusPending' },
+  1: { color: 'processing', labelKey: 'kb.docStatusProcessing' },
+  2: { color: 'success', labelKey: 'kb.docStatusReady' },
+  3: { color: 'error', labelKey: 'kb.docStatusFailed' },
+  4: { color: 'default', labelKey: 'kb.docStatusDeleted' },
 };
 
 /**
@@ -133,7 +134,7 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ kb, onBack })
 
       <div className="kb-detail-stats">
         <Tag color={DOC_STATUS_MAP[kb.index_type]?.color || 'default'}>
-          {t(DOC_STATUS_MAP[kb.index_type]?.labelKey || kb.index_type)}
+          {t(DOC_STATUS_MAP[kb.index_type]?.labelKey || String(kb.index_type))}
         </Tag>
         <span className="kb-detail-stat">
           {t('kb.docCount', { count: kb.document_count })}
@@ -179,17 +180,17 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ kb, onBack })
                     color={DOC_STATUS_MAP[doc.status]?.color || 'default'}
                     style={{ fontSize: 11, lineHeight: '16px', padding: '0 4px' }}
                   >
-                    {t(DOC_STATUS_MAP[doc.status]?.labelKey || doc.status)}
+                    {t(DOC_STATUS_MAP[doc.status]?.labelKey || String(doc.status))}
                   </Tag>
                   {doc.chunk_count > 0 && <span>{doc.chunk_count} chunks</span>}
                   {doc.file_size > 0 && <span>{formatFileSize(doc.file_size)}</span>}
                   <span>{formatRelativeTime(doc.created_at)}</span>
                 </div>
-                {doc.status === 'failed' && doc.error_message && (
+                {doc.status === DOC_STATUS_FAILED && doc.error_message && (
                   <div className="kb-doc-error">{doc.error_message}</div>
                 )}
               </div>
-              {doc.status !== 'deleted' && (
+              {doc.status !== DOC_STATUS_DELETED && (
                 <Button
                   type="text"
                   size="small"
