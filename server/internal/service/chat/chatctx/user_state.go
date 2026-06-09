@@ -109,6 +109,7 @@ func formatRecentMessages(recentMessages []model.Message) string {
 // Uses TemperatureDeterministic for consistent, deterministic outputs.
 // Returns nil if inference fails, allowing the chat flow to continue without user state.
 func InferUserState(
+	ctx stdctx.Context,
 	llmConfig *model.LLMConfig,
 	recentMessages []model.Message,
 ) *UserState {
@@ -121,7 +122,7 @@ func InferUserState(
 	dialogText := formatRecentMessages(recentMessages)
 	prompt := fmt.Sprintf(userStateInferencePrompt, dialogText)
 
-	result, err := chatModel.ChatWithJSONSchema(stdctx.Background(), []llm.Message{
+	result, err := chatModel.ChatWithJSONSchema(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "UserState",

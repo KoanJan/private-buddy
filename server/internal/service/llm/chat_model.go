@@ -53,11 +53,11 @@ type Message struct {
 type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
+	Function toolFunction `json:"function"`
 }
 
-// ToolFunction represents the function details of a tool call.
-type ToolFunction struct {
+// toolFunction represents the function details of a tool call.
+type toolFunction struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
@@ -178,7 +178,7 @@ func fromOpenAIToolCalls(tcs []openai.ToolCall) []ToolCall {
 		result = append(result, ToolCall{
 			ID:   tc.ID,
 			Type: string(tc.Type),
-			Function: ToolFunction{
+			Function: toolFunction{
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
 			},
@@ -256,17 +256,17 @@ func (cm *ChatModel) Chat(ctx context.Context, messages []Message) (string, erro
 	return content, nil
 }
 
-// Stream wraps an OpenAI streaming response, hiding the SDK type from callers.
+// stream wraps an OpenAI streaming response, hiding the SDK type from callers.
 // Must be consumed via ConsumeStream. Automatically closed when consumption completes.
-type Stream struct {
+type stream struct {
 	inner *openai.ChatCompletionStream
 }
 
 // ChatStream initiates a streaming chat completion request.
-// Returns a Stream that must be consumed via ConsumeStream.
+// Returns a stream that must be consumed via ConsumeStream.
 // Used for real-time SSE streaming of LLM responses to the frontend.
-// StreamOptions.IncludeUsage is set to true to capture token usage in the final chunk.
-func (cm *ChatModel) ChatStream(ctx context.Context, messages []Message) (*Stream, error) {
+// streamOptions.IncludeUsage is set to true to capture token usage in the final chunk.
+func (cm *ChatModel) ChatStream(ctx context.Context, messages []Message) (*stream, error) {
 	logMessages(messages)
 
 	req := cm.buildRequest(messages)
@@ -286,7 +286,7 @@ func (cm *ChatModel) ChatStream(ctx context.Context, messages []Message) (*Strea
 
 	applogger.L.Debug("llm stream started", "model", cm.modelID, "connect_latency_ms", latencyMs)
 
-	return &Stream{inner: inner}, nil
+	return &stream{inner: inner}, nil
 }
 
 // ChatWithTools sends a non-streaming chat completion request with tool definitions.
@@ -377,8 +377,8 @@ func (cm *ChatModel) ChatWithJSONSchema(ctx context.Context, messages []Message,
 	return content, nil
 }
 
-// StreamHandler is a callback function invoked for each chunk received from a streaming response.
-type StreamHandler func(chunk string) error
+// streamHandler is a callback function invoked for each chunk received from a streaming response.
+type streamHandler func(chunk string) error
 
 // logTokenUsage logs LLM token usage in the same format as Python's TokenUsageLogger:
 // "llm usage | latency=XXXms | prompt_tokens: XXX | completion_tokens: XXX | total_tokens: XXX | model=XXX"
@@ -397,8 +397,8 @@ func logTokenUsage(latencyMs float64, usage openai.Usage, model string) {
 
 // ConsumeStream reads all chunks from a streaming response, invoking the handler for each chunk.
 // Returns the full accumulated content when the stream completes.
-// Token usage is logged if available in the final stream chunk (via StreamOptions.IncludeUsage).
-func (cm *ChatModel) ConsumeStream(stream *Stream, handler StreamHandler) (string, error) {
+// Token usage is logged if available in the final stream chunk (via streamOptions.IncludeUsage).
+func (cm *ChatModel) ConsumeStream(stream *stream, handler streamHandler) (string, error) {
 	defer stream.inner.Close()
 
 	start := time.Now()

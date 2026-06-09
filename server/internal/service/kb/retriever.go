@@ -42,7 +42,7 @@ func searchKB(ctx context.Context, kbID int64, query string, topK int) ([]schema
 		return nil, fmt.Errorf("failed to embed query: %w", err)
 	}
 
-	mgr, err := GetOrCreateIndexManager(kbID)
+	mgr, err := getOrCreateIndexManager(kbID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get index manager: %w", err)
 	}
@@ -57,7 +57,7 @@ func searchKB(ctx context.Context, kbID int64, query string, topK int) ([]schema
 		Where("knowledge_base_id = ? AND deleted = 1", kbID).
 		Pluck("id", &deletedChunkIDs)
 
-	tracker := NewDeletedVectorTracker()
+	tracker := newDeletedVectorTracker()
 	tracker.LoadDeletedChunkIDs(deletedChunkIDs)
 	candidates = tracker.FilterCandidates(candidates)
 
@@ -98,7 +98,7 @@ func searchMultiKB(ctx context.Context, kbIDs []int64, query string, topK int) (
 				return
 			}
 
-			mgr, err := GetOrCreateIndexManager(id)
+			mgr, err := getOrCreateIndexManager(id)
 			if err != nil {
 				ch <- kbResult{err: err, kbID: id}
 				return
@@ -115,7 +115,7 @@ func searchMultiKB(ctx context.Context, kbIDs []int64, query string, topK int) (
 				Where("knowledge_base_id = ? AND deleted = 1", id).
 				Pluck("id", &deletedChunkIDs)
 
-			tracker := NewDeletedVectorTracker()
+			tracker := newDeletedVectorTracker()
 			tracker.LoadDeletedChunkIDs(deletedChunkIDs)
 			candidates = tracker.FilterCandidates(candidates)
 
@@ -139,7 +139,7 @@ func searchMultiKB(ctx context.Context, kbIDs []int64, query string, topK int) (
 	return allResults, nil
 }
 
-func candidatesToResults(candidates []SearchCandidate, kbID int64) []schema.SearchResult {
+func candidatesToResults(candidates []searchCandidate, kbID int64) []schema.SearchResult {
 	if len(candidates) == 0 {
 		return make([]schema.SearchResult, 0)
 	}

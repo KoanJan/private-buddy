@@ -50,7 +50,6 @@ type TaskLoop struct {
 	writeNotesTool   *tools.WriteNotesTool       // Write notes tool for checkpoint iterations
 	checkpointClient *llm.ChatModel              // Lazy-initialized LLM client for checkpoint iterations
 	lastNotesIter    int                         // Last iteration where write_notes was called (voluntary or forced)
-	ctx              context.Context             // Cancellation context from the caller
 }
 
 // NewTaskLoop creates a new TaskLoop instance.
@@ -63,7 +62,6 @@ func NewTaskLoop(
 	maxIterations int,
 	sessionID, userMsgID, draftID int64,
 	writeNotesTool *tools.WriteNotesTool,
-	ctx context.Context,
 ) *TaskLoop {
 	registry := make(map[string]tools.Tool)
 	for _, t := range toolList {
@@ -80,7 +78,6 @@ func NewTaskLoop(
 		userMsgID:      userMsgID,
 		draftID:        draftID,
 		writeNotesTool: writeNotesTool,
-		ctx:            ctx,
 	}
 }
 
@@ -100,7 +97,7 @@ type LoopResult struct {
 // The task requirement is already injected via ContextManager
 // (as part of the fixed task.md content), so it is not passed
 // as a parameter here.
-func (tl *TaskLoop) Run() *LoopResult {
+func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 	applogger.L.Info("TaskLoop starting",
 		"max_iterations", tl.maxIterations,
 		"session_id", tl.sessionID,
@@ -109,7 +106,7 @@ func (tl *TaskLoop) Run() *LoopResult {
 
 	for iteration := 1; iteration <= tl.maxIterations; iteration++ {
 		// Check if the task has been cancelled (e.g., session deleted)
-		if tl.ctx != nil && tl.ctx.Err() != nil {
+		if ctx != nil && ctx.Err() != nil {
 			applogger.L.Info("TaskLoop cancelled, stopping execution",
 				"session_id", tl.sessionID,
 				"iteration", iteration,
@@ -130,7 +127,7 @@ func (tl *TaskLoop) Run() *LoopResult {
 		isFinal := iteration == tl.maxIterations
 
 		if isCheckpoint || isFinal {
-			result := tl.runNotesIteration(iteration, messages, isFinal)
+			result := tl.runNotesIteration(ctx, iteration, messages, isFinal)
 			if result.Status == "failure" {
 				return result
 			}
@@ -141,7 +138,7 @@ func (tl *TaskLoop) Run() *LoopResult {
 			"messages": messages,
 		})
 
-		response, err := tl.invokeLLM(messages)
+		response, err := tl.invokeLLM(ctx, messages)
 		if err != nil {
 			applogger.L.Error("TaskLoop LLM error", "iteration", iteration, "error", err)
 			return &LoopResult{Status: "failure", Reason: fmt.Sprintf("LLM invocation failed at iteration %d: %s", iteration, err.Error())}
@@ -203,7 +200,7 @@ func (tl *TaskLoop) Run() *LoopResult {
 		switch finishReason {
 		case "stop":
 			applogger.L.Info("TaskLoop completed", "iteration", iteration)
-			tl.updateNotesOnSuccess(iteration, content, messages)
+			tl.updateNotesOnSuccess(ctx, iteration, content, messages)
 			return &LoopResult{Status: "success", Result: content}
 
 		case "tool_calls":
@@ -303,7 +300,7 @@ func (tl *TaskLoop) isCheckpointIteration(iteration int) bool {
 //
 // On final iteration (isFinal=true), returns failure result after saving notes.
 // On checkpoint iteration, returns success to continue the loop.
-func (tl *TaskLoop) runNotesIteration(iteration int, messages []llm.Message, isFinal bool) *LoopResult {
+func (tl *TaskLoop) runNotesIteration(ctx context.Context, iteration int, messages []llm.Message, isFinal bool) *LoopResult {
 	if tl.writeNotesTool == nil {
 		applogger.L.Error("Cannot run notes iteration: write_notes_tool not initialized")
 		if isFinal {
@@ -374,7 +371,7 @@ After writing notes, you will regain access to all tools.`
 	})
 
 	toolDefs := []llm.FunctionDefinition{tl.writeNotesTool.Schema()}
-	response, err := tl.checkpointClient.ChatWithTools(context.Background(), messagesWithCheckpoint, toolDefs)
+	response, err := tl.checkpointClient.ChatWithTools(ctx, messagesWithCheckpoint, toolDefs)
 	if err != nil {
 		applogger.L.Error("Notes iteration LLM error", "error", err)
 		if isFinal {
@@ -446,7 +443,7 @@ After writing notes, you will regain access to all tools.`
 // updateNotesOnSuccess updates notes after successful task completion.
 // This ensures notes reflect the final state for future modifications.
 // Uses the checkpoint client (lazy-initialized) with only write_notes tool available.
-func (tl *TaskLoop) updateNotesOnSuccess(iteration int, finalContent string, messages []llm.Message) {
+func (tl *TaskLoop) updateNotesOnSuccess(ctx context.Context, iteration int, finalContent string, messages []llm.Message) {
 	if tl.writeNotesTool == nil {
 		return
 	}
@@ -477,7 +474,7 @@ This will help you continue work if the user requests changes later.`
 	})
 
 	toolDefs := []llm.FunctionDefinition{tl.writeNotesTool.Schema()}
-	response, err := tl.checkpointClient.ChatWithTools(context.Background(), messagesWithUpdate, toolDefs)
+	response, err := tl.checkpointClient.ChatWithTools(ctx, messagesWithUpdate, toolDefs)
 	if err != nil {
 		applogger.L.Error("Notes update on success failed", "error", err)
 		return
@@ -501,7 +498,7 @@ This will help you continue work if the user requests changes later.`
 
 // invokeLLM calls the LLM with the current messages and all registered tools.
 // Converts internal message format and binds tool schemas.
-func (tl *TaskLoop) invokeLLM(messages []llm.Message) (llm.ToolResponse, error) {
+func (tl *TaskLoop) invokeLLM(ctx context.Context, messages []llm.Message) (llm.ToolResponse, error) {
 	msgSummary := make([]map[string]interface{}, 0, len(messages))
 	for _, m := range messages {
 		msgSummary = append(msgSummary, map[string]interface{}{
@@ -519,7 +516,7 @@ func (tl *TaskLoop) invokeLLM(messages []llm.Message) (llm.ToolResponse, error) 
 	for _, t := range tl.toolRegistry {
 		toolDefs = append(toolDefs, t.Schema())
 	}
-	return tl.llmClient.ChatWithTools(context.Background(), messages, toolDefs)
+	return tl.llmClient.ChatWithTools(ctx, messages, toolDefs)
 }
 
 // executeToolCall executes a single tool call and returns the result.

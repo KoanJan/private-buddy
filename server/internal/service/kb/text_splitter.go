@@ -6,41 +6,41 @@ import (
 	"github.com/pkoukk/tiktoken-go"
 )
 
-// TextSplitter splits text into chunks based on token count with overlap.
+// textSplitter splits text into chunks based on token count with overlap.
 // Uses tiktoken for token counting (cl100k_base encoding, compatible with
 // OpenAI models). Token counts for non-OpenAI models may have minor deviations.
-type TextSplitter struct {
+type textSplitter struct {
 	chunkSize    int
 	chunkOverlap int
-	minChunkSize int
+	minchunkSize int
 	tp           *tiktoken.Tiktoken
 }
 
-// NewTextSplitter creates a TextSplitter with the given chunk size, overlap, and minChunkSize.
-// Chunks smaller than minChunkSize tokens are merged into the previous chunk.
-func NewTextSplitter(chunkSize, chunkOverlap, minChunkSize int) *TextSplitter {
+// newTextSplitter creates a textSplitter with the given chunk size, overlap, and minchunkSize.
+// chunks smaller than minchunkSize tokens are merged into the previous chunk.
+func newTextSplitter(chunkSize, chunkOverlap, minchunkSize int) *textSplitter {
 	tp, err := tiktoken.EncodingForModel("text-embedding-3-small")
 	if err != nil {
 		tp, _ = tiktoken.GetEncoding("cl100k_base")
 	}
-	return &TextSplitter{
+	return &textSplitter{
 		chunkSize:    chunkSize,
 		chunkOverlap: chunkOverlap,
-		minChunkSize: minChunkSize,
+		minchunkSize: minchunkSize,
 		tp:           tp,
 	}
 }
 
-// Chunk represents a text segment with position information.
-type Chunk struct {
+// chunk represents a text segment with position information.
+type chunk struct {
 	Content     string
-	ChunkIndex  int
+	chunkIndex  int
 	StartOffset int
 	EndOffset   int
 }
 
 // Split splits text into chunks that respect token limits with overlap.
-func (s *TextSplitter) Split(text string) []Chunk {
+func (s *textSplitter) Split(text string) []chunk {
 	if text == "" {
 		return nil
 	}
@@ -50,7 +50,7 @@ func (s *TextSplitter) Split(text string) []Chunk {
 		return nil
 	}
 
-	var chunks []Chunk
+	var chunks []chunk
 	var currentParts []string
 	currentTokens := 0
 	chunkIndex := 0
@@ -61,9 +61,9 @@ func (s *TextSplitter) Split(text string) []Chunk {
 			return
 		}
 		content := strings.Join(currentParts, "\n\n")
-		chunks = append(chunks, Chunk{
+		chunks = append(chunks, chunk{
 			Content:     content,
-			ChunkIndex:  chunkIndex,
+			chunkIndex:  chunkIndex,
 			StartOffset: startOffset,
 			EndOffset:   startOffset + len(content),
 		})
@@ -84,14 +84,14 @@ func (s *TextSplitter) Split(text string) []Chunk {
 			if len(currentParts) > 0 {
 				flush()
 			}
-			subChunks := s.splitLargeParagraph(para, chunkIndex, startOffset)
-			for _, sc := range subChunks {
-				sc.ChunkIndex = chunkIndex
+			subchunks := s.splitLargeParagraph(para, chunkIndex, startOffset)
+			for _, sc := range subchunks {
+				sc.chunkIndex = chunkIndex
 				chunks = append(chunks, sc)
 				chunkIndex++
 			}
-			if len(subChunks) > 0 {
-				last := subChunks[len(subChunks)-1]
+			if len(subchunks) > 0 {
+				last := subchunks[len(subchunks)-1]
 				startOffset = last.EndOffset
 			}
 			continue
@@ -103,11 +103,11 @@ func (s *TextSplitter) Split(text string) []Chunk {
 
 	flush()
 
-	chunks = s.mergeSmallTailChunks(chunks)
+	chunks = s.mergeSmallTailchunks(chunks)
 	return chunks
 }
 
-func (s *TextSplitter) splitParagraphs(text string) []string {
+func (s *textSplitter) splitParagraphs(text string) []string {
 	lines := strings.Split(text, "\n")
 	var paragraphs []string
 	var current []string
@@ -128,9 +128,9 @@ func (s *TextSplitter) splitParagraphs(text string) []string {
 	return paragraphs
 }
 
-func (s *TextSplitter) splitLargeParagraph(para string, chunkIndex, startOffset int) []Chunk {
+func (s *textSplitter) splitLargeParagraph(para string, chunkIndex, startOffset int) []chunk {
 	words := strings.Fields(para)
-	var chunks []Chunk
+	var chunks []chunk
 	var currentWords []string
 	currentTokens := 0
 	offset := startOffset
@@ -139,9 +139,9 @@ func (s *TextSplitter) splitLargeParagraph(para string, chunkIndex, startOffset 
 		wordTokens := len(s.tp.Encode(word, nil, nil))
 		if currentTokens+wordTokens > s.chunkSize && len(currentWords) > 0 {
 			content := strings.Join(currentWords, " ")
-			chunks = append(chunks, Chunk{
+			chunks = append(chunks, chunk{
 				Content:     content,
-				ChunkIndex:  chunkIndex,
+				chunkIndex:  chunkIndex,
 				StartOffset: offset,
 				EndOffset:   offset + len(content),
 			})
@@ -155,9 +155,9 @@ func (s *TextSplitter) splitLargeParagraph(para string, chunkIndex, startOffset 
 
 	if len(currentWords) > 0 {
 		content := strings.Join(currentWords, " ")
-		chunks = append(chunks, Chunk{
+		chunks = append(chunks, chunk{
 			Content:     content,
-			ChunkIndex:  chunkIndex,
+			chunkIndex:  chunkIndex,
 			StartOffset: offset,
 			EndOffset:   offset + len(content),
 		})
@@ -166,7 +166,7 @@ func (s *TextSplitter) splitLargeParagraph(para string, chunkIndex, startOffset 
 	return chunks
 }
 
-func (s *TextSplitter) overlapCharCount(parts []string) int {
+func (s *textSplitter) overlapCharCount(parts []string) int {
 	if len(parts) == 0 || s.chunkOverlap == 0 {
 		return 0
 	}
@@ -183,17 +183,17 @@ func (s *TextSplitter) overlapCharCount(parts []string) int {
 	return overlapChars
 }
 
-// mergeSmallTailChunks merges the last chunk into the previous one if its
-// token count is below minChunkSize. This avoids producing tiny fragments
-// that degrade retrieval quality. Re-indexes ChunkIndex after merging.
-func (s *TextSplitter) mergeSmallTailChunks(chunks []Chunk) []Chunk {
-	if s.minChunkSize <= 0 || len(chunks) <= 1 {
+// mergeSmallTailchunks merges the last chunk into the previous one if its
+// token count is below minchunkSize. This avoids producing tiny fragments
+// that degrade retrieval quality. Re-indexes chunkIndex after merging.
+func (s *textSplitter) mergeSmallTailchunks(chunks []chunk) []chunk {
+	if s.minchunkSize <= 0 || len(chunks) <= 1 {
 		return chunks
 	}
 
 	last := &chunks[len(chunks)-1]
 	lastTokens := len(s.tp.Encode(last.Content, nil, nil))
-	if lastTokens >= s.minChunkSize {
+	if lastTokens >= s.minchunkSize {
 		return chunks
 	}
 
@@ -203,7 +203,7 @@ func (s *TextSplitter) mergeSmallTailChunks(chunks []Chunk) []Chunk {
 
 	merged := chunks[:len(chunks)-1]
 	for i := range merged {
-		merged[i].ChunkIndex = i
+		merged[i].chunkIndex = i
 	}
 	return merged
 }

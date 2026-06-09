@@ -2,79 +2,133 @@
 // engine that transforms an Agent from a passive configuration object into
 // an active, stateful entity with its own lifecycle.
 //
-// This file provides the RuntimeManager which manages AgentRuntime instances
+// This file provides the runtimeManager which manages agentRuntime instances
 // across all agents in the system. It serves as the bridge between the
 // handler layer and the per-agent event loops.
 package runtime
 
 import (
+	"context"
 	"sync"
 
+	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
+	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service/eventqueue"
 )
 
-// RuntimeManager manages AgentRuntime instances for all agents.
+// runtimeManager manages agentRuntime instances for all agents.
 // Thread-safe. Each agent gets exactly one runtime.
-type RuntimeManager struct {
+type runtimeManager struct {
 	mu             sync.RWMutex
-	runtimes       map[int64]*AgentRuntime // agentID -> runtime
+	runtimes       map[int64]*agentRuntime // agentID -> runtime
 	onStatusChange func(agentID, sessionID int64, status int)
+
+	// rootCtx is the root context for all agent runtimes.
+	// Cancelling it propagates to every runtime, stopping all goroutines at once.
+	rootCtx   context.Context
+	cancelAll context.CancelFunc
 }
 
-// NewRuntimeManager creates a new runtime manager.
-func NewRuntimeManager(onStatusChange func(agentID, sessionID int64, status int)) *RuntimeManager {
-	return &RuntimeManager{
-		runtimes:       make(map[int64]*AgentRuntime),
+// newRuntimeManager creates a new runtime manager.
+func newRuntimeManager(onStatusChange func(agentID, sessionID int64, status int)) *runtimeManager {
+	rootCtx, cancelAll := context.WithCancel(context.Background())
+	return &runtimeManager{
+		runtimes:       make(map[int64]*agentRuntime),
 		onStatusChange: onStatusChange,
+		rootCtx:        rootCtx,
+		cancelAll:      cancelAll,
 	}
 }
 
-// GetOrCreateRuntime returns the runtime for an agent, creating one if needed.
-func (rm *RuntimeManager) GetOrCreateRuntime(agentID int64) *AgentRuntime {
-	rm.mu.RLock()
-	if rt, ok := rm.runtimes[agentID]; ok {
-		rm.mu.RUnlock()
-		return rt
-	}
-	rm.mu.RUnlock()
-
+// StartRuntime creates a runtime for the given agent, starts the event loop,
+// and registers it. Does nothing if the runtime already exists.
+func (rm *runtimeManager) StartRuntime(agentID int64) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if rt, ok := rm.runtimes[agentID]; ok {
-		return rt
+	if _, ok := rm.runtimes[agentID]; ok {
+		return
 	}
 
-	rt := StartAgentRuntime(agentID, rm.onStatusChange)
+	rt := createAgentRuntime(agentID, rm.onStatusChange)
+	go rt.Run(rm.rootCtx)
 	rm.runtimes[agentID] = rt
-	return rt
-}
-
-// SendEvent sends an event to the appropriate agent runtime.
-// Creates the runtime if it doesn't exist yet.
-func (rm *RuntimeManager) SendEvent(agentID int64, event AgentEvent) {
-	rt := rm.GetOrCreateRuntime(agentID)
-	rt.SendEvent(event)
 }
 
 // StopAll stops all agent runtimes. Called during graceful shutdown.
-func (rm *RuntimeManager) StopAll() {
+// Cancelling the root context propagates to every runtime in the tree,
+// stopping the event loop, commit handler, and all active works at once.
+func (rm *runtimeManager) StopAll() {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	// Currently runtimes use background contexts that can't be cancelled.
-	// Future iterations will add proper cancellation.
 	applogger.L.Info("Stopping all agent runtimes", "count", len(rm.runtimes))
-	rm.runtimes = make(map[int64]*AgentRuntime)
+
+	// Cancel the root context — all derived runtime contexts cancel automatically
+	if rm.cancelAll != nil {
+		rm.cancelAll()
+	}
+
+	for agentID := range rm.runtimes {
+		// Unsubscribe from the event queue to prevent sending to closed channels
+		eventqueue.Unsubscribe(agentID)
+	}
+
+	rm.runtimes = make(map[int64]*agentRuntime)
 }
 
-// GlobalRuntimeManager is the singleton runtime manager for the application.
-// Initialized during application startup.
-var GlobalRuntimeManager *RuntimeManager
+// globalRuntimeManager is the singleton runtime manager for the application.
+// Initialized during application startup via Start.
+var globalRuntimeManager *runtimeManager
 
-// InitGlobalRuntimeManager initializes the global runtime manager.
-func InitGlobalRuntimeManager(onStatusChange func(agentID, sessionID int64, status int)) {
-	GlobalRuntimeManager = NewRuntimeManager(onStatusChange)
-	applogger.L.Info("Global runtime manager initialized")
+// StopAll stops all agent runtimes. Called during graceful shutdown.
+func StopAll() {
+	if globalRuntimeManager != nil {
+		globalRuntimeManager.StopAll()
+	}
+}
+
+// StartRuntime creates and starts a runtime for the given agent.
+// Used when a new agent is created after initial startup.
+// Does nothing if the runtime already exists.
+func StartRuntime(agentID int64) {
+	if globalRuntimeManager != nil {
+		globalRuntimeManager.StartRuntime(agentID)
+	}
+}
+
+// Start initializes the global runtime system: event queue, all agent runtimes,
+// and the output callbacks for SSE push.  Must be called once during application
+// startup, after database.Init() and before any handler traffic.
+//
+// All agents are eagerly started at startup.  For a desktop local application
+// the number of agents is small and the resource cost is negligible, so there
+// is no reason to use lazy initialization — every agent should be ready to
+// receive events from the moment the server starts.
+//
+// The three callbacks connect the runtime to the SSE transport layer:
+//   - onStatusChange: agent heartbeat / status transitions
+//   - onPushMessage: new message content to stream to UI
+//   - onPushSSE: raw SSE events (notifications, etc.)
+func Start(
+	onStatusChange func(agentID, sessionID int64, status int),
+	onPushMessage func(sessionID, messageID int64, content string, hasInteractions int),
+	onPushSSE func(sessionID int64, data string),
+) {
+	pushMessageEvent = onPushMessage
+	pushSSEEvent = onPushSSE
+
+	globalRuntimeManager = newRuntimeManager(onStatusChange)
+
+	// Eagerly start runtimes for all agents
+	var agents []model.Agent
+	if err := database.DB.Find(&agents).Error; err != nil {
+		applogger.L.Error("Failed to load agents for runtime initialization", "error", err)
+	} else {
+		for _, agent := range agents {
+			globalRuntimeManager.StartRuntime(agent.ID)
+		}
+		applogger.L.Info("All agent runtimes started", "count", len(agents))
+	}
 }

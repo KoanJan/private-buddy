@@ -34,7 +34,7 @@ import (
 )
 
 // User-friendly error message for unexpected failures
-const userFriendlyErrorMessage = "抱歉，服务器遇到了一些问题，请稍后再试。"
+const userFriendlyErrorMessage = "Sorry, something went wrong on the server. Please try again later."
 
 // ChatCallbacks holds optional callbacks for notification events.
 type ChatCallbacks struct {
@@ -50,6 +50,35 @@ type ChatResult struct {
 	HasInteractions int    // HasInteractionsPending, HasInteractionsExists, or HasInteractionsNone
 }
 
+// TriggerOverrideType identifies the kind of trigger override, which determines
+// how the pipeline assembles context for the LLM.
+type TriggerOverrideType int
+
+const (
+	// TriggerOverrideNone indicates no override (default user message flow).
+	TriggerOverrideNone TriggerOverrideType = iota
+	// TriggerOverrideScheduledAlarm indicates the trigger is a scheduled alarm
+	// firing. The pipeline must present this as a system notification ("your
+	// alarm went off"), NOT as a new user request.
+	TriggerOverrideScheduledAlarm
+)
+
+// TriggerOverride provides supplementary context for non-direct triggers.
+// Unlike the trigger message (which is the user message that caused the
+// pipeline run), the override carries additional context from the trigger
+// mechanism itself.
+//
+// The Type field determines how the pipeline assembles the final context:
+//   - TriggerOverrideScheduledAlarm: the original user message is preserved as
+//     reference only, and the override content (agent's self-reminder) becomes
+//     the primary action context. The pipeline constructs a system-level alarm
+//     notification semantic so the LLM understands "your alarm went off, act now"
+//     rather than "the user is asking you to set an alarm again".
+type TriggerOverride struct {
+	Type    TriggerOverrideType // Kind of trigger override
+	Content string              // Supplementary trigger context (e.g., alarm self-reminder)
+}
+
 // pipeline holds the state for a single chat processing execution.
 // It is short-lived (only exists during one Process call) and carries
 // shared data between pipeline stages.
@@ -58,10 +87,10 @@ type pipeline struct {
 	agent            *model.Agent
 	llmConfig        *model.LLMConfig
 	triggerMessageID int64
-	draftID          int64 // Draft ID for interaction records
-	contextBoundary  int64 // Last message ID visible when this pipeline started (from draft.last_read_message_id)
+	triggerOverride  *TriggerOverride // Non-nil when the trigger is not a persisted message (e.g., scheduled event)
+	draftID          int64            // Draft ID for interaction records
+	contextBoundary  int64            // Last message ID visible when this pipeline started (from draft.last_read_message_id)
 	callbacks        *ChatCallbacks
-	ctx              context.Context
 
 	// Loaded in loadMessages
 	triggerMessage model.Message
@@ -99,6 +128,9 @@ type pipeline struct {
 //   - contextBoundary: the last message ID visible when the draft was created
 //     (from draft.last_read_message_id). Used for preprocessing history queries.
 //   - draftID: the draft ID for interaction record association.
+//   - triggerOverride: optional supplementary context for non-direct triggers
+//     (e.g., scheduled events). When set, the override content is injected into
+//     the pipeline alongside the normal trigger message.
 func Process(
 	ctx context.Context,
 	session *model.Session,
@@ -108,16 +140,17 @@ func Process(
 	contextBoundary int64,
 	draftID int64,
 	callbacks *ChatCallbacks,
+	triggerOverride *TriggerOverride,
 ) (*ChatResult, error) {
 	p := &pipeline{
 		session:          session,
 		agent:            agent,
 		llmConfig:        llmConfig,
 		triggerMessageID: triggerMessageID,
+		triggerOverride:  triggerOverride,
 		contextBoundary:  contextBoundary,
 		draftID:          draftID,
 		callbacks:        callbacks,
-		ctx:              ctx,
 	}
 
 	if err := p.loadMessages(); err != nil {
@@ -125,23 +158,23 @@ func Process(
 	}
 
 	// Start async preprocessing first so it runs in parallel with user state inference
-	p.preprocessQuery()
-	p.inferUserState()
+	p.preprocessQuery(ctx)
+	p.inferUserState(ctx)
 
-	p.retrieveKnowledgeBases()
-	p.executeAgentIfNeeded()
+	p.retrieveKnowledgeBases(ctx)
+	p.executeAgentIfNeeded(ctx)
 
-	messages, earlyContent, earlyReturn := p.assembleContext()
+	messages, earlyContent, earlyReturn := p.assembleContext(ctx)
 	if earlyReturn {
 		return &ChatResult{Content: earlyContent, HasInteractions: model.HasInteractionsNone}, nil
 	}
 
-	fullContent, err := p.streamResponse(messages)
+	fullContent, err := p.streamResponse(ctx, messages)
 	if err != nil {
 		return &ChatResult{Content: fullContent, HasInteractions: model.HasInteractionsNone}, err
 	}
 
-	p.postProcess()
+	p.postProcess(ctx)
 
 	hasInteractions := model.HasInteractionsNone
 	if p.needsWorldInteraction {
@@ -156,9 +189,44 @@ func Process(
 
 // loadMessages loads the trigger message from the database,
 // and initializes session-level parameters (message count, window size, KB IDs).
+//
+// When triggerOverride is set, its content is injected into the pipeline
+// according to the override type:
+//   - TriggerOverrideScheduledAlarm: the original user message is preserved as
+//     reference, but the primary context is a system-level alarm notification.
+//     This prevents the LLM from misinterpreting the alarm as a new user request
+//     to set another alarm (which would cause an infinite loop).
 func (p *pipeline) loadMessages() error {
+	if p.triggerMessageID <= 0 {
+		return fmt.Errorf("trigger message ID is required")
+	}
+
 	if err := database.DB.First(&p.triggerMessage, p.triggerMessageID).Error; err != nil {
 		return fmt.Errorf("trigger message not found: %w", err)
+	}
+
+	// Inject trigger override based on type.
+	if p.triggerOverride != nil && p.triggerOverride.Content != "" {
+		switch p.triggerOverride.Type {
+		case TriggerOverrideScheduledAlarm:
+			// Scheduled alarm: construct a system notification semantic.
+			// The LLM must understand "your alarm went off, act now",
+			// NOT "the user is asking you to set an alarm again".
+			// The original user message is preserved as reference only,
+			// while the agent's self-reminder is the primary action context.
+			p.triggerMessage.Content = fmt.Sprintf(
+				"[ALARM NOTIFICATION] An alarm you set has just triggered. This is NOT a new user request — you set this alarm yourself earlier. Take action now based on your self-reminder below.\n\nYour self-reminder: %s\n\n[Original user message for reference: %s]",
+				p.triggerOverride.Content,
+				p.triggerMessage.Content,
+			)
+		default:
+			// Unknown override type: fall back to appending as supplementary context
+			p.triggerMessage.Content = fmt.Sprintf(
+				"%s\n\n[Supplementary Context: %s]",
+				p.triggerMessage.Content,
+				p.triggerOverride.Content,
+			)
+		}
 	}
 
 	p.sessionID = p.session.ID
@@ -182,7 +250,7 @@ func (p *pipeline) loadMessages() error {
 // bases are configured (for KB retrieval optimization).
 // The channel is signal-only; the result is stored in p.preprocessingResult.
 // On failure, p.preprocessingResult defaults to nil (degrades to original query).
-func (p *pipeline) preprocessQuery() {
+func (p *pipeline) preprocessQuery(ctx context.Context) {
 	if p.messageCount < int64(p.windowSize) && len(p.kbIDs) == 0 {
 		applogger.L.Info("Skipping query preprocessing", "reason", "V < N and no KBs", "V", p.messageCount, "N", p.windowSize, "kb_count", len(p.kbIDs))
 		return
@@ -195,6 +263,7 @@ func (p *pipeline) preprocessQuery() {
 		defer close(p.preprocessingCh)
 		characterSettings := p.agent.CharacterSettings
 		result := chatcontext.PreprocessQuery(
+			ctx,
 			p.llmConfig,
 			p.triggerMessage.Content,
 			preprocessingHistory,
@@ -207,12 +276,12 @@ func (p *pipeline) preprocessQuery() {
 
 // inferUserState infers the user's state from recent messages.
 // This runs synchronously; query preprocessing runs in parallel via preprocessQuery().
-func (p *pipeline) inferUserState() {
+func (p *pipeline) inferUserState(ctx context.Context) {
 	recentMessagesForState := chatcontext.GetRecentMessages(
 		p.sessionID, min(int(p.messageCount), p.windowSize), model.MessageStatusCompleted,
 	)
 
-	p.userStateResult = chatcontext.InferUserState(p.llmConfig, recentMessagesForState)
+	p.userStateResult = chatcontext.InferUserState(ctx, p.llmConfig, recentMessagesForState)
 
 	if p.userStateResult != nil {
 		p.needsWorldInteraction = p.userStateResult.NeedsWorldInteraction
@@ -227,7 +296,7 @@ func (p *pipeline) inferUserState() {
 // retrieveKnowledgeBases searches knowledge bases associated with the agent.
 // Uses the preprocessed query when available for better retrieval quality.
 // Waits for async preprocessing to complete before constructing the query.
-func (p *pipeline) retrieveKnowledgeBases() {
+func (p *pipeline) retrieveKnowledgeBases(ctx context.Context) {
 	if len(p.kbIDs) == 0 {
 		applogger.L.Info("Skipping KB retrieval", "reason", "no KBs configured")
 		return
@@ -242,7 +311,7 @@ func (p *pipeline) retrieveKnowledgeBases() {
 		query = p.preprocessingResult.ProcessedQuery
 	}
 
-	kbResults, err := kb.SearchMultiKB(context.Background(), p.kbIDs, query, 5)
+	kbResults, err := kb.SearchMultiKB(ctx, p.kbIDs, query, 5)
 	if err != nil {
 		applogger.L.Error("KB retrieval failed", "session_id", p.sessionID, "error", err)
 		return
@@ -263,10 +332,10 @@ func (p *pipeline) retrieveKnowledgeBases() {
 // executeAgentIfNeeded executes the agent path when needs_world_interaction=true.
 // In the draft-based architecture, this does NOT write to the messages table.
 // The has_interactions flag is returned via ChatResult for the caller to handle.
-func (p *pipeline) executeAgentIfNeeded() {
+func (p *pipeline) executeAgentIfNeeded(ctx context.Context) {
 	if p.needsWorldInteraction {
 		p.taskResult = executeAgent(
-			p.ctx, p.sessionID, p.agent, p.llmConfig,
+			ctx, p.sessionID, p.agent, p.llmConfig,
 			p.triggerMessage, p.draftID,
 			int(p.messageCount), p.windowSize, p.callbacks,
 		)
@@ -276,11 +345,11 @@ func (p *pipeline) executeAgentIfNeeded() {
 // assembleContext assembles the LLM prompt messages based on context engineering rules.
 // Returns (messages, earlyContent, earlyReturn). When earlyReturn is true,
 // earlyContent contains the response string and the pipeline should terminate early.
-func (p *pipeline) assembleContext() ([]llm.Message, string, bool) {
+func (p *pipeline) assembleContext(ctx context.Context) ([]llm.Message, string, bool) {
 	if p.messageCount < int64(p.windowSize) {
 		return p.assembleSimpleContext()
 	}
-	return p.assembleEngineeredContext()
+	return p.assembleEngineeredContext(ctx)
 }
 
 // assembleSimpleContext handles the V < N branch: skip context engineering,
@@ -313,7 +382,7 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 // assembleEngineeredContext handles the V >= N branch: apply full context
 // engineering pipeline including summary, retrieval, and assembly.
 // Waits for async preprocessing to complete before using the result.
-func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
+func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message, string, bool) {
 	if p.preprocessingCh != nil {
 		<-p.preprocessingCh
 	}
@@ -340,7 +409,7 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 		contextResult = chatcontext.GetContextWithoutRAG(p.sessionID, p.agent.ID, p.windowSize)
 		p.hasEmbedding = false
 	} else {
-		contextResult = chatcontext.GetContextForChat(p.sessionID, p.agent.ID, processedQuery, p.windowSize, 5)
+		contextResult = chatcontext.GetContextForChat(ctx, p.sessionID, p.agent.ID, processedQuery, p.windowSize, 5)
 		p.hasEmbedding = contextResult.HasEmbedding
 	}
 
@@ -389,17 +458,17 @@ func (p *pipeline) assembleEngineeredContext() ([]llm.Message, string, bool) {
 // streamResponse sends the assembled messages to the LLM and collects the
 // complete response. The LLM stream API is still used (to avoid long blocking),
 // but chunks are accumulated internally without per-chunk callbacks or DB updates.
-func (p *pipeline) streamResponse(messages []llm.Message) (string, error) {
+func (p *pipeline) streamResponse(ctx context.Context, messages []llm.Message) (string, error) {
 	// Check cancellation before starting the LLM call
-	if p.ctx.Err() != nil {
-		return "", p.ctx.Err()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
 
 	chatModel := llm.NewChatModelWithTemperature(
 		p.llmConfig.BaseURL, p.llmConfig.APIKey, p.llmConfig.ModelID, llm.TemperatureCreative,
 	)
 
-	stream, err := chatModel.ChatStream(p.ctx, messages)
+	stream, err := chatModel.ChatStream(ctx, messages)
 	if err != nil {
 		return "", fmt.Errorf("failed to start stream: %w", err)
 	}
@@ -420,10 +489,10 @@ func (p *pipeline) streamResponse(messages []llm.Message) (string, error) {
 // postProcess handles post-response tasks: RAG indexing and summary generation.
 // Note: message indexing uses triggerMessageID only, since the AI message
 // doesn't exist yet (draft has not been committed).
-func (p *pipeline) postProcess() {
+func (p *pipeline) postProcess(ctx context.Context) {
 	if p.hasEmbedding {
 		go func() {
-			chatcontext.IndexMessages(p.sessionID, []int64{p.triggerMessageID})
+			chatcontext.IndexMessages(ctx, p.sessionID, []int64{p.triggerMessageID})
 		}()
 	}
 
@@ -478,7 +547,7 @@ func executeAgent(
 		})
 	}
 
-	rewrittenRequirement := task.Rewrite(llmConfig, triggerMessage.Content, history, 10)
+	rewrittenRequirement := task.Rewrite(ctx, llmConfig, triggerMessage.Content, history, 10)
 	applogger.L.Info("Task requirement rewritten",
 		"session_id", sessionID,
 		"original", triggerMessage.Content[:min(50, len(triggerMessage.Content))],
@@ -494,6 +563,7 @@ func executeAgent(
 		LLMConfig:       llmConfig,
 		MaxIterations:   0,
 		SessionID:       sessionID,
+		AgentID:         agent.ID,
 		UserMsgID:       triggerMessage.ID,
 		DraftID:         draftID,
 		SearchConfig:    &searchConfig,

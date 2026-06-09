@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 
@@ -56,4 +58,9 @@ func removeSessionWorkspace(sessionID int64) {
 	settings := config.Get()
 	workspaceDir := settings.GetWorkspaceRoot() + "/" + strconv.FormatInt(sessionID, 10)
 	os.RemoveAll(workspaceDir)
+}
+
+// handleNotFound returns a 404 JSON response for a missing entity.
+func handleNotFound(c *gin.Context, entityName string, id int64) {
+	c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("%s %d not found", entityName, id)})
 }

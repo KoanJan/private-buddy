@@ -18,6 +18,8 @@ You can:
 - Delegate tasks to agents for real-world execution
 - Build knowledge bases and bind them to agents for RAG-enhanced chat
 
+Unlike traditional Q&A chatbots, Private Buddy agents are autonomous — they decide how to respond (answer immediately, acknowledge-and-work, or wake themselves for scheduled tasks) rather than passively reacting to every message.
+
 More features will be added gradually.
 
 ## Quick Start

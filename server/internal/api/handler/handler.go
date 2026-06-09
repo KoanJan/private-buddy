@@ -11,6 +11,7 @@ import (
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
 	"private-buddy-server/internal/service"
+	"private-buddy-server/internal/service/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -81,7 +82,7 @@ func (h *Handler) GetLLMConfig(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudLLM.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "LLM config", id)
+		handleNotFound(c, "LLM config", id)
 		return
 	}
 	c.JSON(http.StatusOK, schema.NewLLMConfigResponse(entity))
@@ -91,7 +92,7 @@ func (h *Handler) UpdateLLMConfig(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudLLM.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "LLM config", id)
+		handleNotFound(c, "LLM config", id)
 		return
 	}
 	var req schema.LLMConfigUpdate
@@ -111,7 +112,7 @@ func (h *Handler) DeleteLLMConfig(c *gin.Context) {
 	id := getPathID(c)
 	_, err := h.crudLLM.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "LLM config", id)
+		handleNotFound(c, "LLM config", id)
 		return
 	}
 	var referencingAgents []model.Agent
@@ -166,7 +167,7 @@ func (h *Handler) GetEmbeddingConfig(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudEmbedding.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Embedding config", id)
+		handleNotFound(c, "Embedding config", id)
 		return
 	}
 	c.JSON(http.StatusOK, schema.NewEmbeddingConfigResponse(entity))
@@ -176,7 +177,7 @@ func (h *Handler) UpdateEmbeddingConfig(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudEmbedding.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Embedding config", id)
+		handleNotFound(c, "Embedding config", id)
 		return
 	}
 	var req schema.EmbeddingConfigUpdate
@@ -196,7 +197,7 @@ func (h *Handler) DeleteEmbeddingConfig(c *gin.Context) {
 	id := getPathID(c)
 	_, err := h.crudEmbedding.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Embedding config", id)
+		handleNotFound(c, "Embedding config", id)
 		return
 	}
 	database.DB.Model(&model.Agent{}).Where("embedding_config_id = ?", id).Update("embedding_config_id", 0)
@@ -230,6 +231,10 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": err.Error()})
 		return
 	}
+
+	// Register and start the agent's runtime so it can receive events immediately.
+	runtime.StartRuntime(entity.ID)
+
 	c.JSON(http.StatusOK, schema.NewAgentResponse(&entity))
 }
 
@@ -283,7 +288,7 @@ func (h *Handler) GetAgent(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudAgent.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Agent", id)
+		handleNotFound(c, "Agent", id)
 		return
 	}
 	c.JSON(http.StatusOK, schema.NewAgentResponse(entity))
@@ -293,7 +298,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudAgent.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Agent", id)
+		handleNotFound(c, "Agent", id)
 		return
 	}
 	var req schema.AgentUpdate
@@ -313,7 +318,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 	id := getPathID(c)
 	agent, err := h.crudAgent.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Agent", id)
+		handleNotFound(c, "Agent", id)
 		return
 	}
 
@@ -390,7 +395,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudSession.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Session", id)
+		handleNotFound(c, "Session", id)
 		return
 	}
 	c.JSON(http.StatusOK, schema.NewSessionResponse(entity))
@@ -400,7 +405,7 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudSession.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Session", id)
+		handleNotFound(c, "Session", id)
 		return
 	}
 	var req schema.SessionUpdate
@@ -420,7 +425,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	id := getPathID(c)
 	_, err := h.crudSession.Get(id)
 	if err != nil {
-		service.HandleNotFound(c, "Session", id)
+		handleNotFound(c, "Session", id)
 		return
 	}
 

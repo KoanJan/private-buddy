@@ -94,6 +94,7 @@ func AutoMigrate() {
 		&model.Work{},
 		&model.MessageDraft{},
 		&model.ParticipantSession{},
+		&model.ScheduledEvent{},
 	}
 
 	// Run structural migrations BEFORE addMissingColumns, because some
@@ -281,15 +282,15 @@ func rebuildTableWithData(tableName, newDDL, _ string, pkCol string) {
 	_ = pkCol // pkCol used for DDL generation, not needed here
 }
 
-// IndexDef holds an index name and its CREATE statement.
-type IndexDef struct {
+// indexDef holds an index name and its CREATE statement.
+type indexDef struct {
 	Name string
 	SQL  string
 }
 
 // getTableIndexes returns index definitions for a table from sqlite_master.
-func getTableIndexes(tableName string) []IndexDef {
-	var indexes []IndexDef
+func getTableIndexes(tableName string) []indexDef {
+	var indexes []indexDef
 	DB.Raw("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", tableName).Scan(&indexes)
 	return indexes
 }
@@ -310,7 +311,7 @@ func getTableColumns(tableName string) []string {
 }
 
 // recreateIndexes recreates indexes from saved definitions.
-func recreateIndexes(indexes []IndexDef) {
+func recreateIndexes(indexes []indexDef) {
 	for _, idx := range indexes {
 		if idx.SQL != "" {
 			if err := DB.Exec(idx.SQL).Error; err != nil {

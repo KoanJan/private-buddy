@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	managers      map[int64]*IndexManager
+	managers      map[int64]*indexManager
 	managersMu    sync.RWMutex
 	workerCh      map[int64]chan int64
 	workerChMu    sync.Mutex
@@ -38,7 +38,7 @@ var (
 // Must be called once at application startup before any other kb functions.
 // The database connection is obtained from the database package directly.
 func Init(embDim, flatThresh int) {
-	managers = make(map[int64]*IndexManager)
+	managers = make(map[int64]*indexManager)
 	workerCh = make(map[int64]chan int64)
 	embeddingDim = embDim
 	flatThreshold = flatThresh
@@ -114,7 +114,7 @@ func DeleteKnowledgeBase(kbID int64) error {
 		}
 	}
 
-	releaseIndexManager(kbID)
+	releaseindexManager(kbID)
 
 	kbDir := filepath.Join(config.Get().GetKBDir(), fmt.Sprintf("%d", kbID))
 	os.RemoveAll(kbDir)
@@ -126,9 +126,9 @@ func DeleteKnowledgeBase(kbID int64) error {
 	return nil
 }
 
-// GetOrCreateIndexManager returns the IndexManager for a knowledge base,
+// getOrCreateIndexManager returns the indexManager for a knowledge base,
 // loading it lazily on first access.
-func GetOrCreateIndexManager(kbID int64) (*IndexManager, error) {
+func getOrCreateIndexManager(kbID int64) (*indexManager, error) {
 	managersMu.RLock()
 	m, ok := managers[kbID]
 	managersMu.RUnlock()
@@ -149,7 +149,7 @@ func GetOrCreateIndexManager(kbID int64) (*IndexManager, error) {
 	}
 
 	vectorsDBPath := filepath.Join(config.Get().GetKBDir(), fmt.Sprintf("%d", kbID), "vectors.db")
-	m = NewIndexManager(kb.IndexType, kb.IndexFilePath, vectorsDBPath, kbID, flatThreshold)
+	m = newIndexManager(kb.IndexType, kb.IndexFilePath, vectorsDBPath, kbID, flatThreshold)
 	if err := m.Load(); err != nil {
 		return nil, fmt.Errorf("failed to load index manager: %w", err)
 	}
@@ -158,7 +158,7 @@ func GetOrCreateIndexManager(kbID int64) (*IndexManager, error) {
 	return m, nil
 }
 
-func releaseIndexManager(kbID int64) {
+func releaseindexManager(kbID int64) {
 	managersMu.Lock()
 	defer managersMu.Unlock()
 	if m, ok := managers[kbID]; ok {
@@ -198,12 +198,13 @@ func getWorkerChannel(kbID int64) chan int64 {
 }
 
 func worker(kbID int64, ch chan int64) {
+	ctx := context.Background()
 	for docID := range ch {
-		processDocument(kbID, docID)
+		processDocument(ctx, kbID, docID)
 	}
 }
 
-func processDocument(kbID, docID int64) {
+func processDocument(ctx context.Context, kbID, docID int64) {
 	applogger.L.Info("Processing document", "kb_id", kbID, "doc_id", docID)
 
 	var doc model.Document
@@ -228,9 +229,9 @@ func processDocument(kbID, docID int64) {
 	}
 
 	embService := llm.NewEmbeddingService(embConfig.BaseURL, embConfig.APIKey, embConfig.ModelID, embeddingDim)
-	processor := NewDocumentProcessor(embService)
+	processor := newDocumentProcessor(embService)
 
-	if err := processor.Process(context.Background(), kbID, &doc); err != nil {
+	if err := processor.Process(ctx, kbID, &doc); err != nil {
 		applogger.L.Error("Document processing failed", "doc_id", docID, "error", err)
 		return
 	}
@@ -239,9 +240,9 @@ func processDocument(kbID, docID int64) {
 }
 
 // addVectorsToIndex loads newly created vectors for a document and adds them
-// to the IndexManager's in-memory index (HNSW graph or pending queue).
+// to the indexManager's in-memory index (HNSW graph or pending queue).
 func addVectorsToIndex(kbID, docID int64) {
-	mgr, err := GetOrCreateIndexManager(kbID)
+	mgr, err := getOrCreateIndexManager(kbID)
 	if err != nil {
 		applogger.L.Warn("Failed to get index manager for vector update", "kb_id", kbID, "error", err)
 		return
@@ -278,7 +279,7 @@ func Shutdown() {
 	for _, m := range managers {
 		m.Close()
 	}
-	managers = make(map[int64]*IndexManager)
+	managers = make(map[int64]*indexManager)
 	managersMu.Unlock()
 }
 

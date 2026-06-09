@@ -3,44 +3,43 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/chat"
+	"private-buddy-server/internal/service/eventqueue"
 
 	applogger "private-buddy-server/internal/logger"
 )
 
-// Work represents a unit of work for an agent within a session.
+// work represents a unit of work for an agent within a session.
 // It is created when an agent decides to act on an event, and it may
 // absorb subsequent events (e.g., user corrections) during its execution.
 //
-// Three-layer model: Agent (long-lived) → Work (coherent goal) → Iteration (atomic ReAct step)
+// Three-layer model: Agent (long-lived) → work (coherent goal) → Iteration (atomic ReAct step)
 //
-// Work unifies the Chat path (single LLM call) and Task path (ReAct loop):
-//   - Chat Work: single LLM call, absorbs events before context assembly
-//   - Task Work: ReAct loop, absorbs events at each iteration boundary
-type Work struct {
+// work unifies the Chat path (single LLM call) and Task path (ReAct loop):
+//   - Chat work: single LLM call, absorbs events before context assembly
+//   - Task work: ReAct loop, absorbs events at each iteration boundary
+type work struct {
 	ID                 int64
-	agent              *AgentRuntime
+	agent              *agentRuntime
 	sessionID          int64
 	draft              *model.MessageDraft
 	workType           int
 	description        string
 	maxIterations      int
-	pendingEvents      chan AgentEvent
-	initialPayload     any // The payload from the event that created this Work
-	ctx                context.Context
-	cancel             context.CancelFunc
+	pendingEvents      chan eventqueue.AgentEvent
+	initialPayload     any     // The payload from the event that created this work
 	absorbedMessageIDs []int64 // Message IDs absorbed during execution (for merged reply)
 }
 
 // Run executes the work. For chat-type work, this runs the existing
 // chat pipeline. For task-type work, this runs the ReAct loop.
 // On completion, commits the draft and signals the event loop to remove this work.
-func (w *Work) Run() {
+// Respects context cancellation: exits early if the work is cancelled.
+func (w *work) Run(ctx context.Context) {
 	defer func() {
 		// Signal event loop to remove this work
 		w.agent.workDoneCh <- w
@@ -50,7 +49,7 @@ func (w *Work) Run() {
 			Update("status", model.WorkStatusCompleted)
 	}()
 
-	applogger.L.Info("Work started",
+	applogger.L.Info("work started",
 		"work_id", w.ID,
 		"session_id", w.sessionID,
 		"type", w.workType,
@@ -63,6 +62,13 @@ func (w *Work) Run() {
 	// single merged response addressing all of them.
 	w.absorbPendingEvents()
 
+	// Check cancellation after absorbing events
+	if ctx.Err() != nil {
+		applogger.L.Info("work cancelled before pipeline", "work_id", w.ID)
+		w.abandon()
+		return
+	}
+
 	// Load session, agent, and LLM config for the chat pipeline
 	session, agent, llmConfig := w.loadChatDependencies()
 	if session == nil || agent == nil || llmConfig == nil {
@@ -74,24 +80,21 @@ func (w *Work) Run() {
 	// If events were absorbed, use the last absorbed message as the trigger —
 	// the pipeline loads recent messages from the database, so all intermediate
 	// messages (including the original trigger) are naturally included in context.
+	//
+	// For scheduled events, there is no persisted trigger message (triggerMessageID=0).
+	// The alarm context is passed as a TriggerOverride to the pipeline instead.
 	triggerMessageID := w.getTriggerMessageID()
 	if len(w.absorbedMessageIDs) > 0 {
 		triggerMessageID = w.absorbedMessageIDs[len(w.absorbedMessageIDs)-1]
-		applogger.L.Info("Work using absorbed message as trigger",
+		applogger.L.Info("work using absorbed message as trigger",
 			"work_id", w.ID,
 			"original_trigger", w.getTriggerMessageID(),
 			"new_trigger", triggerMessageID,
 			"absorbed_count", len(w.absorbedMessageIDs),
 		)
 	}
-	if triggerMessageID == 0 {
-		applogger.L.Error("No trigger message ID for work", "work_id", w.ID)
-		w.handleChatError()
-		return
-	}
 
-	// Run the chat pipeline with draft-based architecture
-	ctx := context.Background()
+	// Run the chat pipeline with the work's context for cancellation support.
 	callbacks := &chat.ChatCallbacks{
 		OnNotify: func(data string) {
 			// Forward notifications to SSE clients
@@ -109,8 +112,32 @@ func (w *Work) Run() {
 		draftID = w.draft.ID
 	}
 
-	result, err := chat.Process(ctx, session, agent, llmConfig, triggerMessageID, contextBoundary, draftID, callbacks)
+	// Build trigger override for scheduled events.
+	// The trigger message is the user's original request (causal chain).
+	// The override carries the agent's action instruction to its future self,
+	// with a type marker so the pipeline assembles alarm-notification semantics
+	// (rather than treating it as a new user request).
+	var triggerOverride *chat.TriggerOverride
+	if payload, ok := w.initialPayload.(*eventqueue.ScheduledEventPayload); ok {
+		triggerOverride = &chat.TriggerOverride{
+			Type:    chat.TriggerOverrideScheduledAlarm,
+			Content: payload.Message,
+		}
+		applogger.L.Info("work using trigger override for scheduled event",
+			"work_id", w.ID,
+			"session_id", w.sessionID,
+			"trigger_message_id", triggerMessageID,
+		)
+	}
+
+	result, err := chat.Process(ctx, session, agent, llmConfig, triggerMessageID, contextBoundary, draftID, callbacks, triggerOverride)
 	if err != nil {
+		// Distinguish between cancellation and real errors
+		if ctx.Err() != nil {
+			applogger.L.Info("work cancelled during pipeline", "work_id", w.ID)
+			w.abandon()
+			return
+		}
 		applogger.L.Error("Chat processing failed in work",
 			"work_id", w.ID,
 			"session_id", w.sessionID,
@@ -128,7 +155,7 @@ func (w *Work) Run() {
 	// Commit the draft: atomically create message from draft
 	w.commitDraft(result.Content, result.HasInteractions)
 
-	applogger.L.Info("Work completed",
+	applogger.L.Info("work completed",
 		"work_id", w.ID,
 		"session_id", w.sessionID,
 		"draft_id", draftID,
@@ -137,7 +164,7 @@ func (w *Work) Run() {
 
 // FeedEvent feeds an event to the work's pending events channel.
 // Non-blocking: drops the event if the channel is full.
-func (w *Work) FeedEvent(event AgentEvent) {
+func (w *work) FeedEvent(event eventqueue.AgentEvent) {
 	select {
 	case w.pendingEvents <- event:
 		applogger.L.Debug("Event fed to work",
@@ -145,7 +172,7 @@ func (w *Work) FeedEvent(event AgentEvent) {
 			"event_type", event.Type,
 		)
 	default:
-		applogger.L.Warn("Work pending events channel full, dropping event",
+		applogger.L.Warn("work pending events channel full, dropping event",
 			"work_id", w.ID,
 			"event_type", event.Type,
 		)
@@ -153,9 +180,9 @@ func (w *Work) FeedEvent(event AgentEvent) {
 }
 
 // absorbPendingEvents drains all pending events from the channel.
-// Called at each iteration boundary — the Work voluntarily checks for
+// Called at each iteration boundary — the work voluntarily checks for
 // new input, like a human checking for new instructions between steps.
-func (w *Work) absorbPendingEvents() {
+func (w *work) absorbPendingEvents() {
 	for {
 		select {
 		case event := <-w.pendingEvents:
@@ -170,16 +197,16 @@ func (w *Work) absorbPendingEvents() {
 // For new message events, the message ID is collected for merged reply —
 // the chat pipeline will see all accumulated messages from the database
 // and produce a single response that addresses them together.
-func (w *Work) handleEvent(event AgentEvent) {
-	if payload, ok := event.Payload.(*NewMessagePayload); ok {
+func (w *work) handleEvent(event eventqueue.AgentEvent) {
+	if payload, ok := event.Payload.(*eventqueue.NewMessagePayload); ok {
 		w.absorbedMessageIDs = append(w.absorbedMessageIDs, payload.MessageID)
-		applogger.L.Info("Work absorbed message",
+		applogger.L.Info("work absorbed message",
 			"work_id", w.ID,
 			"message_id", payload.MessageID,
 			"total_absorbed", len(w.absorbedMessageIDs),
 		)
 	} else {
-		applogger.L.Info("Work absorbing event",
+		applogger.L.Info("work absorbing event",
 			"work_id", w.ID,
 			"event_type", event.Type,
 		)
@@ -188,9 +215,9 @@ func (w *Work) handleEvent(event AgentEvent) {
 
 // commitDraft commits the draft by sending it through the serialized commit channel.
 // The commit handler creates a message from the draft content and pushes it to SSE clients.
-func (w *Work) commitDraft(content string, hasInteractions int) {
+func (w *work) commitDraft(content string, hasInteractions int) {
 	if w.draft == nil {
-		applogger.L.Error("Work.commitDraft called with nil draft", "work_id", w.ID)
+		applogger.L.Error("work.commitDraft called with nil draft", "work_id", w.ID)
 		return
 	}
 
@@ -203,7 +230,7 @@ func (w *Work) commitDraft(content string, hasInteractions int) {
 }
 
 // updateDraftContent writes content to the draft in the database.
-func (w *Work) updateDraftContent(content string) {
+func (w *work) updateDraftContent(content string) {
 	if w.draft == nil {
 		return
 	}
@@ -213,7 +240,7 @@ func (w *Work) updateDraftContent(content string) {
 }
 
 // abandon marks the work and its draft as abandoned.
-func (w *Work) abandon() {
+func (w *work) abandon() {
 	database.DB.Model(&model.Work{}).Where("id = ?", w.ID).
 		Update("status", model.WorkStatusAbandoned)
 
@@ -224,7 +251,7 @@ func (w *Work) abandon() {
 }
 
 // loadChatDependencies loads session, agent, and LLM config from the database.
-func (w *Work) loadChatDependencies() (*model.Session, *model.Agent, *model.LLMConfig) {
+func (w *work) loadChatDependencies() (*model.Session, *model.Agent, *model.LLMConfig) {
 	session := service.GetSession(w.sessionID)
 	if session == nil {
 		applogger.L.Error("Session not found", "session_id", w.sessionID)
@@ -248,80 +275,28 @@ func (w *Work) loadChatDependencies() (*model.Session, *model.Agent, *model.LLMC
 
 // getTriggerMessageID extracts the trigger message ID from the work's
 // initial event payload.
-func (w *Work) getTriggerMessageID() int64 {
-	if payload, ok := w.initialPayload.(*NewMessagePayload); ok {
+//   - For EventTypeNewMessage: the user message that triggered this work.
+//   - For EventTypeScheduled: the user message that caused the alarm to be set
+//     (preserving the causal chain).
+func (w *work) getTriggerMessageID() int64 {
+	if payload, ok := w.initialPayload.(*eventqueue.NewMessagePayload); ok {
 		return payload.MessageID
+	}
+	if payload, ok := w.initialPayload.(*eventqueue.ScheduledEventPayload); ok {
+		return payload.TriggerMessageID
 	}
 	return 0
 }
 
 // handleChatError handles errors during chat processing by committing
 // the draft with an error message.
-func (w *Work) handleChatError() {
+func (w *work) handleChatError() {
 	if w.draft != nil {
 		w.commitDraft(userFriendlyErrorMsg, model.HasInteractionsNone)
 	}
 }
 
-const userFriendlyErrorMsg = "抱歉，服务器遇到了一些问题，请稍后再试。"
-
-// NewMessagePayload is the payload type for EventTypeNewMessage events.
-type NewMessagePayload struct {
-	MessageID      int64
-	MessageContent string
-}
-
-// GetMessageContent returns the message content for description extraction.
-func (p *NewMessagePayload) GetMessageContent() string {
-	return p.MessageContent
-}
-
-// RecoverActiveWorks loads active works from the database for agent recovery
-// after a service restart. Returns Work objects ready to be added to activeWorks.
-func RecoverActiveWorks(agentID int64, runtime *AgentRuntime) []*Work {
-	var workRecords []model.Work
-	database.DB.Where("agent_id = ? AND status = ?", agentID, model.WorkStatusRunning).Find(&workRecords)
-
-	for _, wr := range workRecords {
-		// Mark recovered works as abandoned since we can't resume mid-execution
-		database.DB.Model(&model.Work{}).Where("id = ?", wr.ID).
-			Update("status", model.WorkStatusAbandoned)
-
-		if wr.DraftID != nil {
-			database.DB.Model(&model.MessageDraft{}).Where("id = ?", *wr.DraftID).
-				Update("status", model.DraftStatusDiscarded)
-		}
-
-		applogger.L.Info("Recovered work marked as abandoned",
-			"work_id", wr.ID,
-			"agent_id", agentID,
-		)
-	}
-
-	return nil
-}
-
-// StartAgentRuntime creates and starts an AgentRuntime for the given agent.
-func StartAgentRuntime(
-	agentID int64,
-	onStatusChange func(agentID, sessionID int64, status int),
-) *AgentRuntime {
-	router := NewSemanticWorkRouter()
-	runtime := NewAgentRuntime(agentID, router, 30*time.Second, onStatusChange)
-
-	// Recover any active works from previous run
-	RecoverActiveWorks(agentID, runtime)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel // Will be used for graceful shutdown in future iterations
-
-	go runtime.Run(ctx)
-
-	applogger.L.Info("AgentRuntime started", "agent_id", agentID)
-	return runtime
-}
-
-// fmtWorkID returns a formatted work ID string for logging.
-func fmtWorkID(workID int64) string {
+// fmtworkID returns a formatted work ID string for logging.
+func fmtworkID(workID int64) string {
 	return fmt.Sprintf("work-%d", workID)
 }

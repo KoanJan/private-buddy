@@ -78,6 +78,7 @@ func FormatHistory(history []llm.Message, maxMessages int) string {
 // Uses conversation history to resolve references and create a self-contained task requirement.
 // Returns the original userMessage on error (graceful degradation).
 func Rewrite(
+	ctx context.Context,
 	llmConfig *model.LLMConfig,
 	userMessage string,
 	history []llm.Message,
@@ -88,7 +89,7 @@ func Rewrite(
 	historyText := FormatHistory(history, maxHistoryMessages)
 	prompt := fmt.Sprintf(rewritePrompt, historyText, userMessage)
 
-	result, err := chatModel.ChatWithJSONSchema(context.Background(), []llm.Message{
+	result, err := chatModel.ChatWithJSONSchema(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "RewrittenRequirement",

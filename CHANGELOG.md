@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.15] - 2026-06-10
+
+### Added
+- **Intelligent Decision System**: LLM-based semantic decision with 5 action types (ReplyNow, ReplyThenWork, WorkOnly, Ignore, Defer), replacing hardcoded respond-only behavior. Non-message events use rule-based routing, new messages use LLM + JSON Schema
+- **Semantic Work Routing**: LLM compares event content against active work descriptions to determine event ownership, with zero-cost skip when no active works exist
+- **Heartbeat Introspection**: LLM-based periodic self-check across all participant sessions, with adaptive intervals — active (5min) → steady (30min) → dormant (2h) — driven by idle tick counter
+- **Scheduled Events**: `scheduled_event` model and `wake_me_when` tool enabling agents to set self-reminders and be awakened via `EventTypeScheduled`
+- **Aggregated Initialization**: `runtime.Start()` single entry point combining callback setup, runtime manager creation, and eager agent startup
+
+### Changed
+- **Context Propagation**: all `context.Context` removed from struct fields; single root context in runtime manager propagates cancellation through the entire runtime→work tree
+- **Work Lifecycle**: `newWork` only creates objects without starting goroutines; work stops on context cancellation without reverse-controlling runtime
+- **Event Queue**: package-level singleton functions (`Subscribe`/`Unsubscribe`/`Send`) replace exported global variable; initialization decoupled from runtime
+- **Minimal Exposure**: kb, handler, database packages — all internal-only types and functions made package-private
+
+### Fixed
+- **Goroutine Management**: eliminated standalone `cancel` storage; graceful shutdown via single `cancelAll()` cascading through context tree
+- **Work Cancellation**: pipeline errors from context cancellation correctly call `abandon()` instead of `handleChatError()`
+
+### Removed
+- Dead code: `types.go` (runtime), `NotifyAgentNewMessage` (eventqueue), `GetContextMessages` and `BuildSystemPrompt` (chatctx)
+
+
 ## [0.0.14] - 2026-06-09
 
 ### Added

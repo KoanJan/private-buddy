@@ -53,6 +53,7 @@ type TaskParams struct {
 	LLMConfig       *model.LLMConfig    // LLM configuration for the task
 	MaxIterations   int                 // Override for max loop iterations (0 = use default)
 	SessionID       int64               // Session ID for interaction records and workspace
+	AgentID         int64               // Agent ID for tools that need agent context (e.g., wake_me_when)
 	UserMsgID       int64               // User message ID that triggered execution
 	DraftID         int64               // Draft ID for interaction record association
 	SearchConfig    *model.SearchConfig // Search configuration for web search tool
@@ -104,7 +105,7 @@ func Execute(params TaskParams) *TaskResult {
 		llm.TemperatureCreative,
 	)
 
-	toolList := buildToolList(workspace, params.SessionID, params.SearchConfig, workspaceRoot, notesMaxChars)
+	toolList := buildToolList(workspace, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, workspaceRoot, notesMaxChars)
 
 	taskLoop := NewTaskLoop(
 		llmClient,
@@ -116,10 +117,9 @@ func Execute(params TaskParams) *TaskResult {
 		params.UserMsgID,
 		params.DraftID,
 		writeNotesTool,
-		params.Ctx,
 	)
 
-	loopResult := taskLoop.Run()
+	loopResult := taskLoop.Run(params.Ctx)
 
 	finalNotes := writeNotesTool.ReadNotes()
 
@@ -170,6 +170,7 @@ func buildSystemPrompt(sessionID int64, deliveryType string) string {
 		"Available tools:",
 		"- bash: Execute shell commands in your working directory",
 		"- write_notes: Append structured entries to your notes.md",
+		"- wake_me_when: Set an alarm to wake yourself at a future time (e.g., reminders, follow-ups)",
 	}
 
 	if hasWS {
@@ -227,11 +228,12 @@ func hasWebSearch() bool {
 }
 
 // buildToolList creates the list of available tools for the task loop.
-// Always includes bash and write_notes; adds web_search if search config is available.
-func buildToolList(workspace string, sessionID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
+// Always includes bash, write_notes, and wake_me_when; adds web_search if search config is available.
+func buildToolList(workspace string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
 		tools.NewBashTool(workspace),
 		tools.NewWriteNotesTool(sessionID, workspaceRoot, notesMaxChars),
+		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
 	}
 
 	if searchConfig != nil && searchConfig.IsAvailable() {

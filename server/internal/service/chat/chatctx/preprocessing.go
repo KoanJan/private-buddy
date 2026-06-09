@@ -73,9 +73,9 @@ type PreprocessingResult struct {
 	SkipRetrieval      bool   `json:"skip_retrieval"`
 }
 
-// FormatHistoryForPreprocessing formats conversation history for preprocessing prompts.
+// formatHistoryForPreprocessing formats conversation history for preprocessing prompts.
 // Limits to the most recent maxMessages if > 0.
-func FormatHistoryForPreprocessing(history []llm.Message, maxMessages int) string {
+func formatHistoryForPreprocessing(history []llm.Message, maxMessages int) string {
 	if len(history) == 0 {
 		return "(No conversation history)"
 	}
@@ -96,10 +96,11 @@ func FormatHistoryForPreprocessing(history []llm.Message, maxMessages int) strin
 	return strings.Join(formatted, "\n")
 }
 
-// RouteQuery classifies the query type and rewrites if ambiguous.
+// routeQuery classifies the query type and rewrites if ambiguous.
 // Uses JSON Schema structured output for deterministic classification.
 // Uses TemperatureDeterministic for consistent, deterministic outputs.
-func RouteQuery(
+func routeQuery(
+	ctx stdctx.Context,
 	llmConfig *model.LLMConfig,
 	query string,
 	history []llm.Message,
@@ -107,10 +108,10 @@ func RouteQuery(
 ) *QueryRoutingResult {
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
-	historyText := FormatHistoryForPreprocessing(history, maxMessages)
+	historyText := formatHistoryForPreprocessing(history, maxMessages)
 	prompt := fmt.Sprintf(routingPrompt, historyText, query)
 
-	result, err := chatModel.ChatWithJSONSchema(stdctx.Background(), []llm.Message{
+	result, err := chatModel.ChatWithJSONSchema(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "QueryRoutingResult",
@@ -156,10 +157,11 @@ func RouteQuery(
 	return &QueryRoutingResult{Type: queryTypeClear}
 }
 
-// GenerateClarification generates a clarification question for vague queries.
+// generateClarification generates a clarification question for vague queries.
 // If characterSettings is non-empty, it is prepended to the prompt for personality alignment.
 // Uses TemperatureDeterministic for consistent outputs.
-func GenerateClarification(
+func generateClarification(
+	ctx stdctx.Context,
 	llmConfig *model.LLMConfig,
 	query string,
 	history []llm.Message,
@@ -169,14 +171,14 @@ func GenerateClarification(
 ) string {
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
-	historyText := FormatHistoryForPreprocessing(history, maxMessages)
+	historyText := formatHistoryForPreprocessing(history, maxMessages)
 	prompt := fmt.Sprintf(clarifyPrompt, historyText, query, reason)
 
 	if characterSettings != "" {
 		prompt = fmt.Sprintf("[Your Character]\n%s\n\n%s", characterSettings, prompt)
 	}
 
-	result, err := chatModel.Chat(stdctx.Background(), []llm.Message{
+	result, err := chatModel.Chat(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
@@ -195,6 +197,7 @@ func GenerateClarification(
 //   - ambiguous: rewrite query with context for retrieval
 //   - vague: generate clarification question, mark as needs_clarification
 func PreprocessQuery(
+	ctx stdctx.Context,
 	llmConfig *model.LLMConfig,
 	query string,
 	history []llm.Message,
@@ -207,7 +210,7 @@ func PreprocessQuery(
 		QueryType:      queryTypeClear,
 	}
 
-	routing := RouteQuery(llmConfig, query, history, maxMessages)
+	routing := routeQuery(ctx, llmConfig, query, history, maxMessages)
 	queryType := routing.Type
 	result.QueryType = queryType
 
@@ -232,7 +235,7 @@ func PreprocessQuery(
 		if routing.Reason != "" {
 			reason = routing.Reason
 		}
-		clarification := GenerateClarification(llmConfig, query, history, reason, characterSettings, maxMessages)
+		clarification := generateClarification(ctx, llmConfig, query, history, reason, characterSettings, maxMessages)
 		result.NeedsClarification = true
 		result.Clarification = clarification
 	}

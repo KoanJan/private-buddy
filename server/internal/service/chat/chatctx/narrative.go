@@ -52,13 +52,13 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 - If the conversation contains multiple languages, the narrative may also contain multiple languages.
 - Do NOT translate between languages. Maintain information fidelity.`
 
-// GenerateNarrativeFromSummary generates a cached narrative from summary content only.
+// generateNarrativeFromSummary generates a cached narrative from summary content only.
 //
 // This is the cached narrative generation method, called in background
 // immediately after summary generation. The narrative is stored alongside
 // the summary and retrieved at chat time without LLM call.
 // Uses TemperatureControlled for creative but controlled output.
-func GenerateNarrativeFromSummary(llmConfig *model.LLMConfig, summaryContent string) string {
+func generateNarrativeFromSummary(ctx stdctx.Context, llmConfig *model.LLMConfig, summaryContent string) string {
 	if summaryContent == "" {
 		return ""
 	}
@@ -67,7 +67,7 @@ func GenerateNarrativeFromSummary(llmConfig *model.LLMConfig, summaryContent str
 
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 
-	result, err := chatModel.Chat(stdctx.Background(), []llm.Message{
+	result, err := chatModel.Chat(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {

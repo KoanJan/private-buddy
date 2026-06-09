@@ -1,23 +1,41 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"private-buddy-server/internal/api"
 	"private-buddy-server/internal/api/handler"
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/logger"
+	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/kb"
 	"private-buddy-server/internal/service/runtime"
+	"private-buddy-server/internal/service/task/tools"
 
 	applogger "private-buddy-server/internal/logger"
 
 	"github.com/joho/godotenv"
 )
+
+// safeMarshalSSE marshals data to JSON for SSE push, logging on failure.
+// Returns the JSON string or an empty string if marshaling fails.
+func safeMarshalSSE(data map[string]interface{}) string {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		applogger.L.Error("Failed to marshal SSE event data", "error", err)
+		return ""
+	}
+	return string(bytes)
+}
 
 func main() {
 	exePath, _ := os.Executable()
@@ -38,33 +56,34 @@ func main() {
 	database.Init()
 	database.AutoMigrate()
 
-	// Initialize Agent Runtime system with SSE status change callback
+	// Initialize the Agent Runtime system with SSE callbacks
 	onStatusChange := func(agentID, sessionID int64, status int) {
-		data, _ := json.Marshal(map[string]interface{}{
+		data := safeMarshalSSE(map[string]interface{}{
 			"type":       "agent_status",
 			"agent_id":   agentID,
 			"session_id": sessionID,
 			"status":     status,
 		})
-		handler.PushSSEToSession(sessionID, string(data))
+		if data != "" {
+			handler.PushSSEToSession(sessionID, data)
+		}
 	}
-	runtime.InitGlobalRuntimeManager(onStatusChange)
-
-	// Connect runtime's pushMessageEvent to SSE
-	runtime.SetPushMessageEvent(func(sessionID, messageID int64, content string, hasInteractions int) {
-		data, _ := json.Marshal(map[string]interface{}{
+	onPushMessage := func(sessionID, messageID int64, content string, hasInteractions int) {
+		data := safeMarshalSSE(map[string]interface{}{
 			"type":             "message",
 			"message_id":       messageID,
 			"content":          content,
 			"has_interactions": hasInteractions,
 		})
-		handler.PushSSEToSession(sessionID, string(data))
-	})
+		if data != "" {
+			handler.PushSSEToSession(sessionID, data)
+		}
+	}
 
-	// Connect runtime's pushSSEEvent to SSE (for notifications and other raw events)
-	runtime.SetPushSSEEvent(func(sessionID int64, data string) {
-		handler.PushSSEToSession(sessionID, data)
-	})
+	// Initialize the global event queue first, before runtimes subscribe to it
+	eventqueue.Init()
+
+	runtime.Start(onStatusChange, onPushMessage, handler.PushSSEToSession)
 
 	kb.Init(1536, 0)
 	kb.RecoverProcessingDocuments()
@@ -76,9 +95,42 @@ func main() {
 		port = "8000"
 	}
 	addr := fmt.Sprintf(":%s", port)
-	applogger.L.Info("Server listening", "addr", addr)
-	if err := r.Run(addr); err != nil {
-		applogger.L.Error("Server failed to start", "error", err)
-		panic(err)
+
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: r,
 	}
+
+	// Start server in a goroutine so we can listen for shutdown signals
+	go func() {
+		applogger.L.Info("Server listening", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			applogger.L.Error("Server failed to start", "error", err)
+			panic(err)
+		}
+	}()
+
+	// Wait for interrupt signal for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	applogger.L.Info("Received shutdown signal", "signal", sig.String())
+
+	// Stop all agent runtimes and event queue before shutting down
+	applogger.L.Info("Stopping agent runtimes...")
+	runtime.StopAll()
+
+	// Cancel all pending alarm goroutines
+	applogger.L.Info("Cancelling pending alarms...")
+	tools.CancelAlarms()
+
+	// Graceful shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		applogger.L.Error("Server forced to shutdown", "error", err)
+	}
+
+	applogger.L.Info("Server stopped gracefully")
 }

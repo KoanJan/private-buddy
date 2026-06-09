@@ -26,7 +26,7 @@ import (
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/chat/chatctx"
-	"private-buddy-server/internal/service/runtime"
+	"private-buddy-server/internal/service/eventqueue"
 
 	applogger "private-buddy-server/internal/logger"
 
@@ -34,23 +34,23 @@ import (
 )
 
 // userFriendlyErrorMessage is the default error message shown to users on internal errors.
-const userFriendlyErrorMessage = "抱歉，服务器遇到了一些问题，请稍后再试。"
+const userFriendlyErrorMessage = "Sorry, something went wrong on the server. Please try again later."
 
-// ConnectionManager manages SSE connections per session.
+// connectionManager manages SSE connections per session.
 // Each session can have multiple connected clients (e.g., multiple browser tabs).
 // Messages are broadcast to all connections of the same session.
-type ConnectionManager struct {
+type connectionManager struct {
 	connections map[int64][]chan string // sessionID -> list of SSE channels
 }
 
 // connManager is the global singleton for managing SSE connections.
-var connManager = &ConnectionManager{
+var connManager = &connectionManager{
 	connections: make(map[int64][]chan string),
 }
 
 // Register creates and registers a new SSE channel for a session.
 // Returns the channel for the caller to listen on.
-func (cm *ConnectionManager) Register(sessionID int64) chan string {
+func (cm *connectionManager) Register(sessionID int64) chan string {
 	ch := make(chan string, 256)
 	cm.connections[sessionID] = append(cm.connections[sessionID], ch)
 	return ch
@@ -58,7 +58,7 @@ func (cm *ConnectionManager) Register(sessionID int64) chan string {
 
 // Unregister removes an SSE channel from a session and closes it.
 // Cleans up the session entry if no connections remain.
-func (cm *ConnectionManager) Unregister(sessionID int64, ch chan string) {
+func (cm *connectionManager) Unregister(sessionID int64, ch chan string) {
 	conns := cm.connections[sessionID]
 	for i, c := range conns {
 		if c == ch {
@@ -74,7 +74,7 @@ func (cm *ConnectionManager) Unregister(sessionID int64, ch chan string) {
 
 // PushToSession sends a message to all SSE channels of a session.
 // Drops the message if a channel is full (non-blocking send).
-func (cm *ConnectionManager) PushToSession(sessionID int64, data string) {
+func (cm *connectionManager) PushToSession(sessionID int64, data string) {
 	conns := cm.connections[sessionID]
 	for _, ch := range conns {
 		select {
@@ -183,7 +183,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		Update("last_read_message_id", userMsg.ID)
 
 	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	chatctx.MaybeTriggerSummary(session.ID, agentID)
+	chatctx.MaybeTriggerSummary(c.Request.Context(), session.ID, agentID)
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
 	h.sendEventToRuntime(agentID, session.ID, userMsg.ID, message)
@@ -240,7 +240,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		Update("last_read_message_id", userMsg.ID)
 
 	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	chatctx.MaybeTriggerSummary(sessionID, session.AgentID)
+	chatctx.MaybeTriggerSummary(c.Request.Context(), sessionID, session.AgentID)
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
 	h.sendEventToRuntime(session.AgentID, sessionID, userMsg.ID, message)
@@ -277,6 +277,9 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 	defer connManager.Unregister(sessionID, ch)
 
 	c.Stream(func(w io.Writer) bool {
+		heartbeat := time.NewTimer(30 * time.Second)
+		defer heartbeat.Stop()
+
 		select {
 		case data, ok := <-ch:
 			if !ok {
@@ -292,7 +295,7 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 			return true
 		case <-c.Request.Context().Done():
 			return false
-		case <-time.After(30 * time.Second):
+		case <-heartbeat.C:
 			c.Writer.WriteString(": heartbeat\n\n")
 			c.Writer.Flush()
 			return true
@@ -300,27 +303,23 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 	})
 }
 
-// sendEventToRuntime sends a new message event to the Agent Runtime.
+// sendEventToRuntime ensures the agent runtime is running and sends a new
+// message event to the agent via the global event queue.
 // This is the only path for user messages to reach the agent.
 func (h *Handler) sendEventToRuntime(agentID, sessionID, messageID int64, messageContent string) {
-	if runtime.GlobalRuntimeManager == nil {
-		applogger.L.Error("GlobalRuntimeManager not initialized, cannot process message")
-		return
-	}
-
-	event := runtime.AgentEvent{
-		Type:      runtime.EventTypeNewMessage,
+	event := eventqueue.AgentEvent{
+		Type:      eventqueue.EventTypeNewMessage,
 		SessionID: sessionID,
-		Payload: &runtime.NewMessagePayload{
+		Payload: &eventqueue.NewMessagePayload{
 			MessageID:      messageID,
 			MessageContent: messageContent,
 		},
 	}
-	runtime.GlobalRuntimeManager.SendEvent(agentID, event)
+	eventqueue.SendEvent(agentID, event)
 }
 
-// SessionAgentStatus represents an agent's status within a session.
-type SessionAgentStatus struct {
+// sessionAgentStatus represents an agent's status within a session.
+type sessionAgentStatus struct {
 	AgentID int64  `json:"agent_id"`
 	Name    string `json:"name"`
 	Avatar  string `json:"avatar"`
@@ -346,14 +345,14 @@ func (h *Handler) GetSessionAgents(c *gin.Context) {
 		return
 	}
 
-	result := make([]SessionAgentStatus, 0, len(participants))
+	result := make([]sessionAgentStatus, 0, len(participants))
 	for _, p := range participants {
 		var agent model.Agent
 		if err := database.DB.First(&agent, p.ParticipantID).Error; err != nil {
 			continue
 		}
 
-		result = append(result, SessionAgentStatus{
+		result = append(result, sessionAgentStatus{
 			AgentID: agent.ID,
 			Name:    agent.Name,
 			Avatar:  agent.Avatar,

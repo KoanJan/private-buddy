@@ -1,11 +1,7 @@
 package service
 
 import (
-	"net/http"
-
 	"private-buddy-server/internal/database"
-
-	"github.com/gin-gonic/gin"
 )
 
 // CRUDBase provides generic CRUD operations for any GORM model.
@@ -52,11 +48,4 @@ func (c *CRUDBase[T]) Update(entity *T, updates map[string]interface{}) error {
 func (c *CRUDBase[T]) Delete(id int64) error {
 	var entity T
 	return database.DB.Delete(&entity, id).Error
-}
-
-// HandleNotFound returns a 404 JSON response for a missing entity.
-func HandleNotFound(c *gin.Context, entityName string, id int64) {
-	c.JSON(http.StatusNotFound, gin.H{
-		"detail": entityName + " not found",
-	})
 }

@@ -1,6 +1,8 @@
 package chatctx
 
 import (
+	"context"
+
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
@@ -30,10 +32,10 @@ type RetrievalResult struct {
 	HasEmbedding     bool            `json:"has_embedding"`
 }
 
-// GetEmbeddingConfigForSession returns the embedding config for a session's agent.
+// getEmbeddingConfigForSession returns the embedding config for a session's agent.
 // Traverses session -> agent -> embedding_config to find the configuration.
 // Returns nil if any step fails (session not found, agent not found, no config).
-func GetEmbeddingConfigForSession(sessionID int64) *model.EmbeddingConfig {
+func getEmbeddingConfigForSession(sessionID int64) *model.EmbeddingConfig {
 	var session model.Session
 	if err := database.DB.First(&session, sessionID).Error; err != nil {
 		return nil
@@ -96,7 +98,7 @@ func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalR
 
 	result.RecentMessages = GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
-	latestSummary := GetLatestSummaryByID(sessionID, agentID)
+	latestSummary := getLatestSummaryByID(sessionID, agentID)
 	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
 
 	return result
@@ -108,7 +110,7 @@ func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalR
 //  2. RAG segments relevant to the query (if embedding configured)
 //  3. Latest summary (if available)
 //  4. Cached narrative from summary record (if available)
-func GetContextForChat(sessionID, agentID int64, query string, recentCount int, ragCount int) *RetrievalResult {
+func GetContextForChat(ctx context.Context, sessionID, agentID int64, query string, recentCount int, ragCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
 		RelevantSegments: []Segment{},
@@ -117,13 +119,13 @@ func GetContextForChat(sessionID, agentID int64, query string, recentCount int, 
 
 	result.RecentMessages = GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
-	embeddingConfig := GetEmbeddingConfigForSession(sessionID)
+	embeddingConfig := getEmbeddingConfigForSession(sessionID)
 	if embeddingConfig != nil {
 		result.HasEmbedding = true
 		embeddingSvc := llm.NewEmbeddingService(embeddingConfig.BaseURL, embeddingConfig.APIKey, embeddingConfig.ModelID, 0)
 		vectorStore := vectorstore.NewVectorStoreService(embeddingSvc)
 		if err := vectorStore.Init(); err == nil {
-			searchResults, err := vectorStore.Search(sessionID, query, ragCount)
+			searchResults, err := vectorStore.Search(ctx, sessionID, query, ragCount)
 			if err != nil {
 				applogger.L.Error("RAG retrieval failed", "error", err)
 			} else {
@@ -142,7 +144,7 @@ func GetContextForChat(sessionID, agentID int64, query string, recentCount int, 
 		}
 	}
 
-	latestSummary := GetLatestSummaryByID(sessionID, agentID)
+	latestSummary := getLatestSummaryByID(sessionID, agentID)
 	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
 
 	return result
@@ -155,8 +157,8 @@ func GetContextForChat(sessionID, agentID int64, query string, recentCount int, 
 // NOTE: This only indexes the given messageIDs (typically the current round).
 // Messages that existed before embedding was configured are NOT retroactively
 // indexed. A batch re-index mechanism is needed to cover that case.
-func IndexMessages(sessionID int64, messageIDs []int64) bool {
-	embeddingConfig := GetEmbeddingConfigForSession(sessionID)
+func IndexMessages(ctx context.Context, sessionID int64, messageIDs []int64) bool {
+	embeddingConfig := getEmbeddingConfigForSession(sessionID)
 	if embeddingConfig == nil {
 		applogger.L.Info("No embedding config for session, skipping indexing", "session_id", sessionID)
 		return false
@@ -196,7 +198,7 @@ func IndexMessages(sessionID int64, messageIDs []int64) bool {
 		msgIDs[i] = msg.ID
 	}
 
-	if err := vectorStore.AddMessages(sessionID, msgIDs, contents, metadatas); err != nil {
+	if err := vectorStore.AddMessages(ctx, sessionID, msgIDs, contents, metadatas); err != nil {
 		applogger.L.Error("Failed to index messages", "error", err)
 		return false
 	}

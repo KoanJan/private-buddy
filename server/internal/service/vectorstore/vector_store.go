@@ -114,7 +114,7 @@ type VectorMetadata struct {
 //   - messageIDs: the unique identifiers of the messages (currently unused but kept for future use)
 //   - contents: the text contents to be embedded
 //   - metadatas: the metadata for each message
-func (vss *VectorStoreService) AddMessages(sessionID int64, messageIDs []int64, contents []string, metadatas []VectorMetadata) error {
+func (vss *VectorStoreService) AddMessages(ctx context.Context, sessionID int64, messageIDs []int64, contents []string, metadatas []VectorMetadata) error {
 	// Skip if embedding service is not configured
 	if vss.embeddingSvc == nil {
 		applogger.L.Warn("Embedding service not available, skipping vector store add")
@@ -126,7 +126,7 @@ func (vss *VectorStoreService) AddMessages(sessionID int64, messageIDs []int64, 
 	}
 
 	// Generate embeddings for all contents in a single batch request
-	embeddings, err := vss.embeddingSvc.Embed(context.Background(), contents)
+	embeddings, err := vss.embeddingSvc.Embed(ctx, contents)
 	if err != nil {
 		return fmt.Errorf("failed to generate embeddings: %w", err)
 	}
@@ -174,7 +174,7 @@ type SearchResult struct {
 //   - k: the maximum number of results to return
 //
 // Returns the top-k most similar messages sorted by descending similarity score.
-func (vss *VectorStoreService) Search(sessionID int64, query string, k int) ([]SearchResult, error) {
+func (vss *VectorStoreService) Search(ctx context.Context, sessionID int64, query string, k int) ([]SearchResult, error) {
 	if vss.embeddingSvc == nil {
 		return nil, fmt.Errorf("embedding service not available")
 	}
@@ -184,7 +184,7 @@ func (vss *VectorStoreService) Search(sessionID int64, query string, k int) ([]S
 	}
 
 	// Generate embedding for the search query
-	queryEmbedding, err := vss.embeddingSvc.EmbedSingle(context.Background(), query)
+	queryEmbedding, err := vss.embeddingSvc.EmbedSingle(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
