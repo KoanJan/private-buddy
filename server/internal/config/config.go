@@ -49,8 +49,8 @@ func Init() {
 		LogLevel:                getEnv("LOG_LEVEL", "INFO"),
 		TaskMaxIterations:       getEnvInt("TASK_MAX_ITERATIONS", 50),
 		WorkspaceRoot:           expandHome(getEnv("WORKSPACE_ROOT", "")),
-		ContextWindowIterations: getEnvInt("CONTEXT_WINDOW_ITERATIONS", 10),
-		NotesMaxChars:           getEnvInt("NOTES_MAX_CHARS", 5000),
+		ContextWindowIterations: getEnvInt("CONTEXT_WINDOW_ITERATIONS", 20),
+		NotesMaxChars:           getEnvInt("NOTES_MAX_CHARS", 10000),
 	}
 }
 

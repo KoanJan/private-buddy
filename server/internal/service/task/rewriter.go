@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sashabaranov/go-openai/jsonschema"
-
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
 
@@ -46,8 +44,8 @@ Output a JSON object with:
 
 // RewrittenRequirement represents the structured output of task requirement rewriting.
 type RewrittenRequirement struct {
-	Requirement    string `json:"requirement"`
-	ContextSummary string `json:"context_summary"`
+	Requirement    string `json:"requirement" jsonschema:"description=The rewritten, self-contained task requirement,required"`
+	ContextSummary string `json:"context_summary" jsonschema:"description=Brief summary of relevant context used for rewriting"`
 }
 
 // FormatHistory formats conversation history for the rewrite prompt.
@@ -98,20 +96,7 @@ func Rewrite(
 		Name:        "RewrittenRequirement",
 		Description: "The rewritten task requirement",
 		Strict:      true,
-		Schema: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"requirement": {
-					Type:        jsonschema.String,
-					Description: "The rewritten, self-contained task requirement",
-				},
-				"context_summary": {
-					Type:        jsonschema.String,
-					Description: "Brief summary of relevant context used for rewriting",
-				},
-			},
-			Required: []string{"requirement"},
-		},
+		Schema:      llm.GenerateSchema[RewrittenRequirement](),
 	})
 
 	if err != nil {

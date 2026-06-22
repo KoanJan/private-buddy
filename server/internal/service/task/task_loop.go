@@ -32,6 +32,7 @@ const defaultMaxIterations = 90
 // Every iteration is recorded to the interactions table with:
 //   - type=1 (request): the messages sent to the LLM
 //   - type=2 (response): the LLM output (content, tool_calls, finish_reason)
+//   - type=3 (guidance): external guidance directive received at iteration boundary
 //
 // Notes checkpoint strategy:
 //   - Agent can voluntarily call write_notes at any time
@@ -46,10 +47,11 @@ type TaskLoop struct {
 	maxIterations    int                         // Maximum number of loop iterations
 	sessionID        int64                       // Session ID for interaction records
 	userMsgID        int64                       // User message ID that triggered execution
-	draftID          int64                       // Draft ID for interaction record association
+	workID           int64                       // Work ID for interaction record association
 	writeNotesTool   *tools.WriteNotesTool       // Write notes tool for checkpoint iterations
 	checkpointClient *llm.ChatModel              // Lazy-initialized LLM client for checkpoint iterations
 	lastNotesIter    int                         // Last iteration where write_notes was called (voluntary or forced)
+	guidanceCh       <-chan GuidanceDirective    // Channel for observing new guidance during execution
 }
 
 // NewTaskLoop creates a new TaskLoop instance.
@@ -60,8 +62,9 @@ func NewTaskLoop(
 	toolList []tools.Tool,
 	contextManager *taskcontext.ContextManager,
 	maxIterations int,
-	sessionID, userMsgID, draftID int64,
+	sessionID, userMsgID, workID int64,
 	writeNotesTool *tools.WriteNotesTool,
+	guidanceCh <-chan GuidanceDirective,
 ) *TaskLoop {
 	registry := make(map[string]tools.Tool)
 	for _, t := range toolList {
@@ -76,8 +79,9 @@ func NewTaskLoop(
 		maxIterations:  maxIterations,
 		sessionID:      sessionID,
 		userMsgID:      userMsgID,
-		draftID:        draftID,
+		workID:         workID,
 		writeNotesTool: writeNotesTool,
+		guidanceCh:     guidanceCh,
 	}
 }
 
@@ -95,13 +99,13 @@ type LoopResult struct {
 //   - Max iterations reached (failure, after writing notes)
 //
 // The task requirement is already injected via ContextManager
-// (as part of the fixed task.md content), so it is not passed
+// (as part of the system prompt with Guidance), so it is not passed
 // as a parameter here.
 func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 	applogger.L.Info("TaskLoop starting",
 		"max_iterations", tl.maxIterations,
 		"session_id", tl.sessionID,
-		"agent_msg_id", tl.draftID,
+		"work_id", tl.workID,
 	)
 
 	for iteration := 1; iteration <= tl.maxIterations; iteration++ {
@@ -113,6 +117,13 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			)
 			return &LoopResult{Status: "failure", Reason: "task cancelled"}
 		}
+
+		// Observe new guidance from the channel at each iteration boundary.
+		// New guidance is an environment event that the agent must observe
+		// in the ReAct cycle — it represents a change in execution intent
+		// (e.g., user correction, approach change, cancellation).
+		// Drain all pending guidance to handle multiple updates.
+		tl.observeNewGuidance(iteration)
 
 		applogger.L.Info("TaskLoop iteration", "iteration", iteration, "max", tl.maxIterations)
 
@@ -274,6 +285,56 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 
 	reason := fmt.Sprintf("Task did not complete within %d iterations", tl.maxIterations)
 	return &LoopResult{Status: "failure", Reason: reason}
+}
+
+// observeNewGuidance drains all pending guidance from the channel and injects
+// each as an observation (user message) into the ReAct cycle.
+//
+// In the ReAct paradigm, new guidance is an environment event — the agent
+// must observe it, think about how it affects the current plan, and act
+// accordingly. This is semantically different from a callback check: the
+// guidance arrives as a channel event, modeling it as something that happens
+// in the agent's environment that the agent must perceive.
+//
+// Each directive is written to two places to ensure full traceability:
+// 1. Interactions table (type=3): audit trail and transition judgment record
+// 2. Context manager: LLM sees it as a [New Directive] observation
+//
+// The iteration parameter is the current loop iteration number, so the
+// guidance interaction record is grouped with the iteration that consumes it.
+func (tl *TaskLoop) observeNewGuidance(iteration int) {
+	if tl.guidanceCh == nil {
+		return
+	}
+	for {
+		select {
+		case directive := <-tl.guidanceCh:
+			applogger.L.Info("TaskLoop: observed new guidance",
+				"session_id", tl.sessionID,
+				"work_id", tl.workID,
+				"iteration", iteration,
+				"guidance", truncateString(directive.Guidance, 100),
+				"reason", truncateString(directive.Reason, 100),
+			)
+
+			// 1. Write to interactions: this is a cognitive event that changes
+			// the execution direction. Must be visible in the audit trail.
+			tl.writeInteraction(iteration, model.InteractionTypeGuidance, map[string]interface{}{
+				"guidance": directive.Guidance,
+				"reason":   directive.Reason,
+			})
+
+			// 2. Inject as an observation in the ReAct cycle.
+			// Both guidance (what to do) and reason (why) are included so the
+			// LLM has the full cognitive context, not just the bare directive.
+			tl.contextManager.AddIteration(llm.Message{
+				Role:    "user",
+				Content: fmt.Sprintf("[New Directive]\nGuidance: %s\nReason: %s", directive.Guidance, directive.Reason),
+			}, nil)
+		default:
+			return
+		}
+	}
 }
 
 // isCheckpointIteration checks if this iteration should be a forced notes checkpoint.
@@ -562,7 +623,7 @@ func (tl *TaskLoop) executeToolCall(tc llm.ToolCall) llm.Message {
 
 // writeInteraction writes an interaction record to the database.
 // Silently skips if session is not configured.
-// Records are grouped by (session_id, user_msg_id, agent_msg_id, iteration)
+// Records are grouped by (session_id, work_id, iteration)
 // to support both frontend display and debugging.
 func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[string]interface{}) {
 	if tl.sessionID == 0 {
@@ -572,7 +633,7 @@ func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[st
 	dataJSON, _ := json.Marshal(data)
 	record := model.Interaction{
 		SessionID: tl.sessionID,
-		DraftID:   tl.draftID,
+		WorkID:    tl.workID,
 		Iteration: iteration,
 		Type:      interactionType,
 		Data:      string(dataJSON),
@@ -582,62 +643,50 @@ func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[st
 	}
 }
 
-// getWorkspaceRoot returns the root directory for all session workspaces.
+// getWorkspaceRoot returns the root directory for all session workspaces,
+// resolved to an absolute path so that paths shown to the agent in prompts
+// and used as bash CWD are unambiguous.
 func getWorkspaceRoot() string {
-	return config.Get().GetWorkspaceRoot()
+	root := config.Get().GetWorkspaceRoot()
+	if abs, err := filepath.Abs(root); err == nil {
+		return abs
+	}
+	return root
 }
 
-// getSessionWorkspace returns the workspace directory path for a session.
+// getSessionWorkspace returns the session-level workspace root directory.
+// Path: {workspaceRoot}/{session_id}
 func getSessionWorkspace(sessionID int64) string {
 	return filepath.Join(getWorkspaceRoot(), strconv.FormatInt(sessionID, 10))
 }
 
-// getMetaDir returns the meta directory path for a session.
-func getMetaDir(sessionID int64) string {
+// getSessionMetaDir returns the .meta directory path for a session.
+// Path: {workspaceRoot}/{session_id}/.meta
+func getSessionMetaDir(sessionID int64) string {
 	return filepath.Join(getSessionWorkspace(sessionID), ".meta")
 }
 
-// getOutputDir returns the output directory path for a session.
-func getOutputDir(sessionID int64) string {
+// getSessionOutputDir returns the output directory path for a session.
+// Path: {workspaceRoot}/{session_id}/output
+func getSessionOutputDir(sessionID int64) string {
 	return filepath.Join(getSessionWorkspace(sessionID), "output")
 }
 
-// initSessionWorkspace creates the workspace directory structure for a session.
-// Initializes task.md and notes.md in the .meta directory if they don't exist.
-func initSessionWorkspace(sessionID int64, rewrittenRequirement string) string {
+// initWorkspace creates the session-level workspace directory structure.
+// Initializes notes.md in the .meta directory if it doesn't exist.
+// The workspace is scoped to the session — no work-level subdirectories.
+func initWorkspace(sessionID int64) string {
 	workspace := getSessionWorkspace(sessionID)
 	metaDir := filepath.Join(workspace, ".meta")
 	os.MkdirAll(metaDir, 0755)
-
-	// Always update task.md with the latest requirement for the current round.
-	// Previous rounds may have written a different task; the new message must take precedence.
-	taskFile := filepath.Join(metaDir, "task.md")
-	os.WriteFile(taskFile, []byte(fmt.Sprintf("# Task\n\n%s", rewrittenRequirement)), 0644)
 
 	notesFile := filepath.Join(metaDir, "notes.md")
 	if _, err := os.Stat(notesFile); err != nil {
 		os.WriteFile(notesFile, []byte("# Agent Notes\n\nStructured log of agent's work progress.\n\n"), 0644)
 	}
 
-	outputDir := getOutputDir(sessionID)
+	outputDir := getSessionOutputDir(sessionID)
 	os.MkdirAll(outputDir, 0755)
 
 	return workspace
-}
-
-// readTaskMD reads the task.md content from a session's workspace.
-func readTaskMD(sessionID int64) string {
-	taskFile := filepath.Join(getMetaDir(sessionID), "task.md")
-	data, err := os.ReadFile(taskFile)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// removeSessionWorkspace removes the entire workspace directory for a session.
-func removeSessionWorkspace(sessionID int64) {
-	workspace := getSessionWorkspace(sessionID)
-	os.RemoveAll(workspace)
-	applogger.L.Info("Workspace removed", "session_id", sessionID, "path", workspace)
 }

@@ -1,17 +1,16 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Input, Button, message, Spin } from 'antd';
-import { RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { RobotOutlined } from '@ant-design/icons';
 import { Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMessageTime } from '../utils/time';
 import AgentAvatar from './AgentAvatar';
 import AgentStatusBar from './AgentStatusBar';
-import InteractionModal from './InteractionModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Message, Session, Agent, Interaction, SessionAgentStatus } from '../types';
-import { HAS_INTERACTIONS_PENDING, HAS_INTERACTIONS_EXISTS, HAS_INTERACTIONS_NONE, MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING } from '../types';
-import { messageApi, agentApi, interactionApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
+import type { Message, Session, Agent, SessionAgentStatus } from '../types';
+import { HAS_INTERACTIONS_NONE, MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING } from '../types';
+import { messageApi, agentApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
 import { logger } from '../logger';
 
 /**
@@ -26,7 +25,6 @@ interface ChatWindowProps {
  * ChatWindow component handles the complete chat interface including:
  * - Message display with loading indicator for in-progress AI responses
  * - SSE (Server-Sent Events) connection management
- * - Interaction polling for agent messages
  * - Session state transitions (temp to real)
  * 
  * Key state management:
@@ -39,11 +37,6 @@ interface ChatWindowProps {
  * 2. Frontend connects to GET /chat/stream/{sessionId} via EventSource
  * 3. Server sends 'message' event with complete AI response
  * 4. 'done' event signals completion, frontend updates message status
- * 
- * Interaction Polling:
- * - Agent messages start with has_interactions=PENDING
- * - Frontend polls GET /interactions/{msgId}/status every 2s
- * - When status changes to EXISTS or NONE, polling stops
  */
 const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) => {
   const { t } = useTranslation();
@@ -51,9 +44,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
-  const [interactionModalVisible, setInteractionModalVisible] = useState(false);
-  const [selectedInteractions, setSelectedInteractions] = useState<Interaction[]>([]);
-  const [interactionsLoading, setInteractionsLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<number>(PARTICIPANT_STATUS_IDLE);
   const [sessionAgents, setSessionAgents] = useState<SessionAgentStatus[]>([]);
   
@@ -61,7 +51,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const isStreaming = agentStatus !== PARTICIPANT_STATUS_IDLE;
 
   // Refs for managing async state and preventing race conditions
-  const pollingRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -243,71 +232,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   useEffect(() => {
     loadMessages();
   }, [loadMessages]);
-
-  /**
-   * Starts polling for interaction status on an agent message.
-   * 
-   * Interaction status values:
-   * - PENDING (0): Agent is still processing, continue polling
-   * - EXISTS (1): Agent has interactions, show view button
-   * - NONE (2): Agent has no interactions, hide interaction UI
-   * 
-   * Polling stops automatically when status changes from PENDING.
-   * 
-   * @param aiMessageId - The agent message ID to poll
-   */
-  const startPolling = (aiMessageId: number) => {
-    // Avoid duplicate polling for the same message
-    if (pollingRef.current.has(aiMessageId)) return;
-
-    const timer = setInterval(async () => {
-      try {
-        const res = await interactionApi.getInteractionStatus(aiMessageId);
-        const status = res.data.has_interactions;
-        // Stop polling when status is no longer PENDING
-        if (status !== HAS_INTERACTIONS_PENDING) {
-          setMessages(prev => prev.map(m =>
-            m.id === aiMessageId ? { ...m, has_interactions: status } : m
-          ));
-          clearInterval(timer);
-          pollingRef.current.delete(aiMessageId);
-        }
-      } catch (err) {
-        logger.error('Failed to poll interaction status:', err);
-      }
-    }, 2000); // Poll every 2 seconds
-    pollingRef.current.set(aiMessageId, timer);
-  };
-
-  // Poll for interaction status on agent messages with has_interactions=PENDING
-  useEffect(() => {
-    const pendingAgentMessages = messages.filter(
-      m => m.role === MESSAGE_ROLE_ASSISTANT && m.has_interactions === HAS_INTERACTIONS_PENDING
-    );
-
-    pendingAgentMessages.forEach(msg => {
-      startPolling(msg.id);
-    });
-
-    return () => {
-      pollingRef.current.forEach(timer => clearInterval(timer));
-      pollingRef.current.clear();
-    };
-  }, [messages]);
-
-  const handleViewInteractions = async (agentMsgId: number) => {
-    setInteractionsLoading(true);
-    setInteractionModalVisible(true);
-    try {
-      const res = await interactionApi.getInteractions(agentMsgId);
-      setSelectedInteractions(res.data.interactions);
-    } catch (err) {
-      logger.error('Failed to load interactions:', err);
-      message.error('Failed to load interaction records');
-    } finally {
-      setInteractionsLoading(false);
-    }
-  };
 
   useEffect(() => {
     if (!chatMessagesRef.current) return;
@@ -527,19 +451,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                     )}
                   </div>
                   )}
-                  {msg.role === MESSAGE_ROLE_ASSISTANT && msg.has_interactions === HAS_INTERACTIONS_EXISTS && (
-                    <div style={{ marginTop: '4px' }}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<ThunderboltOutlined />}
-                        onClick={() => handleViewInteractions(msg.id)}
-                        style={{ color: '#8b5cf6', fontSize: '12px', padding: '0 4px' }}
-                      >
-                        Interactions
-                      </Button>
-                    </div>
-                  )}
                 </div>
               ))}
             <div ref={messagesEndRef} />
@@ -596,15 +507,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
         </div>
       </div>
 
-      <InteractionModal
-        visible={interactionModalVisible}
-        loading={interactionsLoading}
-        interactions={selectedInteractions}
-        onClose={() => {
-          setInteractionModalVisible(false);
-          setSelectedInteractions([]);
-        }}
-      />
     </>
   );
 };

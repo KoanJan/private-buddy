@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/sashabaranov/go-openai/jsonschema"
+	"strings"
 
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/eventqueue"
@@ -14,75 +13,152 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-// DecisionAction represents the type of action the agent should take.
-type DecisionAction int
-
-const (
-	ActionReplyNow      DecisionAction = iota // Immediate reply (simple Q&A)
-	ActionReplyThenWork                       // Acknowledge first, then execute task
-	ActionWorkOnly                            // Execute task without pre-reply
-	ActionIgnore                              // No response needed
-	ActionDefer                               // Acknowledge but defer (future: multi-agent)
-)
-
-// Decision represents the agent's decision on how to respond to an event.
+// WorkPlan describes a single unit of work to be created by the runtime.
+// Decide produces one or more WorkPlans, each carrying the execution intent
+// (Guidance) so the Work knows what to do without re-interpreting the event.
 //
-// The decision model distinguishes five actions based on message type,
-// estimated task duration, and relevance. In 1v1 scenarios, ActionIgnore
-// is never produced — every user message deserves a response.
-type Decision struct {
-	Action         DecisionAction
-	Reasoning      string  // Why the agent made this decision
-	RelevanceScore float64 // 0-1, how relevant the message is to the agent's role
+// This design ensures the cognitive order is preserved:
+// Comprehend (understand) → Decide (judge + plan) → Work (execute the plan).
+type WorkPlan struct {
+	Type     model.WorkType `json:"type" jsonschema:"description=Work type: 1=chat for direct reply, 2=task for multi-step execution using tools,enum=1,enum=2,required"`
+	Guidance string         `json:"guidance" jsonschema:"description=What the agent should do: what to say (chat) or what to execute (task),required"`
 }
 
-// decisionOutput is the structured output schema for the LLM decision call.
-type decisionOutput struct {
-	Action         string  `json:"action"`
-	Reasoning      string  `json:"reasoning"`
-	RelevanceScore float64 `json:"relevance_score"`
+// WorkGuidance describes a directive to be sent to an existing active work.
+// It is the payload for route and cancel actions — the symmetric counterpart
+// to WorkPlan (which is the payload for create actions).
+//
+//   - Guidance: the executable directive (what the target work should do)
+//   - Reason: the cognitive context (why this decision was made, including
+//     the user's original message and inferred intent)
+//
+// Both fields are passed to the TaskLoop's LLM so it can understand the
+// full picture, not just the bare directive. This enables "appealable"
+// route and cancel — the agent processes the directive as an environment
+// event in its ReAct cycle, not as a forceful command.
+type WorkGuidance struct {
+	TargetWorkID int64  `json:"target_work_id" jsonschema:"description=The ID of the active work this directive targets"`
+	Guidance     string `json:"guidance" jsonschema:"description=What the target work should do: the new input means (route) or how to wrap up (cancel, e.g., save progress and stop),required"`
+	Reason       string `json:"reason" jsonschema:"description=WHY this decision was made. Must include the user's original message and inferred intent. This provides cognitive context to the target work.,required"`
+}
+
+// ActionType represents the type of action the Decide phase concludes.
+type ActionType int
+
+const (
+	// ActionCreate means a new Work should be created from the embedded WorkPlan.
+	ActionCreate ActionType = iota
+	// ActionRoute means the event should be routed to an existing active Work.
+	ActionRoute
+	// ActionCancel means an existing active Work should be abandoned.
+	ActionCancel
+)
+
+// Action is a single atomic decision from the Decide phase.
+// Each Action is self-contained: it carries its own type and all associated data.
+// A DecisionResult can contain multiple Actions of different types, enabling
+// compound decisions like "cancel work A and create work B".
+//
+// The payload depends on the action type:
+//   - ActionCreate:  uses WorkPlan (type + guidance for the new work)
+//   - ActionRoute:   uses WorkGuidance (target_work_id + guidance + reason)
+//   - ActionCancel:  uses WorkGuidance (target_work_id + guidance + reason)
+type Action struct {
+	Type         ActionType    `json:"type" jsonschema:"description=Action type: 0=create new work, 1=route to existing work, 2=cancel existing work,enum=0,enum=1,enum=2,required"`
+	WorkPlan     *WorkPlan     `json:"work_plan,omitempty" jsonschema:"description=When type is create(0): the work plan to instantiate"`
+	WorkGuidance *WorkGuidance `json:"work_guidance,omitempty" jsonschema:"description=When type is route(1) or cancel(2): the directive to send to the target work"`
+}
+
+// DecisionResult is the output of the Decide phase.
+// Also serves as the LLM structured output schema — the jsonschema tags
+// drive JSON Schema generation for the LLM call directly.
+//
+// The Decide phase produces a list of Actions, each self-contained with its
+// type and associated data. This allows compound decisions — for example,
+// cancelling an existing task while creating a new one, or routing to one
+// work while creating another.
+type DecisionResult struct {
+	Thoughts string   `json:"thoughts" jsonschema:"description=Your reasoning process: why you chose these actions,required"`
+	Plan     string   `json:"plan,omitempty" jsonschema:"description=Overall plan description: what will be done"`
+	Actions  []Action `json:"actions" jsonschema:"description=List of actions to take. Each action is independent and self-contained.,required"`
 }
 
 // decidePromptTemplate is the LLM prompt template for decision making.
-// Parameters: agent_name, agent_description, message_content
-const decidePromptTemplate = `You are %s, deciding how to respond to a message.
+// Parameters: agent_name, agent_description, message_content, comprehension_context, active_works_context
+const decidePromptTemplate = `You are %s, deciding how to respond to an incoming event.
 
 Role description: %s
 
-Message: %s
+Event: %s
 
-Decide the appropriate action:
-- "reply_now": Simple question, greeting, or casual chat. The agent can answer directly from its knowledge without tools or long processing.
-- "reply_then_work": A task or request that requires significant time or tool usage. The agent should acknowledge first ("Got it, I'll work on that"), then execute the task.
-- "work_only": A continuation or correction of an ongoing task. No acknowledgment needed — just continue working.
-- "ignore": The message is completely outside the agent's scope or irrelevant. (Use sparingly — most messages deserve some response.)
+%s%sDecide what to do with this event. Return a list of actions — each action is independent and self-contained.
 
-Guidelines:
-- When in doubt, prefer "reply_now" over "reply_then_work"
-- "reply_then_work" is for requests that clearly need tool usage, file operations, web searches, or multi-step execution
-- "work_only" is for follow-up instructions like "continue", "skip that step", "try a different approach"
-- "ignore" should almost never be used in 1v1 conversations
+Action types (use the integer value for the "type" field):
+1. 0 (create) — Create new work plan(s). Use when the event is a new request or topic.
+   - MUST include a "work_plan" object with "type" and "guidance" fields.
+   - Work type 1 (chat): the agent replies directly. Use for simple Q&A, greetings, casual chat.
+   - Work type 2 (task): the agent executes a multi-step task using tools, web searches, or file operations.
+   - Both type 1 + type 2: acknowledge (chat) then execute (task). These run in parallel with no ordering guarantee.
+   - When cancelling an existing work AND creating a new one in the same decision, the new work's guidance should naturally acknowledge the transition (e.g., "The user stopped the previous task of X and now wants Y...").
 
-Also rate the relevance of this message to the agent's role (0.0 to 1.0).`
+2. 1 (route) — Route the event to an existing active work listed above. Use when the event modifies, corrects, or continues an ONGOING work (e.g., "change the approach", "try again", "use a different method"). Only works currently listed in "Active works" can be routed to.
+   - MUST include "guidance" (what the new input means for the target work) and "reason" (WHY this decision was made, including the user's original message and inferred intent).
+   - The target work's agent will see both guidance and reason, enabling it to understand the full context of the change.
+
+3. 2 (cancel) — Request an existing active work to stop. Use when the event explicitly requests stopping an ONGOING work. Only works currently listed in "Active works" can be cancelled.
+   - MUST include "guidance" (what the target work should do, e.g., "Save your current progress to notes and stop") and "reason" (WHY, including the user's original message).
+   - Cancel is a request, not a forceful kill — the target work's agent receives the directive and decides how to wrap up (save notes, record reasons) before exiting.
+
+Important: "Active works" only includes works currently running. If the event refers to something that was done previously (e.g., "stop the service you started", "check the thing you did earlier"), that previous work has already finished — treat it as a NEW request (type=0 create), not a route or cancel.
+
+If no action is needed, return an empty actions list.
+
+You can return multiple actions. Examples:
+- Cancel an old task and create a new one: [{"type":2, "target_work_id":1, "guidance":"Save progress and stop", "reason":"User said 'stop searching' — they want a direct answer instead"}, {"type":0, "work_plan":{"type":1, "guidance":"The user cancelled the search task and wants a direct answer about X..."}}]
+- Route a follow-up to an existing work: [{"type":1, "target_work_id":2, "guidance":"Switch from Python to Go", "reason":"User said 'use Go instead' — they want the same task done in a different language"}]
+
+Decision rules (apply in order):
+1. If the comprehension says "needs world interaction: true", the event requires tool usage or multi-step execution. Create a task work (type=0 with work_plan.type=2). If a direct response is also expected, create both chat + task in parallel.
+2. If the event refers to an active work listed above (correction, follow-up, cancellation of an ONGOING work), use type=1 (route) or type=2 (cancel) with the corresponding work ID.
+3. If the comprehension says "needs world interaction: false" and no active work is relevant, create a single chat work (type=0 with work_plan.type=1).
+4. When in doubt and no comprehension hint is available, prefer a single chat work.
+
+Write guidance, reason, and plan in the same language as the event content.`
 
 // Decide determines how the agent should respond to an event.
 //
-// For EventTypeNewMessage, the decision is made by LLM based on message content
-// and agent role. For other event types, simple rule-based decisions are used.
+// For EventTypeNewMessage, the decision is made by LLM which can:
+//   - Create new Work(s) with WorkPlans
+//   - Route the event to an existing active Work
+//   - Cancel an existing active Work
+//   - Produce no actions (implicit ignore)
 //
+// For EventTypeWorkCompleted, the decision is rule-based: if the work was a
+// TaskWork that succeeded, create a ChatWork to inform the user. The ChatWork's
+// context assembly reads the latest DB messages, so the agent will see if the
+// user has already moved on (e.g., "never mind") and respond accordingly.
+//
+// For other event types, simple rule-based decisions are used.
 // The LLM call uses TemperatureDeterministic for consistent decision making.
-// On LLM failure, falls back to ActionReplyNow (always respond) — safe default
-// for 1v1 scenarios where ignoring a message is worse than an unnecessary reply.
-func Decide(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig) Decision {
+func Decide(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *ComprehensionResult, activeWorks []*work) DecisionResult {
 	// Non-message events use simple rule-based decisions
 	switch event.Type {
 	case eventqueue.EventTypeSessionJoined:
-		return Decision{Action: ActionDefer, Reasoning: "Agent joined session", RelevanceScore: 1.0}
+		applogger.L.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "session_joined event")
+		return DecisionResult{}
 	case eventqueue.EventTypeSessionLeft, eventqueue.EventTypeSystemNotification:
-		return Decision{Action: ActionIgnore, Reasoning: "Informational event, no response needed", RelevanceScore: 0.0}
+		applogger.L.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "non-message event")
+		return DecisionResult{}
+	case eventqueue.EventTypeWorkCompleted:
+		return decideWorkCompleted(event, agent)
 	case eventqueue.EventTypeScheduled:
-		// Scheduled events are self-wake alarms — always respond
-		return Decision{Action: ActionReplyNow, Reasoning: "Scheduled event (self-wake alarm)", RelevanceScore: 1.0}
+		applogger.L.Info("Decision made (rule-based)", "agent_id", agent.ID, "action", ActionCreate, "reason", "scheduled event")
+		return DecisionResult{
+			Actions: []Action{{
+				Type:     ActionCreate,
+				WorkPlan: &WorkPlan{Type: model.WorkTypeChat, Guidance: "Respond to the scheduled alarm as a self-reminder"},
+			}},
+		}
 	case eventqueue.EventTypeNewMessage:
 		// Proceed to LLM-based decision below
 	default:
@@ -90,123 +166,301 @@ func Decide(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent
 			"event_type", event.Type,
 			"agent_id", agent.ID,
 		)
-		return Decision{Action: ActionIgnore, Reasoning: "Unknown event type", RelevanceScore: 0.0}
+		return DecisionResult{}
 	}
 
-	// Extract message content for LLM decision
-	messageContent := extractMessageContent(event)
-	if messageContent == "" {
-		return Decision{Action: ActionReplyNow, Reasoning: "Empty message, default to reply", RelevanceScore: 0.5}
+	sameSessionWorks := filterWorksBySession(activeWorks, event.SessionID)
+
+	// Use LLM to decide — it can create, route, cancel, or produce no actions
+	return decideWithLLM(ctx, event, agent, llmConfig, comprehension, sameSessionWorks)
+}
+
+// decideWorkCompleted handles EventTypeWorkCompleted with a rule-based decision.
+//
+// When a TaskWork completes successfully, the agent should inform the user.
+// This creates a ChatWork whose ExecuteChat reads the latest DB messages —
+// if the user has already said "never mind" or moved on, the agent sees that
+// context and responds naturally (e.g., "I already finished it!").
+//
+// ChatWork completion produces no action — chat works are one-shot replies
+// that don't need follow-up.
+// Task work failure also creates a ChatWork to inform the user of the failure.
+func decideWorkCompleted(event eventqueue.AgentEvent, agent *model.Agent) DecisionResult {
+	payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload)
+	if !ok || payload == nil {
+		applogger.L.Error("WorkCompleted event has invalid payload", "agent_id", agent.ID)
+		return DecisionResult{}
 	}
 
-	// LLM-based decision for new messages
+	// Only TaskWork completion needs a follow-up chat.
+	// ChatWork completion is a one-shot reply — no follow-up needed.
+	if payload.WorkType != int(model.WorkTypeTask) {
+		applogger.L.Info("WorkCompleted: ChatWork, no follow-up needed",
+			"agent_id", agent.ID, "work_id", payload.WorkID)
+		return DecisionResult{}
+	}
+
+	var guidance string
+	if payload.Status == "success" {
+		guidance = fmt.Sprintf("The task has been completed. Original task: %s. Inform the user of the result.", payload.Guidance)
+	} else {
+		guidance = fmt.Sprintf("The task failed. Original task: %s. Inform the user of the failure and reason.", payload.Guidance)
+	}
+
+	applogger.L.Info("Decision made (rule-based, work completed)",
+		"agent_id", agent.ID,
+		"work_id", payload.WorkID,
+		"status", payload.Status,
+		"action", ActionCreate,
+	)
+
+	return DecisionResult{
+		Actions: []Action{{
+			Type:     ActionCreate,
+			WorkPlan: &WorkPlan{Type: model.WorkTypeChat, Guidance: guidance},
+		}},
+	}
+}
+
+// decideWithLLM uses LLM to decide whether to create new work or route to an existing one.
+func decideWithLLM(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *ComprehensionResult, sameSessionWorks []*work) DecisionResult {
+	// Validate event has content before calling LLM
+	eventDescription := event.FormatDescription()
+	if eventDescription == "" {
+		applogger.L.Error("Decision: event has empty content, ignoring",
+			"agent_id", agent.ID,
+			"session_id", event.SessionID,
+		)
+		return DecisionResult{}
+	}
+
+	comprehensionContext := buildComprehensionContext(comprehension)
+	activeWorksContext := buildActiveWorksContext(sameSessionWorks)
+
 	agentDescription := agent.CharacterSettings
 	if agent.Description != "" {
 		agentDescription = agent.Description
 	}
 
-	prompt := fmt.Sprintf(decidePromptTemplate, agent.Name, agentDescription, messageContent)
+	prompt := fmt.Sprintf(decidePromptTemplate, agent.Name, agentDescription, eventDescription, comprehensionContext, activeWorksContext)
 
+	// Active work IDs are listed in the prompt via buildActiveWorksContext so the
+	// LLM knows which values are valid for target_work_id. We do NOT use schema enum
+	// — target_work_id's valid value set is runtime data (currently active works),
+	// not a type-level constraint. Application-layer validation in filterValidActions
+	// catches invalid work IDs with meaningful error logging.
 	chatModel := llm.NewChatModelWithTemperature(
 		llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic,
 	)
+
+	// Generate schema directly from DecisionResult — no separate LLM output type needed.
+	schema := llm.GenerateSchema[DecisionResult]()
 
 	result, err := chatModel.ChatWithJSONSchema(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "Decision",
-		Description: "Agent's decision on how to respond to a message",
+		Description: "Agent's decision on how to handle a message",
 		Strict:      true,
-		Schema: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"action": {
-					Type: jsonschema.String,
-					Enum: []string{"reply_now", "reply_then_work", "work_only", "ignore"},
-					Description: "The action the agent should take: " +
-						"'reply_now' for simple Q&A, " +
-						"'reply_then_work' for tasks needing acknowledgment then execution, " +
-						"'work_only' for task continuations, " +
-						"'ignore' for irrelevant messages",
-				},
-				"reasoning": {
-					Type:        jsonschema.String,
-					Description: "Brief explanation of why this action was chosen",
-				},
-				"relevance_score": {
-					Type:        jsonschema.Number,
-					Description: "How relevant the message is to the agent's role, from 0.0 (irrelevant) to 1.0 (highly relevant)",
-				},
-			},
-			Required: []string{"action", "reasoning", "relevance_score"},
-		},
+		Schema:      schema,
 	})
 
 	if err != nil {
-		applogger.L.Error("Decision LLM call failed, falling back to reply_now",
+		applogger.L.Error("Decision LLM call failed, ignoring",
 			"agent_id", agent.ID,
 			"error", err,
 		)
-		return Decision{Action: ActionReplyNow, Reasoning: "LLM decision failed, safe fallback", RelevanceScore: 0.5}
+		return DecisionResult{}
 	}
 
-	var output decisionOutput
-	if err := json.Unmarshal([]byte(result), &output); err != nil {
-		applogger.L.Error("Decision LLM output parse failed, falling back to reply_now",
+	var decision DecisionResult
+	if err := json.Unmarshal([]byte(result), &decision); err != nil {
+		applogger.L.Error("Decision LLM output parse failed, ignoring",
 			"agent_id", agent.ID,
 			"error", err,
 		)
-		return Decision{Action: ActionReplyNow, Reasoning: "LLM output parse failed, safe fallback", RelevanceScore: 0.5}
-	}
-
-	action := parseAction(output.Action)
-	relevance := output.RelevanceScore
-	if relevance < 0 {
-		relevance = 0
-	}
-	if relevance > 1 {
-		relevance = 1
+		return DecisionResult{}
 	}
 
 	applogger.L.Info("Decision made",
 		"agent_id", agent.ID,
-		"action", output.Action,
-		"reasoning", output.Reasoning,
-		"relevance", relevance,
+		"thoughts", decision.Thoughts,
+		"action_count", len(decision.Actions),
 	)
 
-	return Decision{
-		Action:         action,
-		Reasoning:      output.Reasoning,
-		RelevanceScore: relevance,
+	// Validate the LLM's decision — invalid actions are removed
+	validActions := filterValidActions(decision.Actions, sameSessionWorks)
+	if len(validActions) == 0 {
+		applogger.L.Error("Decision: no valid actions, ignoring")
+		return DecisionResult{}
+	}
+
+	return DecisionResult{
+		Thoughts: decision.Thoughts,
+		Plan:     decision.Plan,
+		Actions:  validActions,
 	}
 }
 
-// parseAction converts a string action name to DecisionAction.
-func parseAction(s string) DecisionAction {
-	switch s {
-	case "reply_now":
-		return ActionReplyNow
-	case "reply_then_work":
-		return ActionReplyThenWork
-	case "work_only":
-		return ActionWorkOnly
-	case "ignore":
-		return ActionIgnore
-	default:
-		applogger.L.Warn("Unknown decision action string, defaulting to reply_now", "action", s)
-		return ActionReplyNow
+// filterValidActions filters out invalid actions from the LLM decision.
+// Pure validation — no modifications, only checks and logging.
+func filterValidActions(actions []Action, sameSessionWorks []*work) []Action {
+	var valid []Action
+	for _, action := range actions {
+		switch action.Type {
+		case ActionRoute:
+			if isValidRouteAction(action, sameSessionWorks) {
+				valid = append(valid, action)
+			}
+		case ActionCreate:
+			if isValidCreateAction(action) {
+				valid = append(valid, action)
+			}
+		case ActionCancel:
+			if isValidCancelAction(action, sameSessionWorks) {
+				valid = append(valid, action)
+			}
+		default:
+			applogger.L.Error("Decision: unknown action type, skipping",
+				"action_type", action.Type,
+			)
+		}
 	}
+	return valid
 }
 
-// extractMessageContent extracts the message content from an event payload.
-func extractMessageContent(event eventqueue.AgentEvent) string {
-	if event.Payload == nil {
+// isValidRouteAction checks whether a route action has a valid WorkGuidance
+// and its target work exists and is a TaskWork.
+func isValidRouteAction(action Action, sameSessionWorks []*work) bool {
+	if action.WorkGuidance == nil {
+		applogger.L.Error("Decision route: missing work_guidance, skipping")
+		return false
+	}
+	if action.WorkGuidance.Guidance == "" {
+		applogger.L.Error("Decision route: missing guidance, skipping")
+		return false
+	}
+	if action.WorkGuidance.Reason == "" {
+		applogger.L.Error("Decision route: missing reason, skipping")
+		return false
+	}
+	for _, w := range sameSessionWorks {
+		if w.ID == action.WorkGuidance.TargetWorkID {
+			if w.plan.Type != model.WorkTypeTask {
+				applogger.L.Error("Decision route: target is not TaskWork, skipping",
+					"target_work_id", action.WorkGuidance.TargetWorkID,
+					"work_type", w.plan.Type,
+				)
+				return false
+			}
+			return true
+		}
+	}
+	applogger.L.Error("Decision route: target work not found, skipping",
+		"target_work_id", action.WorkGuidance.TargetWorkID,
+	)
+	return false
+}
+
+// isValidCreateAction checks whether a create action has a work plan with guidance.
+func isValidCreateAction(action Action) bool {
+	if action.WorkPlan == nil {
+		applogger.L.Error("Decision create: missing work_plan, skipping")
+		return false
+	}
+	if action.WorkPlan.Guidance == "" {
+		applogger.L.Error("Decision create: missing guidance, skipping")
+		return false
+	}
+	return true
+}
+
+// isValidCancelAction checks whether a cancel action has a valid WorkGuidance
+// with required guidance and reason fields, and its target work exists.
+// Cancel is now a directive sent to the work (not a forceful kill), so it
+// must carry guidance (what to do) and reason (why).
+func isValidCancelAction(action Action, sameSessionWorks []*work) bool {
+	if action.WorkGuidance == nil {
+		applogger.L.Error("Decision cancel: missing work_guidance, skipping")
+		return false
+	}
+	if action.WorkGuidance.Guidance == "" {
+		applogger.L.Error("Decision cancel: missing guidance, skipping")
+		return false
+	}
+	if action.WorkGuidance.Reason == "" {
+		applogger.L.Error("Decision cancel: missing reason, skipping")
+		return false
+	}
+	for _, w := range sameSessionWorks {
+		if w.ID == action.WorkGuidance.TargetWorkID {
+			return true
+		}
+	}
+	applogger.L.Error("Decision cancel: target work not found, skipping",
+		"target_work_id", action.WorkGuidance.TargetWorkID,
+	)
+	return false
+}
+
+// filterWorksBySession returns works that belong to the given session.
+func filterWorksBySession(works []*work, sessionID int64) []*work {
+	var result []*work
+	for _, w := range works {
+		if w.sessionID == sessionID {
+			result = append(result, w)
+		}
+	}
+	return result
+}
+
+// buildActiveWorksContext formats active TaskWorks for the Decide prompt.
+// Only TaskWorks are shown — ChatWorks are one-shot and cannot be routed to
+// or cancelled (no iteration loop), so listing them would mislead the LLM
+// into producing invalid route/cancel actions.
+func buildActiveWorksContext(works []*work) string {
+	var parts []string
+	for _, w := range works {
+		if w.plan.Type != model.WorkTypeTask {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("- [Work #%d, type=task] %s", w.ID, w.plan.Guidance))
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	type messagePayload interface{ GetMessageContent() string }
-	if mp, ok := event.Payload.(messagePayload); ok {
-		return mp.GetMessageContent()
+	return fmt.Sprintf("Active works:\n%s\n\n", strings.Join(parts, "\n"))
+}
+
+// buildComprehensionContext formats comprehension results for the Decide prompt.
+// This provides the LLM with the agent's understanding of the message,
+// enabling informed decision-making instead of guessing from raw text.
+func buildComprehensionContext(comprehension *ComprehensionResult) string {
+	if comprehension == nil {
+		return ""
 	}
-	return ""
+
+	var parts []string
+
+	if comprehension.QueryType != "" {
+		parts = append(parts, fmt.Sprintf("Query type: %s", comprehension.QueryType))
+	}
+
+	if comprehension.PersonState != nil && comprehension.PersonState.Purpose != "" {
+		parts = append(parts, fmt.Sprintf("Inferred intent: %s", comprehension.PersonState.Purpose))
+	}
+
+	if comprehension.NeedsWorldInteraction {
+		parts = append(parts, "Needs world interaction: true (message involves tools, external data, or multi-step execution)")
+	}
+
+	if comprehension.NeedsClarification {
+		parts = append(parts, "Needs clarification: true (query is vague)")
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("Comprehension analysis:\n%s\n\n", strings.Join(parts, "\n"))
 }

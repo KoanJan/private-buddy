@@ -6,63 +6,26 @@ import (
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
+	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/vectorstore"
 
 	applogger "private-buddy-server/internal/logger"
 )
 
-// Segment source constants
-const (
-	SourceChatHistory = iota + 1
-	SourceKnowledgeBase
-)
-
-// Segment represents a retrieved context segment used in prompt assembly.
-// MessageID is set for chat-history segments so the memory system can
-// locate the corresponding observation and apply a retrieval hit.
-type Segment struct {
-	MessageID int64  `json:"message_id"`
-	Content   string `json:"content"`
-	Source    int    `json:"source"`
-}
-
 // RetrievalResult holds all context components retrieved for chat processing.
 type RetrievalResult struct {
-	RecentMessages   []model.Message `json:"recent_messages"`
-	RelevantSegments []Segment       `json:"relevant_segments"`
-	SummaryVersion   int             `json:"summary_version"`
-	Narrative        string          `json:"narrative"`
-	HasEmbedding     bool            `json:"has_embedding"`
+	RecentMessages   []model.Message     `json:"recent_messages"`
+	RelevantSegments []comprehend.Segment `json:"relevant_segments"`
+	SummaryVersion   int                 `json:"summary_version"`
+	Narrative        string              `json:"narrative"`
+	HasEmbedding     bool                `json:"has_embedding"`
 }
 
 // getEmbeddingConfig returns the global embedding config.
 // Returns nil if no config exists.
 func getEmbeddingConfig() *model.EmbeddingConfig {
 	return service.GetEmbeddingConfig()
-}
-
-// GetRecentMessages returns recent messages from a session in chronological order.
-// Messages are fetched in DESC order by ID and then reversed to ASC order.
-// If status >= 0, only messages with that status are returned; -1 means no filter.
-func GetRecentMessages(sessionID int64, limit int, status int) []model.Message {
-	query := database.DB.Model(&model.Message{}).Where("session_id = ?", sessionID)
-
-	if status >= 0 {
-		query = query.Where("status = ?", status)
-	}
-
-	var messages []model.Message
-	if err := query.Order("id DESC").Limit(limit).Find(&messages).Error; err != nil {
-		applogger.L.Warn("GetRecentMessages: failed to load messages", "error", err)
-		return nil
-	}
-
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
-	}
-
-	return messages
 }
 
 // buildSummaryAndNarrative extracts summary version and cached narrative from a HistoricalSummary.
@@ -75,16 +38,26 @@ func buildSummaryAndNarrative(latestSummary *model.HistoricalSummary) (int, stri
 	return latestSummary.Version, latestSummary.Narrative
 }
 
+// getLatestSummaryByID returns the latest summary for a (session, agent).
+func getLatestSummaryByID(sessionID, agentID int64) *model.HistoricalSummary {
+	var summary model.HistoricalSummary
+	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).Order("version DESC").First(&summary).Error
+	if err != nil {
+		return nil
+	}
+	return &summary
+}
+
 // GetContextWithoutRAG retrieves context without RAG retrieval.
 // Used for queries that don't need RAG (e.g., greetings, chitchat).
 // Retrieves recent messages, latest summary, and cached narrative.
 func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
-		RelevantSegments: []Segment{},
+		RelevantSegments: []comprehend.Segment{},
 	}
 
-	result.RecentMessages = GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
+	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
 	latestSummary := getLatestSummaryByID(sessionID, agentID)
 	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
@@ -101,11 +74,11 @@ func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalR
 func GetContextForChat(ctx context.Context, sessionID, agentID int64, query string, recentCount int, ragCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
-		RelevantSegments: []Segment{},
+		RelevantSegments: []comprehend.Segment{},
 		HasEmbedding:     false,
 	}
 
-	result.RecentMessages = GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
+	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
 	embeddingConfig := getEmbeddingConfig()
 	if embeddingConfig != nil {
@@ -118,10 +91,10 @@ func GetContextForChat(ctx context.Context, sessionID, agentID int64, query stri
 				applogger.L.Error("RAG retrieval failed", "error", err)
 			} else {
 				for _, sr := range searchResults {
-					result.RelevantSegments = append(result.RelevantSegments, Segment{
+					result.RelevantSegments = append(result.RelevantSegments, comprehend.Segment{
 						MessageID: sr.MessageID,
 						Content:   sr.Content,
-						Source:    SourceChatHistory,
+						Source:    comprehend.SourceChatHistory,
 					})
 				}
 				applogger.L.Info("RAG retrieved segments",

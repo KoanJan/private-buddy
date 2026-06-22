@@ -28,6 +28,8 @@ import (
 //
 // The notes are stored in a system-managed location (.meta/notes.md) that the
 // agent should not directly access. Use this tool to interact with notes.
+//
+// Workspace is scoped by session_id — one notes.md per session.
 type WriteNotesTool struct {
 	sessionID     int64 // Session ID for determining the workspace path
 	workspaceRoot string
@@ -35,6 +37,7 @@ type WriteNotesTool struct {
 }
 
 // NewWriteNotesTool creates a WriteNotesTool for the given session.
+// The workspace path is derived from session_id for session-level notes.
 func NewWriteNotesTool(sessionID int64, workspaceRoot string, notesMaxChars int) *WriteNotesTool {
 	return &WriteNotesTool{
 		sessionID:     sessionID,
@@ -131,6 +134,7 @@ func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 }
 
 // getMetaDir returns the .meta directory path for this session's workspace.
+// Path: {workspaceRoot}/{session_id}/.meta
 func (w *WriteNotesTool) getMetaDir() string {
 	return filepath.Join(w.workspaceRoot, strconv.FormatInt(w.sessionID, 10), ".meta")
 }

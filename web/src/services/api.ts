@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { logger } from '../logger';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, Interaction, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile } from '../types';
 
 declare global {
   interface Window {
@@ -160,13 +160,6 @@ export const agentApi = {
   create: (data: Partial<Agent>) => api.post<Agent>('/agents', data),
   update: (id: number, data: Partial<Agent>) => api.put<Agent>(`/agents/${id}`, data),
   delete: (id: number) => api.delete(`/agents/${id}`),
-};
-
-export const interactionApi = {
-  getInteractionStatus: (messageId: number) =>
-    api.get<{ has_interactions: number }>(`/messages/${messageId}/interaction-status`),
-  getInteractions: (agentMsgId: number) =>
-    api.get<{ interactions: Interaction[] }>('/interactions', { params: { agent_msg_id: agentMsgId } }),
 };
 
 export const searchConfigApi = {

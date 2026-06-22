@@ -15,6 +15,7 @@
 package eventqueue
 
 import (
+	"fmt"
 	"sync"
 
 	applogger "private-buddy-server/internal/logger"
@@ -33,6 +34,7 @@ const (
 	EventTypeSessionLeft                              // Agent was removed from a session
 	EventTypeSystemNotification                       // System-level notification
 	EventTypeScheduled                                // Scheduled event (self-wake alarm) fired
+	EventTypeWorkCompleted                            // A Work (task/chat) completed execution
 )
 
 // AgentEvent represents an event that should be processed by an agent.
@@ -40,6 +42,34 @@ type AgentEvent struct {
 	Type      AgentEventType
 	SessionID int64
 	Payload   any // Type depends on the event type
+}
+
+// FormatDescription formats the event with a type-specific prefix and its payload content.
+// Different event sources carry different semantics — the LLM needs to
+// distinguish between a user message and a self-triggered alarm.
+func (e AgentEvent) FormatDescription() string {
+	switch e.Type {
+	case EventTypeNewMessage:
+		p, ok := e.Payload.(*NewMessagePayload)
+		if !ok || p == nil {
+			return "[New message]"
+		}
+		return fmt.Sprintf("[New message] %s", p.MessageContent)
+	case EventTypeScheduled:
+		p, ok := e.Payload.(*ScheduledEventPayload)
+		if !ok || p == nil {
+			return "[Scheduled alarm]"
+		}
+		return fmt.Sprintf("[Scheduled alarm] %s", p.Message)
+	case EventTypeWorkCompleted:
+		p, ok := e.Payload.(*WorkCompletedPayload)
+		if !ok || p == nil {
+			return "[Work completed]"
+		}
+		return fmt.Sprintf("[Work completed] %s (status: %s)", p.Guidance, p.Status)
+	default:
+		return ""
+	}
 }
 
 // NewMessagePayload is the payload type for EventTypeNewMessage events.
@@ -77,6 +107,23 @@ type ScheduledEventPayload struct {
 // GetMessageContent returns the alarm message for description extraction.
 func (p *ScheduledEventPayload) GetMessageContent() string {
 	return p.Message
+}
+
+// WorkCompletedPayload is the payload type for EventTypeWorkCompleted events.
+// When a Work finishes execution (success or failure), the agent receives this
+// event so it can decide whether to inform the user or take other action.
+//
+// This represents the agent's self-perception: "I just finished doing X."
+// The agent processes it through the same Comprehend→Decide pipeline as
+// external events, ensuring consistent cognitive handling.
+type WorkCompletedPayload struct {
+	WorkID          int64  // ID of the completed work
+	WorkType        int    // model.WorkTypeChat or model.WorkTypeTask
+	Guidance        string // The original guidance (execution intent) of the work
+	Status          string // "success" or "failure"
+	TaskOutput      string // Task execution output (for TaskWork success)
+	TaskError       string // Task execution error (for TaskWork failure)
+	TriggerMessageID int64 // The user message that originally triggered this work
 }
 
 // ---------------------------------------------------------------------------

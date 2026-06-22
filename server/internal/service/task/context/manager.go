@@ -5,7 +5,6 @@
 //
 // Fixed part (always fully included):
 //   - system prompt: basic rules + context information
-//   - Task content: task requirements (system-managed)
 //   - Notes content: agent's structured working notes (system-managed)
 //
 // Dynamic part (window-controlled):
@@ -28,13 +27,12 @@ import (
 // ContextManager manages the internal message history for a single task execution.
 //
 // Window applies to the dynamic part only. The fixed part
-// (system prompt with context info, Task, Notes) is always
+// (system prompt with context info, Notes) is always
 // fully included because these are essential prerequisites for
 // the agent's work.
 type ContextManager struct {
 	systemPrompt    string          // Static system prompt (basic rules)
 	iterationWindow int             // Number of recent iterations to keep visible
-	taskContent     string          // Full content of task requirements
 	notesContent    string          // Full content of agent's notes
 	totalIterations int             // Total iterations accumulated
 	dynamicMessages [][]llm.Message // Groups of (assistant_msg + tool_results) per iteration
@@ -43,11 +41,10 @@ type ContextManager struct {
 // NewContextManager creates a new ContextManager.
 // Context information will be appended to the system prompt at build time,
 // so the agent always sees it as part of the system-level instructions.
-func NewContextManager(systemPrompt string, iterationWindow int, taskContent, notesContent string) *ContextManager {
+func NewContextManager(systemPrompt string, iterationWindow int, notesContent string) *ContextManager {
 	return &ContextManager{
 		systemPrompt:    systemPrompt,
 		iterationWindow: iterationWindow,
-		taskContent:     taskContent,
 		notesContent:    notesContent,
 	}
 }
@@ -78,9 +75,8 @@ func (cm *ContextManager) AddIteration(assistantMsg llm.Message, toolResults []l
 //
 // Order:
 //  1. system prompt (basic rules + context information)
-//  2. user: Task content
-//  3. user: Notes content
-//  4. dynamic messages (recent iterations within window)
+//  2. user: Notes content
+//  3. dynamic messages (recent iterations within window)
 //
 // Window applies to dynamic part only; fixed part is always fully included.
 func (cm *ContextManager) BuildMessages() []llm.Message {
@@ -98,7 +94,6 @@ func (cm *ContextManager) BuildMessages() []llm.Message {
 
 	messages := []llm.Message{
 		{Role: "system", Content: fullSystemPrompt},
-		{Role: "user", Content: fmt.Sprintf("[Task]\n%s", cm.taskContent)},
 		{Role: "user", Content: fmt.Sprintf("[Your Notes]\n%s", cm.notesContent)},
 	}
 

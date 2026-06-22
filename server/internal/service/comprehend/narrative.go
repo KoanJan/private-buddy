@@ -1,4 +1,4 @@
-package chatcontext
+package comprehend
 
 import (
 	"context"

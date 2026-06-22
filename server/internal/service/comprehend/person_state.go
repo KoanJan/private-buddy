@@ -1,12 +1,10 @@
-package chatcontext
+package comprehend
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/sashabaranov/go-openai/jsonschema"
 
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
@@ -28,10 +26,13 @@ Recent conversation:
 Analyze their emotional tone, conversational purpose, and any clues about their physical situation.
 
 Also determine if their request requires interaction with the external world:
-- Set needs_world_interaction=true if the request needs: real-time information (news, weather, stock prices), 
-  file operations (create, modify, delete files), code execution, web searches, or any tool usage.
-- Set needs_world_interaction=false if the LLM can answer directly from its training data 
-  (general knowledge, advice, explanations, casual conversation).
+- Set needs_world_interaction=true if the request requires performing actions beyond conversation: 
+  using tools, accessing real-time information (news, weather, stock prices), 
+  file operations (create, modify, delete files), code execution, web searches, 
+  or any operation that affects the external world.
+- Set needs_world_interaction=false if the request can be fulfilled by conversation alone: 
+  answering questions, giving advice, explaining concepts, casual chat, 
+  expressing opinions, or any response that only requires reasoning and language.
 
 IMPORTANT: You are the person named above(%s). Questions directed at you (e.g., "Are you asleep?", "How are you?", "What do you think?") are casual chat and do NOT require world interaction. Only set needs_world_interaction=true when the person explicitly asks you to perform actions that require tools or external data.`
 
@@ -48,10 +49,10 @@ IMPORTANT: You are the person named above(%s). Questions directed at you (e.g., 
 //  1. Guide LLM structured output generation
 //  2. Provide natural language fragments for prompt template assembly
 type PersonState struct {
-	Emotion               string `json:"emotion"`
-	Purpose               string `json:"purpose"`
-	Situation             string `json:"situation"`
-	NeedsWorldInteraction bool   `json:"needs_world_interaction"`
+	Emotion               string `json:"emotion" jsonschema:"description=The person's current emotional state: calm for relaxed or neutral, anxious for worried or uneasy, frustrated for annoyed or impatient (e.g. repeated failed attempts), urgent for time-pressured or emergency, curious for inquisitive or exploratory,enum=calm,enum=anxious,enum=frustrated,enum=urgent,enum=curious,required"`
+	Purpose               string `json:"purpose" jsonschema:"description=The person's current conversational goal: seek_help for needing a solution or fix, seek_advice for wanting recommendations or guidance, seek_confirmation for validating a decision or understanding, express_feeling for sharing emotions without expecting solutions, casual_chat for social or non-goal-oriented conversation,enum=seek_help,enum=seek_advice,enum=seek_confirmation,enum=express_feeling,enum=casual_chat,required"`
+	Situation             string `json:"situation" jsonschema:"description=Brief natural language description of the person's physical context if inferable from the conversation, such as time of day, device, environment, or activity. Use unknown if not inferable. Examples: at work on desktop, late evening on mobile, in a meeting, commuting,required"`
+	NeedsWorldInteraction bool   `json:"needs_world_interaction" jsonschema:"description=Whether the request requires actions beyond conversation: true if it needs tools, real-time information, file operations, or any operation affecting the external world; false if it can be fulfilled by conversation alone (reasoning, advice, explanations, casual chat),required"`
 }
 
 // emotionDescriptions maps emotion codes to natural language descriptions.
@@ -120,6 +121,8 @@ func formatRecentMessages(recentMessages []model.Message, userName, agentName st
 // Uses TemperatureDeterministic for consistent, deterministic outputs.
 // userName is the actual name of the person being talked to, agentName is the agent's own name.
 // characterSettings provides the agent's role context to prevent misinterpretation of casual questions.
+// activeWorksSummary describes the agent's currently running works, enabling self-awareness
+// (e.g., understanding "change the approach" refers to an ongoing task).
 // Returns nil if inference fails, allowing the chat flow to continue without person state.
 func InferPersonState(
 	ctx context.Context,
@@ -128,6 +131,7 @@ func InferPersonState(
 	userName string,
 	agentName string,
 	characterSettings string,
+	activeWorksSummary string,
 ) *PersonState {
 	if len(recentMessages) == 0 {
 		return nil
@@ -138,46 +142,20 @@ func InferPersonState(
 	dialogText := formatRecentMessages(recentMessages, userName, agentName)
 	prompt := fmt.Sprintf(personStateInferencePrompt, agentName, characterSettings, dialogText, agentName)
 
+	// Inject active works context for self-awareness.
+	// When the agent knows what it is currently doing, it can correctly
+	// interpret references like "change the approach" or "stop that".
+	if activeWorksSummary != "" {
+		prompt += "\n\n" + activeWorksSummary
+	}
+
 	result, err := chatModel.ChatWithJSONSchema(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "PersonState",
 		Description: "Infer the person's current state from conversation context",
 		Strict:      true,
-		Schema: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"emotion": {
-					Type: jsonschema.String,
-					Enum: []string{"calm", "anxious", "frustrated", "urgent", "curious"},
-					Description: "The person's current emotional state: " +
-						"'calm' for relaxed or neutral, " +
-						"'anxious' for worried or uneasy, " +
-						"'frustrated' for annoyed or impatient (e.g. repeated failed attempts), " +
-						"'urgent' for time-pressured or emergency, " +
-						"'curious' for inquisitive or exploratory",
-				},
-				"purpose": {
-					Type: jsonschema.String,
-					Enum: []string{"seek_help", "seek_advice", "seek_confirmation", "express_feeling", "casual_chat"},
-					Description: "The person's current conversational goal: " +
-						"'seek_help' for needing a solution or fix, " +
-						"'seek_advice' for wanting recommendations or guidance, " +
-						"'seek_confirmation' for validating a decision or understanding, " +
-						"'express_feeling' for sharing emotions without expecting solutions, " +
-						"'casual_chat' for social or non-goal-oriented conversation",
-				},
-				"situation": {
-					Type:        jsonschema.String,
-					Description: "Brief natural language description of the person's physical context if inferable from the conversation, such as time of day, device, environment, or activity. Use 'unknown' if not inferable. Examples: 'at work on desktop', 'late evening on mobile', 'in a meeting', 'commuting'",
-				},
-				"needs_world_interaction": {
-					Type:        jsonschema.Boolean,
-					Description: "Whether the person's request requires interaction with the external world: true if the request needs tools, real-time information, file operations, or any action beyond the LLM's parametric knowledge; false if the LLM can answer directly from its training data",
-				},
-			},
-			Required: []string{"emotion", "purpose", "situation", "needs_world_interaction"},
-		},
+		Schema:      llm.GenerateSchema[PersonState](),
 	})
 
 	if err != nil {

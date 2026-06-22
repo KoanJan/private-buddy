@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.18] - 2026-06-23
+
+### Added
+- **Cognitive Order Refactoring**: restructured the agent pipeline from "Decide → Execute (mixed)" to "Comprehend → Decide → Execute" three-stage architecture, ensuring decisions are always based on complete comprehension results
+- **Compound Decision Model**: Decide phase can now produce multiple actions (create/route/cancel) in a single decision, enabling compound decisions like "cancel work A and create work B"
+- **Guidance Channel**: running tasks can receive new directives during execution for mid-course corrections
+- **Delivery Guidance**: prompt-level soft guidance with zero-friction delivery principle — agents determine deliverable form and provide absolute paths or direct content
+
+### Changed
+- **Guidance Replaces Rewrite**: the Comprehend-Decide pipeline now produces guidance that directly becomes the task requirement, eliminating the old rewrite step
+- **Interaction Records by Work**: interaction records now grouped by work instead of draft, with a new record type for route/cancel directives
+
+### Removed
+- **task.md Mechanism**: removed system-managed task.md — guidance in the execution directive covers this functionality
+- **DeliveryType Preset**: removed hardcoded delivery type selection — replaced by flexible delivery guidance
+- **Interaction API**: removed interaction query endpoints and frontend modal — interaction records are now an internal execution trace
+
+### Fixed
+- **Enum Column Convention**: migrated all enum columns from text to integer across 4 tables, enforcing the project convention that all enums must use int
+
+
 ## [0.0.17] - 2026-06-18
 
 ### Added

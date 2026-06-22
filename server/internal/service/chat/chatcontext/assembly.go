@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -22,6 +23,8 @@ import (
 //   - Metadata (message numbers) preserved for debugging and context clarity
 //   - User state placed in instruction area (after narrative, before response directive)
 //     to preserve narrative flow while guiding response strategy
+//   - Guidance (from Decide phase) placed after person state, before response directive,
+//     representing the agent's self-instruction on what to do
 const oneBigMessageTemplate = `%s%s%sBackground context from earlier in the conversation (messages 1-%d):
 
 %s
@@ -34,7 +37,7 @@ Recent conversation (messages %d-%d):
 
 ---
 
-%s%sRespond to the person you are talking to. Do not use parenthetical action descriptions or non-verbal content.`
+%s%s%sRespond to the person you are talking to. Use the same language as the conversation. Do not use parenthetical action descriptions or non-verbal content.`
 
 // Template for simple context without background story (V < N case).
 // Used when there are not enough messages to generate a summary.
@@ -45,7 +48,7 @@ const oneBigMessageNoStoryTemplate = `%s%s%sConversation record (messages %d-%d)
 
 ---
 
-%s%s%sRespond to the person you are talking to. Do not use parenthetical action descriptions or non-verbal content.`
+%s%s%s%sRespond to the person you are talking to. Use the same language as the conversation. Do not use parenthetical action descriptions or non-verbal content.`
 
 // TaskResultForAssembly represents the task execution result for context assembly.
 // Mirrors Python's TaskResult DTO used in context assembly.
@@ -80,7 +83,7 @@ func FormatEntityProfileSection(narrative string, entityName string) string {
 // Segments are RAG-retrieved historical fragments placed with narrative transition,
 // since they could not be fused into the pre-generated cached narrative.
 // Returns "Some additional details from earlier conversations...\n{items}\n\n" or empty string.
-func formatSegmentsSection(relevantSegments []Segment) string {
+func formatSegmentsSection(relevantSegments []comprehend.Segment) string {
 	if len(relevantSegments) == 0 {
 		return ""
 	}
@@ -88,7 +91,7 @@ func formatSegmentsSection(relevantSegments []Segment) string {
 	var segmentsText []string
 	for _, seg := range relevantSegments {
 		sourceLabel := "ChatHistory"
-		if seg.Source == SourceKnowledgeBase {
+		if seg.Source == comprehend.SourceKnowledgeBase {
 			sourceLabel = "KnowledgeBase"
 		}
 		segmentsText = append(segmentsText, fmt.Sprintf("- (%s) %s", sourceLabel, seg.Content))
@@ -108,10 +111,23 @@ func formatPersonStateInstruction(personStateDescription string) string {
 	return fmt.Sprintf("%s\nAdjust your response tone, detail level, and strategy accordingly.\n\n", personStateDescription)
 }
 
+// formatGuidanceSection formats the Decide phase's execution intent as a
+// self-instruction section. Placed after person state and before the response
+// directive, representing the agent's understanding of what it should do.
+// This is the agent's internal intention — not an external command, but a
+// self-directed plan formed after comprehending the situation.
+// Returns "[Your Intention]\n{guidance}\nCarry out the above intention in your response.\n\n" or empty string.
+func formatGuidanceSection(guidance string) string {
+	if guidance == "" {
+		return ""
+	}
+	return fmt.Sprintf("[Your Intention]\n%s\nCarry out the above intention in your response.\n\n", guidance)
+}
+
 // formatTaskResultSection formats agent delivery section for the prompt.
 // Provides execution status and results for LLM to formulate response:
-//   - success: "[Task Execution Result]\nThe following task was completed successfully:\n\n{result}\n\n---\n\n"
-//   - failure: "[Task Execution Interrupted]\nThe task could not be completed.\n\nReason: {reason}\n\n---\n\n"
+//   - success: includes result content and delivery guidance
+//   - failure: includes reason and progress notes
 func formatTaskResultSection(taskResult *TaskResultForAssembly) string {
 	if taskResult == nil {
 		return ""
@@ -122,7 +138,7 @@ func formatTaskResultSection(taskResult *TaskResultForAssembly) string {
 		if taskResult.Result != "" {
 			result = taskResult.Result
 		}
-		return fmt.Sprintf("[Task Execution Result]\nThe following task was completed successfully:\n\n%s\n\n---\n\n", result)
+		return fmt.Sprintf("[Task Execution Result]\nThe following task was completed successfully:\n\n%s\n\n[Delivery Instructions]\nYou must now inform the user about the completed task. The user should be able to reach the deliverable directly from your response:\n- If files were created, include the full file paths so the user can click to open them\n- For HTML/web pages, tell the user they can open the file in a browser\n- If the result is information, present it directly\n- Never make the user guess where things are or manually type paths\n- Use your character's tone and style, but keep file paths exact and complete\n\n---\n\n", result)
 	}
 
 	notesSection := ""
@@ -165,23 +181,27 @@ func formatTaskResultSection(taskResult *TaskResultForAssembly) string {
 //     placed in instruction area to guide response strategy
 //   - taskResult: agent execution result for world-interaction tasks,
 //     provides execution status and results for LLM to formulate response
+//   - guidance: execution intent from the Decide phase, placed as self-instruction
+//     after person state and before the response directive
 func AssembleContext(
 	characterSettings string,
 	memories string,
 	entityProfiles string,
 	backgroundStory string,
 	recentMessages []model.Message,
-	relevantSegments []Segment,
+	relevantSegments []comprehend.Segment,
 	summaryVersion int,
 	recentStart int,
 	recentEnd int,
 	personStateDescription string,
 	taskResult *TaskResultForAssembly,
 	userName string,
+	guidance string,
 ) []llm.Message {
 	characterSection := formatCharacterSection(characterSettings)
 	personStateInstruction := formatPersonStateInstruction(personStateDescription)
 	taskResultSection := formatTaskResultSection(taskResult)
+	guidanceSection := formatGuidanceSection(guidance)
 
 	userRole := userName
 
@@ -210,6 +230,7 @@ func AssembleContext(
 			dialogSection,
 			taskResultSection,
 			personStateInstruction,
+			guidanceSection,
 		)
 	} else {
 		oneBigMessage = fmt.Sprintf(oneBigMessageNoStoryTemplate,
@@ -222,6 +243,7 @@ func AssembleContext(
 			segmentsSection,
 			taskResultSection,
 			personStateInstruction,
+			guidanceSection,
 		)
 	}
 

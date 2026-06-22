@@ -10,7 +10,7 @@ import (
 type InteractionResponse struct {
 	ID        int64     `json:"id"`
 	SessionID int64     `json:"session_id"`
-	DraftID   int64     `json:"draft_id"`
+	WorkID    int64     `json:"work_id"`
 	Iteration int       `json:"iteration"`
 	Type      int       `json:"type"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -23,11 +23,6 @@ type InteractionListResponse struct {
 	Interactions []InteractionResponse `json:"interactions"`
 }
 
-// InteractionStatusResponse is the API response for interaction status.
-type InteractionStatusResponse struct {
-	HasInteractions int `json:"has_interactions"`
-}
-
 // NewInteractionResponseList converts model interactions to API response list.
 func NewInteractionResponseList(entities []model.Interaction) []InteractionResponse {
 	result := make([]InteractionResponse, 0, len(entities))
@@ -35,7 +30,7 @@ func NewInteractionResponseList(entities []model.Interaction) []InteractionRespo
 		result = append(result, InteractionResponse{
 			ID:        m.ID,
 			SessionID: m.SessionID,
-			DraftID:   m.DraftID,
+			WorkID:    m.WorkID,
 			Iteration: m.Iteration,
 			Type:      m.Type,
 			UpdatedAt: m.UpdatedAt,

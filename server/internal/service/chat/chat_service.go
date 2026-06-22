@@ -27,7 +27,7 @@ import (
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/chat/chatcontext"
-	"private-buddy-server/internal/service/kb"
+	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/memory"
 	"private-buddy-server/internal/service/task"
@@ -37,11 +37,6 @@ import (
 
 // User-friendly error message for unexpected failures
 const userFriendlyErrorMessage = "Sorry, something went wrong on the server. Please try again later."
-
-// ChatCallbacks holds optional callbacks for notification events.
-type ChatCallbacks struct {
-	OnNotify func(data string)
-}
 
 // ChatResult holds the output of the chat processing pipeline.
 // In the draft-based architecture, the pipeline does not write to the messages
@@ -91,8 +86,6 @@ type pipeline struct {
 	triggerMessageID int64
 	triggerOverride  *TriggerOverride // Non-nil when the trigger is not a persisted message (e.g., scheduled event)
 	draftID          int64            // Draft ID for interaction records
-	contextBoundary  int64            // Last message ID visible when this pipeline started (from draft.last_read_message_id)
-	callbacks        *ChatCallbacks
 
 	// Loaded in loadMessages
 	triggerMessage model.Message
@@ -102,58 +95,61 @@ type pipeline struct {
 	kbIDs          []int64
 	userName       string // Human participant's name, empty if not set
 
-	// Channel for async query preprocessing (signal only, data stored in preprocessingResult)
-	preprocessingCh chan struct{}
-
 	// Results from pipeline stages
-	personStateResult     *chatcontext.PersonState
-	preprocessingResult   *chatcontext.PreprocessingResult
-	needsWorldInteraction bool
-	kbSegments            []chatcontext.Segment
-	taskResult            *chatcontext.TaskResultForAssembly
-	hasEmbedding          bool
+	personStateResult   *comprehend.PersonState
+	preprocessingResult *comprehend.PreprocessingResult
+	kbSegments          []comprehend.Segment
+	taskResult          *chatcontext.TaskResultForAssembly
+	hasEmbedding        bool
+	guidance            string // Execution intent from Decide phase
 }
 
-// Process handles the complete chat processing pipeline.
+// ExecuteChat handles the chat execution path (WorkTypeChat).
+// This is the "simple reply" path: context assembly + LLM streaming response.
 //
-// Context Engineering Variables:
-//
-//	V = current message count in session
-//	N = summary window size (configurable via settings.summary_window_size)
-//
-//	- V < N: Skip context engineering, use all messages directly (no summary exists)
-//	- V >= N: Apply full context engineering pipeline (summary + retrieval + assembly)
-//
-// Query preprocessing and person state inference run in parallel when either
-// V >= N or knowledge bases are configured, since both are independent LLM calls.
-//
-// Parameters:
-//   - contextBoundary: the last message ID visible when the draft was created
-//     (from draft.last_read_message_id). Used for preprocessing history queries.
-//   - draftID: the draft ID for interaction record association.
-//   - triggerOverride: optional supplementary context for non-direct triggers
-//     (e.g., scheduled events). When set, the override content is injected into
-//     the pipeline alongside the normal trigger message.
-func Process(
+// After the cognitive order refactoring, comprehension results are passed in
+// from the Comprehend phase, so this function skips the redundant
+// preprocessing, person state inference, and KB retrieval steps.
+// It goes directly to context assembly and response generation.
+func ExecuteChat(
 	ctx context.Context,
 	session *model.Session,
 	agent *model.Agent,
 	llmConfig *model.LLMConfig,
 	triggerMessageID int64,
-	contextBoundary int64,
 	draftID int64,
-	callbacks *ChatCallbacks,
 	triggerOverride *TriggerOverride,
+	comprehension *ComprehensionInput,
 ) (*ChatResult, error) {
+
 	p := &pipeline{
-		session:          session,
-		agent:            agent,
-		llmConfig:        llmConfig,
-		triggerMessageID: triggerMessageID,
-		triggerOverride:  triggerOverride,
-		contextBoundary:  contextBoundary,
-		draftID:          draftID,
-		callbacks:        callbacks,
+		session:             session,
+		agent:               agent,
+		llmConfig:           llmConfig,
+		triggerMessageID:    triggerMessageID,
+		triggerOverride:     triggerOverride,
+		draftID:             draftID,
+		personStateResult:   comprehension.PersonState,
+		preprocessingResult: comprehension.PreprocessingResult,
+		kbSegments:          comprehension.KBSegments,
+		guidance:            comprehension.Guidance,
+	}
+
+	// If a TaskResult is provided (from a completed TaskWork), convert it
+	// for context assembly so the response can reference the execution outcome.
+	if comprehension.TaskResult != nil {
+		p.taskResult = &chatcontext.TaskResultForAssembly{
+			Status: comprehension.TaskResult.Status,
+		}
+		if comprehension.TaskResult.Output != "" {
+			p.taskResult.Result = comprehension.TaskResult.Output
+		}
+		if comprehension.TaskResult.Error != "" {
+			p.taskResult.Reason = comprehension.TaskResult.Error
+		}
+		if comprehension.TaskResult.Notes != "" {
+			p.taskResult.Notes = comprehension.TaskResult.Notes
+		}
 	}
 
 	if err := p.loadMessages(); err != nil {
@@ -162,12 +158,9 @@ func Process(
 
 	p.userName = service.GetUserName()
 
-	// Start async preprocessing first so it runs in parallel with person state inference
-	p.preprocessQuery(ctx)
-	p.inferPersonState(ctx)
-
-	p.retrieveKnowledgeBases(ctx)
-	p.executeAgentIfNeeded(ctx)
+	// Skip preprocessing, inference, KB retrieval, and agent execution —
+	// all of these were done in the Comprehend phase.
+	// Go directly to context assembly and response.
 
 	messages, earlyContent, earlyReturn := p.assembleContext(ctx)
 	if earlyReturn {
@@ -181,15 +174,29 @@ func Process(
 
 	p.postProcess(ctx)
 
-	hasInteractions := model.HasInteractionsNone
-	if p.needsWorldInteraction {
-		hasInteractions = model.HasInteractionsExists
-	}
-
 	return &ChatResult{
 		Content:         fullContent,
-		HasInteractions: hasInteractions,
+		HasInteractions: model.HasInteractionsNone,
 	}, nil
+}
+
+// ExecuteTask handles the task execution path (WorkTypeTask).
+// This is the "agent" path: task rewriting + task execution + context assembly
+// + LLM response summarizing the task result.
+//
+// After the cognitive order refactoring, comprehension results are passed in
+// from the Comprehend phase, so this function skips the redundant
+// preprocessing, person state inference, and KB retrieval steps.
+// ComprehensionInput carries comprehension results from the runtime's
+// Comprehend phase into the chat execution functions. This allows
+// ExecuteChat to skip redundant preprocessing, person state inference,
+// and KB retrieval that were already done before Decide().
+type ComprehensionInput struct {
+	PreprocessingResult *comprehend.PreprocessingResult
+	PersonState         *comprehend.PersonState
+	KBSegments          []comprehend.Segment
+	Guidance            string           // Execution intent from Decide phase: what to say (chat) or what to do (task)
+	TaskResult          *task.TaskResult // Task execution result (only set for ChatWork after TaskWork completion)
 }
 
 // loadMessages loads the trigger message from the database,
@@ -220,7 +227,7 @@ func (p *pipeline) loadMessages() error {
 			// The original user message is preserved as reference only,
 			// while the agent's self-reminder is the primary action context.
 			p.triggerMessage.Content = fmt.Sprintf(
-				"[ALARM NOTIFICATION] An alarm you set has just triggered. This is NOT a new user request — you set this alarm yourself earlier. Take action now based on your self-reminder below.\n\nYour self-reminder: %s\n\n[Original user message for reference: %s]",
+				"[ALARM NOTIFICATION] An alarm you set has just triggered. This is NOT a new request — you set this alarm yourself earlier. Take action now based on your self-reminder below.\n\nYour self-reminder: %s\n\n[Original message for reference: %s]",
 				p.triggerOverride.Content,
 				p.triggerMessage.Content,
 			)
@@ -252,105 +259,6 @@ func (p *pipeline) loadMessages() error {
 	return nil
 }
 
-// preprocessQuery starts query preprocessing asynchronously when needed.
-// Preprocessing runs when V >= N (for context engineering) or when knowledge
-// bases are configured (for KB retrieval optimization).
-// The channel is signal-only; the result is stored in p.preprocessingResult.
-// On failure, p.preprocessingResult defaults to nil (degrades to original query).
-func (p *pipeline) preprocessQuery(ctx context.Context) {
-	if p.messageCount < int64(p.windowSize) && len(p.kbIDs) == 0 {
-		applogger.L.Info("Skipping query preprocessing", "reason", "V < N and no KBs", "V", p.messageCount, "N", p.windowSize, "kb_count", len(p.kbIDs))
-		return
-	}
-
-	p.preprocessingCh = make(chan struct{})
-	preprocessingHistory := getPreprocessingHistory(p.sessionID, p.windowSize)
-
-	go func() {
-		defer close(p.preprocessingCh)
-		characterSettings := p.agent.CharacterSettings
-		result := chatcontext.PreprocessQuery(
-			ctx,
-			p.llmConfig,
-			p.triggerMessage.Content,
-			preprocessingHistory,
-			characterSettings,
-			p.windowSize,
-			p.userName,
-			p.agent.Name,
-		)
-		p.preprocessingResult = result
-	}()
-}
-
-// inferPersonState infers the user's state from recent messages.
-// This runs synchronously; query preprocessing runs in parallel via preprocessQuery().
-func (p *pipeline) inferPersonState(ctx context.Context) {
-	recentMessagesForState := chatcontext.GetRecentMessages(
-		p.sessionID, min(int(p.messageCount), p.windowSize), model.MessageStatusCompleted,
-	)
-
-	p.personStateResult = chatcontext.InferPersonState(ctx, p.llmConfig, recentMessagesForState, p.userName, p.agent.Name, p.agent.CharacterSettings)
-
-	if p.personStateResult != nil {
-		p.needsWorldInteraction = p.personStateResult.NeedsWorldInteraction
-	}
-	applogger.L.Info("User state inference",
-		"needs_world_interaction", p.needsWorldInteraction,
-		"session_id", p.sessionID,
-		"trigger_message_id", p.triggerMessageID,
-	)
-}
-
-// retrieveKnowledgeBases searches knowledge bases associated with the agent.
-// Uses the preprocessed query when available for better retrieval quality.
-// Waits for async preprocessing to complete before constructing the query.
-func (p *pipeline) retrieveKnowledgeBases(ctx context.Context) {
-	if len(p.kbIDs) == 0 {
-		applogger.L.Info("Skipping KB retrieval", "reason", "no KBs configured")
-		return
-	}
-
-	if p.preprocessingCh != nil {
-		<-p.preprocessingCh
-	}
-
-	query := p.triggerMessage.Content
-	if p.preprocessingResult != nil && p.preprocessingResult.ProcessedQuery != "" {
-		query = p.preprocessingResult.ProcessedQuery
-	}
-
-	kbResults, err := kb.SearchMultiKB(ctx, p.kbIDs, query, 5)
-	if err != nil {
-		applogger.L.Error("KB retrieval failed", "session_id", p.sessionID, "error", err)
-		return
-	}
-
-	for _, kr := range kbResults {
-		p.kbSegments = append(p.kbSegments, chatcontext.Segment{
-			Content: kr.Content,
-			Source:  chatcontext.SourceKnowledgeBase,
-		})
-	}
-	applogger.L.Info("KB retrieved segments",
-		"session_id", p.sessionID,
-		"count", len(kbResults),
-	)
-}
-
-// executeAgentIfNeeded executes the agent path when needs_world_interaction=true.
-// In the draft-based architecture, this does NOT write to the messages table.
-// The has_interactions flag is returned via ChatResult for the caller to handle.
-func (p *pipeline) executeAgentIfNeeded(ctx context.Context) {
-	if p.needsWorldInteraction {
-		p.taskResult = executeAgent(
-			ctx, p.sessionID, p.agent, p.llmConfig,
-			p.triggerMessage, p.draftID,
-			int(p.messageCount), p.windowSize, p.callbacks,
-		)
-	}
-}
-
 // assembleContext assembles the LLM prompt messages based on context engineering rules.
 // Returns (messages, earlyContent, earlyReturn). When earlyReturn is true,
 // earlyContent contains the response string and the pipeline should terminate early.
@@ -368,7 +276,7 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 		"V", p.messageCount, "N", p.windowSize,
 	)
 
-	recentMessages := chatcontext.GetRecentMessages(
+	recentMessages := comprehend.GetRecentMessages(
 		p.sessionID, int(p.messageCount), model.MessageStatusCompleted,
 	)
 
@@ -398,6 +306,7 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 		personStateDescription,
 		p.taskResult,
 		p.userName,
+		p.guidance,
 	)
 	p.hasEmbedding = len(p.kbSegments) > 0
 	return messages, "", false
@@ -407,10 +316,6 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 // engineering pipeline including summary, retrieval, and assembly.
 // Waits for async preprocessing to complete before using the result.
 func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message, string, bool) {
-	if p.preprocessingCh != nil {
-		<-p.preprocessingCh
-	}
-
 	// Handle clarification needed case — return clarification as content
 	// without writing to messages table (caller handles draft commit)
 	if p.preprocessingResult != nil && p.preprocessingResult.NeedsClarification {
@@ -471,7 +376,7 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	// importance scores.
 	var ragHitIDs []int64
 	for _, seg := range contextResult.RelevantSegments {
-		if seg.Source == chatcontext.SourceChatHistory && seg.MessageID > 0 {
+		if seg.Source == comprehend.SourceChatHistory && seg.MessageID > 0 {
 			ragHitIDs = append(ragHitIDs, seg.MessageID)
 		}
 	}
@@ -497,6 +402,7 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 		personStateDescription,
 		p.taskResult,
 		p.userName,
+		p.guidance,
 	)
 	return messages, "", false
 }
@@ -544,130 +450,6 @@ func (p *pipeline) postProcess(ctx context.Context) {
 
 	// Note: summary generation is now triggered at the message creation level
 	// (after any message is committed, regardless of sender), not here.
-}
-
-// executeAgent handles the agent execution path when needs_world_interaction=true.
-//
-// This function handles the agent execution path:
-//  1. Notify frontend that agent is processing
-//  2. Rewrite user message into clear task requirement
-//  3. Execute agent via TaskExecutor
-//  4. Return TaskResult for context assembly
-func executeAgent(
-	ctx context.Context,
-	sessionID int64,
-	agent *model.Agent,
-	llmConfig *model.LLMConfig,
-	triggerMessage model.Message,
-	draftID int64,
-	messageCount int,
-	windowSize int,
-	callbacks *ChatCallbacks,
-) *chatcontext.TaskResultForAssembly {
-	applogger.L.Info("Agent execution path",
-		"session_id", sessionID,
-		"draft_id", draftID,
-	)
-
-	// Notify frontend that agent is processing
-	if callbacks != nil && callbacks.OnNotify != nil {
-		notifyData, _ := json.Marshal(map[string]string{
-			"type":    "agent_processing",
-			"message": "Agent is processing your request...",
-		})
-		callbacks.OnNotify(string(notifyData))
-	}
-
-	// Rewrite user message into clear task requirement
-	recentMessages := chatcontext.GetRecentMessages(sessionID, min(messageCount, windowSize), model.MessageStatusCompleted)
-
-	history := make([]llm.Message, 0, len(recentMessages))
-	for _, msg := range recentMessages {
-		role := "user"
-		if msg.Role == model.MessageRoleAssistant {
-			role = "assistant"
-		}
-		history = append(history, llm.Message{
-			Role:    role,
-			Content: msg.Content,
-		})
-	}
-
-	rewrittenRequirement := task.Rewrite(ctx, llmConfig, triggerMessage.Content, history, 10, agent.Name, service.GetUserName())
-	applogger.L.Info("Task requirement rewritten",
-		"session_id", sessionID,
-		"original", triggerMessage.Content[:min(50, len(triggerMessage.Content))],
-		"rewritten", rewrittenRequirement[:min(50, len(rewrittenRequirement))],
-	)
-
-	// Execute agent via TaskExecutor
-	var searchConfig model.SearchConfig
-	if err := database.DB.Where("is_active = ?", true).First(&searchConfig).Error; err != nil {
-		applogger.L.Warn("failed to load active search config, proceeding without search", "error", err)
-	}
-
-	taskResult := task.Execute(task.TaskParams{
-		TaskRequirement: rewrittenRequirement,
-		LLMConfig:       llmConfig,
-		MaxIterations:   0,
-		SessionID:       sessionID,
-		AgentID:         agent.ID,
-		UserMsgID:       triggerMessage.ID,
-		DraftID:         draftID,
-		SearchConfig:    &searchConfig,
-		Ctx:             ctx,
-	})
-
-	result := &chatcontext.TaskResultForAssembly{
-		Status: taskResult.Status,
-	}
-	if taskResult.Output != "" {
-		result.Result = taskResult.Output
-	}
-	if taskResult.Error != "" {
-		result.Reason = taskResult.Error
-	}
-	if taskResult.Notes != "" {
-		result.Notes = taskResult.Notes
-	}
-
-	applogger.L.Info("Agent execution completed",
-		"session_id", sessionID,
-		"status", taskResult.Status,
-	)
-
-	return result
-}
-
-// getPreprocessingHistory retrieves recent messages for preprocessing context.
-// Returns messages in chronological order (oldest first), limited to the specified count.
-// Unlike context assembly (which uses contextBoundary to avoid overlap with summary),
-// preprocessing needs the full recent conversation to correctly classify and rewrite queries.
-func getPreprocessingHistory(sessionID int64, limit int) []llm.Message {
-	var messages []model.Message
-	if err := database.DB.Where("session_id = ?", sessionID).
-		Order("id DESC").Limit(limit).Find(&messages).Error; err != nil {
-		applogger.L.Warn("getPreprocessingHistory: failed to load messages", "session_id", sessionID, "error", err)
-		return nil
-	}
-
-	// Reverse to chronological order
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
-	}
-
-	history := make([]llm.Message, 0, len(messages))
-	for _, msg := range messages {
-		role := "user"
-		if msg.Role == model.MessageRoleAssistant {
-			role = "assistant"
-		}
-		history = append(history, llm.Message{
-			Role:    role,
-			Content: msg.Content,
-		})
-	}
-	return history
 }
 
 // getKnowledgeBaseIDs returns the knowledge base IDs associated with the agent.

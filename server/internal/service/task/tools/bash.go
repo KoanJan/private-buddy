@@ -14,31 +14,33 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-// BashTool executes shell commands within a workspace.
+// BashTool executes shell commands within a session workspace.
 //
 // Provides the agent with the ability to run shell commands on the local system.
-// Commands are confined to the task's workspace directory to ensure isolation.
+// Commands are confined to the session-level workspace directory to ensure isolation.
 // Supports configurable timeout and returns stdout, stderr, and exit code.
 //
 // Security:
-//   - Path traversal outside workspace is blocked
+//   - Path traversal outside the session workspace is blocked
 //   - Access to .meta directory is blocked (system-managed files)
 type BashTool struct {
-	workspace string // Working directory for command execution
+	sessionRoot string // Session-level security boundary for path traversal checks
+	workDir     string // Command execution working directory (session_X/output/)
 }
 
-// NewBashTool creates a BashTool with the given workspace directory.
-// If workspace is set, commands run with CWD=workspace and path traversal is blocked.
-func NewBashTool(workspace string) *BashTool {
-	return &BashTool{workspace: workspace}
+// NewBashTool creates a BashTool with the given session root and working directory.
+// sessionRoot defines the security boundary — commands cannot access paths outside it.
+// workDir is the CWD for command execution, scoped to the session's output directory.
+func NewBashTool(sessionRoot, workDir string) *BashTool {
+	return &BashTool{sessionRoot: sessionRoot, workDir: workDir}
 }
 
 func (b *BashTool) Name() string { return "bash" }
 
 func (b *BashTool) Schema() llm.FunctionDefinition {
 	workspaceHint := ""
-	if b.workspace != "" {
-		workspaceHint = fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", b.workspace)
+	if b.sessionRoot != "" {
+		workspaceHint = fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", b.sessionRoot)
 	}
 	return llm.FunctionDefinition{
 		Name:        "bash",
@@ -81,7 +83,7 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 		return `{"stdout": "", "stderr": "Error: empty command", "exit_code": 1}`, nil
 	}
 
-	if b.workspace != "" {
+	if b.sessionRoot != "" {
 		if blocked := b.isBlockedCommand(command); blocked != "" {
 			cmdPreview := command
 			if len(cmdPreview) > 200 {
@@ -104,8 +106,8 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	} else {
 		cmd = exec.Command("bash", "-c", command)
 	}
-	if b.workspace != "" {
-		cmd.Dir = b.workspace
+	if b.workDir != "" {
+		cmd.Dir = b.workDir
 	}
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
@@ -162,22 +164,23 @@ func (b *BashTool) isBlockedCommand(command string) string {
 	return ""
 }
 
-// isPathTraversal checks if a command attempts to access paths outside the workspace.
-// Examines command parts for absolute paths and ".." traversal patterns.
+// isPathTraversal checks if a command attempts to access paths outside the session workspace.
+// Relative paths are resolved against workDir (the command's CWD), then checked
+// against sessionRoot to allow session-internal access.
 func (b *BashTool) isPathTraversal(command string) bool {
-	if b.workspace == "" {
+	if b.sessionRoot == "" {
 		return false
 	}
 	parts := strings.Fields(command)
 	for _, part := range parts {
-		if strings.HasPrefix(part, "/") && !strings.HasPrefix(part, b.workspace) {
+		if strings.HasPrefix(part, "/") && !strings.HasPrefix(part, b.sessionRoot) {
 			if !isSafeAbsolutePath(part) {
 				return true
 			}
 		}
 		if strings.Contains(part, "..") {
-			resolved := safeResolve(part, b.workspace)
-			if resolved != "" && !strings.HasPrefix(resolved, b.workspace) {
+			resolved := safeResolve(part, b.workDir)
+			if resolved != "" && !strings.HasPrefix(resolved, b.sessionRoot) {
 				return true
 			}
 		}
@@ -185,12 +188,12 @@ func (b *BashTool) isPathTraversal(command string) bool {
 	return false
 }
 
-// safeResolve resolves a path relative to the workspace and returns the cleaned path.
-func safeResolve(pathStr, workspace string) string {
+// safeResolve resolves a path relative to the given base directory and returns the cleaned path.
+func safeResolve(pathStr, baseDir string) string {
 	if filepath.IsAbs(pathStr) {
 		return filepath.Clean(pathStr)
 	}
-	joined := filepath.Join(workspace, pathStr)
+	joined := filepath.Join(baseDir, pathStr)
 	return filepath.Clean(joined)
 }
 

@@ -8,15 +8,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sashabaranov/go-openai/jsonschema"
-
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
-	"private-buddy-server/internal/service/chat/chatcontext"
+	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/memory"
+	"private-buddy-server/internal/service/task"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -42,21 +41,12 @@ const (
 	ticksToDormant   = 6 // Consecutive none → transition to dormant
 )
 
-// heartbeatAction represents the self-reflection output from a heartbeat tick.
-type heartbeatAction int
-
-const (
-	heartbeatNone             heartbeatAction = iota // Nothing to do
-	heartbeatProactiveMessage                        // Agent proactively sends a message
-	heartbeatContextRefresh                          // Agent refreshes its context summary
-)
-
 // heartbeatOutput is the structured output schema for the LLM heartbeat self-reflection.
 type heartbeatOutput struct {
-	Action          string `json:"action"`
-	Reason          string `json:"reason"`
-	TargetSessionID int64  `json:"target_session_id"`
-	MessageDraft    string `json:"message_draft"`
+	Action          string `json:"action" jsonschema:"description=The action to take: none for no action, proactive_message if you have genuinely valuable new information,enum=none,enum=proactive_message,required"`
+	Reason          string `json:"reason" jsonschema:"description=Brief explanation of why this action was chosen, referencing the three thresholds if applicable,required"`
+	TargetSessionID int64  `json:"target_session_id" jsonschema:"description=If proactive_message, the session ID to send the message to. Omit for other actions."`
+	MessageDraft    string `json:"message_draft" jsonschema:"description=If proactive_message, the draft message content. Omit for other actions."`
 }
 
 // Proactive message frequency control constants.
@@ -74,11 +64,9 @@ const (
 // Work execution runs in separate goroutines, allowing the event loop to remain responsive.
 type agentRuntime struct {
 	agentID             int64
-	workRouter          workRouter
 	activeWorks         []*work
 	eventCh             <-chan eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
 	commitCh            chan commitRequest
-	workDoneCh          chan *work
 	heartbeatInterval   time.Duration                              // Base heartbeat interval (adaptive)
 	idleTicks           int                                        // Consecutive idle heartbeats (for tickless backoff)
 	heartbeatTick       int                                        // Total heartbeat ticks (for check scheduling)
@@ -92,17 +80,14 @@ type agentRuntime struct {
 // eventCh is the read-only event channel obtained from eventqueue.Subscribe().
 func newAgentRuntime(
 	agentID int64,
-	workRouter workRouter,
 	eventCh <-chan eventqueue.AgentEvent,
 	heartbeatInterval time.Duration,
 	onStatusChange func(agentID, sessionID int64, status int),
 ) *agentRuntime {
 	return &agentRuntime{
 		agentID:           agentID,
-		workRouter:        workRouter,
 		eventCh:           eventCh,
 		commitCh:          make(chan commitRequest, 16),
-		workDoneCh:        make(chan *work, 16),
 		heartbeatInterval: heartbeatInterval,
 		onStatusChange:    onStatusChange,
 	}
@@ -133,6 +118,27 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// Reset idle counter on event arrival
 			r.idleTicks = 0
 
+			// Handle work completion: remove from active works and update status.
+			// This is the agent's self-perception — "I just finished doing X."
+			// It goes through the same Comprehend→Decide pipeline so the agent
+			// can decide whether to inform the user.
+			if event.Type == eventqueue.EventTypeWorkCompleted {
+				if payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload); ok {
+					r.activeWorks = removeWorkByID(r.activeWorks, payload.WorkID)
+					applogger.L.Info("Work completed event received",
+						"agent_id", r.agentID,
+						"work_id", payload.WorkID,
+						"work_type", payload.WorkType,
+						"status", payload.Status,
+						"active_works_remaining", len(r.activeWorks),
+					)
+					// Only set idle if no other works are active in this session
+					if !r.hasActiveWorkInSession(event.SessionID) {
+						r.setStatus(event.SessionID, model.ParticipantStatusIdle)
+					}
+				}
+			}
+
 			// Mark the message as read immediately upon receiving the event.
 			// "Read" means the agent is aware of the message — this is separate
 			// from "processed" (which happens after the work completes).
@@ -156,6 +162,13 @@ func (r *agentRuntime) Run(ctx context.Context) {
 				}
 			}
 
+			// Trigger summary generation for new user messages.
+			// Only the runtime layer — not the API handler — initiates
+			// background tasks to keep layer boundaries clean.
+			if event.Type == eventqueue.EventTypeNewMessage {
+				comprehend.MaybeTriggerSummary(ctx, event.SessionID, r.agentID)
+			}
+
 			// Fast path for scheduled events with action=send_message.
 			// Skip the entire LLM pipeline and directly commit the pre-computed
 			// message. This is the optimization for simple reminders where the
@@ -169,160 +182,149 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			}
 
 			// Decision: how should the agent respond to this event?
+			// After the cognitive order refactoring, we Comprehend first,
+			// then Decide based on the comprehension results.
 			agent := service.GetAgent(r.agentID)
 			llmConfig := service.GetLLMConfig(agent.LLMConfigID)
-			decision := Decide(ctx, event, agent, llmConfig)
 
-			switch decision.Action {
-			case ActionIgnore:
-				applogger.L.Debug("Agent decided to ignore event",
-					"agent_id", r.agentID,
-					"event_type", event.Type,
-					"reasoning", decision.Reasoning,
-				)
-				r.resetHeartbeatTimer(heartbeatTimer)
-				continue
+			// Comprehend: understand what the other party means
+			sessionInfo := r.buildSessionInfo(event.SessionID, agent)
+			comprehension := Comprehend(ctx, event, agent, llmConfig, sessionInfo, r.activeWorks)
 
-			case ActionDefer:
-				applogger.L.Debug("Agent decided to defer event",
-					"agent_id", r.agentID,
-					"event_type", event.Type,
-					"reasoning", decision.Reasoning,
-				)
-				r.resetHeartbeatTimer(heartbeatTimer)
-				continue
+			// Decide: based on comprehension, determine what to do
+			decision := Decide(ctx, event, agent, llmConfig, comprehension, r.activeWorks)
 
-			case ActionReplyNow:
-				// Simple Q&A: create a Chat Work for immediate reply
-				r.routeOrCreateWork(ctx, event)
+			// Execute all actions from the decision.
+			// A single decision can produce multiple actions of different types,
+			// e.g., cancel an existing task and create a new one.
+			for _, action := range decision.Actions {
+				switch action.Type {
+				case ActionRoute:
+					// Route the event to an existing active Work.
+					// Only TaskWork supports absorbing new guidance via its ReAct loop.
+					// ChatWork is one-shot (no iteration loop), so route to ChatWork is invalid.
+					wg := action.WorkGuidance
+					target := r.findActiveWorkByID(wg.TargetWorkID)
+					if target == nil {
+						applogger.L.Error("Target work not found for route, skipping",
+							"agent_id", r.agentID,
+							"target_work_id", wg.TargetWorkID,
+						)
+						continue
+					}
+					if target.plan.Type != model.WorkTypeTask {
+						applogger.L.Error("Route target is not TaskWork, skipping",
+							"agent_id", r.agentID,
+							"work_id", target.ID,
+							"work_type", target.plan.Type,
+						)
+						continue
+					}
+					target.FeedGuidance(task.GuidanceDirective{
+						Guidance: wg.Guidance,
+						Reason:   wg.Reason,
+					})
+					applogger.L.Info("Routed guidance to existing TaskWork",
+						"agent_id", r.agentID,
+						"work_id", target.ID,
+						"guidance", wg.Guidance,
+						"reason", wg.Reason,
+					)
 
-			case ActionReplyThenWork:
-				// Task request: acknowledge first, then execute
-				r.handleReplyThenWork(ctx, event, agent, llmConfig)
+				case ActionCancel:
+					// Cancel an existing active Work by sending a cancel directive
+					// through the guidance channel. This is "appealable" cancellation —
+					// the TaskLoop's LLM receives the directive and decides how to wrap up
+					// (save notes, record reasons) before exiting.
+					//
+					// If the guidance channel is full or the TaskLoop is unresponsive,
+					// abandon() is called as a fallback to forcefully mark the work as abandoned.
+					wg := action.WorkGuidance
+					target := r.findActiveWorkByID(wg.TargetWorkID)
+					if target == nil {
+						applogger.L.Error("Target work not found for cancel, skipping",
+							"agent_id", r.agentID,
+							"target_work_id", wg.TargetWorkID,
+						)
+						continue
+					}
+					if target.plan.Type != model.WorkTypeTask {
+						// ChatWork has no iteration loop, so it can't absorb a cancel directive.
+						// Fall back to direct abandon for ChatWork.
+						target.abandon()
+						applogger.L.Info("Cancelled ChatWork by direct abandon (no iteration loop)",
+							"agent_id", r.agentID,
+							"work_id", wg.TargetWorkID,
+						)
+						continue
+					}
+					// Send cancel directive to TaskWork via guidance channel.
+					// The TaskLoop will observe it at the next iteration boundary.
+					target.FeedGuidance(task.GuidanceDirective{
+						Guidance: wg.Guidance,
+						Reason:   wg.Reason,
+					})
+					applogger.L.Info("Sent cancel directive to TaskWork",
+						"agent_id", r.agentID,
+						"work_id", wg.TargetWorkID,
+						"guidance", wg.Guidance,
+						"reason", wg.Reason,
+					)
 
-			case ActionWorkOnly:
-				// Continuation of ongoing task: route to active work or create new
-				r.routeOrCreateWork(ctx, event)
+				case ActionCreate:
+					// Instantiate Work from the Action's WorkPlan
+					if action.WorkPlan == nil {
+						applogger.L.Error("Create action has no work_plan, skipping",
+							"agent_id", r.agentID,
+						)
+						continue
+					}
+					w := r.newWork(ctx, event, *action.WorkPlan, comprehension)
+
+					// For WorkCompleted events, pass the task result to the new
+					// ChatWork so it can reference the execution outcome.
+					if event.Type == eventqueue.EventTypeWorkCompleted {
+						if payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload); ok {
+							w.taskResult = &task.TaskResult{
+								Status: payload.Status,
+								Output: payload.TaskOutput,
+								Error:  payload.TaskError,
+							}
+						}
+					}
+
+					r.activeWorks = append(r.activeWorks, w)
+					go w.Run(ctx)
+				}
 			}
 			r.resetHeartbeatTimer(heartbeatTimer)
 
 		case <-heartbeatTimer.C:
 			r.handleHeartbeat(ctx)
 			r.resetHeartbeatTimer(heartbeatTimer)
-
-		case doneWork := <-r.workDoneCh:
-			r.activeWorks = removeWork(r.activeWorks, doneWork)
-			// Only set idle if no other works are active in this session
-			if !r.hasActiveWorkInSession(doneWork.sessionID) {
-				r.setStatus(doneWork.sessionID, model.ParticipantStatusIdle)
-			}
 		}
 	}
 }
 
-// routeOrCreateWork routes the event to an active Work or creates a new one.
-// Routing + registration is ATOMIC within the event loop's select case:
-// the next event will see the updated activeWorks.
-func (r *agentRuntime) routeOrCreateWork(ctx context.Context, event eventqueue.AgentEvent) {
-	target := r.workRouter.Route(ctx, event, r.activeWorks)
-	if target != nil {
-		target.FeedEvent(event)
-	} else {
-		w := r.newWork(ctx, event, model.WorkTypeChat)
-		r.activeWorks = append(r.activeWorks, w)
-		go w.Run(ctx)
+// findActiveWorkByID finds an active work by its ID.
+// Returns nil if not found.
+func (r *agentRuntime) findActiveWorkByID(workID int64) *work {
+	for _, w := range r.activeWorks {
+		if w.ID == workID {
+			return w
+		}
 	}
-}
-
-// handleReplyThenWork implements the ActionReplyThenWork pattern:
-//  1. Generate a brief acknowledgment reply via LLM
-//  2. Commit the acknowledgment as a message
-//  3. Create a Task Work for the actual execution
-//
-// The acknowledgment is generated synchronously in the event loop to ensure
-// the user sees an immediate response. The Task Work runs asynchronously.
-// Message ordering is guaranteed by the serialized commitCh mechanism.
-func (r *agentRuntime) handleReplyThenWork(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig) {
-	sessionID := event.SessionID
-
-	// Generate acknowledgment reply via LLM
-	messageContent := extractMessageContent(event)
-	ackContent := r.generateAcknowledgment(ctx, messageContent, agent, llmConfig)
-
-	// Create and commit the acknowledgment draft
-	var agentLastReadID int64
-	var ps model.ParticipantSession
-	if err := database.DB.Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-		sessionID, model.ParticipantTypeAgent, r.agentID).First(&ps).Error; err == nil {
-		agentLastReadID = ps.LastReadMessageID
-	}
-
-	ackDraft := &model.MessageDraft{
-		AgentID:           r.agentID,
-		SessionID:         sessionID,
-		Status:            model.DraftStatusBuilding,
-		LastReadMessageID: agentLastReadID,
-	}
-	if err := database.DB.Create(ackDraft).Error; err != nil {
-		applogger.L.Error("Failed to create acknowledgment draft",
-			"agent_id", r.agentID, "session_id", sessionID, "error", err)
-		// Fall back: create task work without acknowledgment
-		w := r.newWork(ctx, event, model.WorkTypeTask)
-		r.activeWorks = append(r.activeWorks, w)
-		go w.Run(ctx)
-		return
-	}
-
-	// Commit the acknowledgment message
-	r.commitCh <- commitRequest{
-		draft:           ackDraft,
-		sessionID:       sessionID,
-		content:         ackContent,
-		hasInteractions: model.HasInteractionsNone,
-	}
-
-	applogger.L.Info("Acknowledgment committed, creating task work",
-		"agent_id", r.agentID,
-		"session_id", sessionID,
-		"ack_draft_id", ackDraft.ID,
-	)
-
-	// Create Task Work for the actual execution
-	w := r.newWork(ctx, event, model.WorkTypeTask)
-	r.activeWorks = append(r.activeWorks, w)
-	go w.Run(ctx)
-}
-
-// generateAcknowledgment produces a brief acknowledgment message via LLM.
-// Uses a short, deterministic prompt to generate a concise confirmation.
-func (r *agentRuntime) generateAcknowledgment(ctx context.Context, messageContent string, agent *model.Agent, llmConfig *model.LLMConfig) string {
-	// Truncate long messages for the acknowledgment prompt
-	userMsg := messageContent
-	if len(userMsg) > 200 {
-		userMsg = userMsg[:200] + "..."
-	}
-
-	prompt := fmt.Sprintf("The person you are talking to said: \"%s\"\n\nGenerate a brief, natural acknowledgment in the same language as their message. Keep it to 1-2 short sentences. Examples: \"Got it, I'll work on that\", \"Sure, let me handle that\", \"On it!\". Do not repeat their message or add unnecessary details.", userMsg)
-
-	chatModel := llm.NewChatModelWithTemperature(
-		llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic,
-	)
-
-	result, err := chatModel.Chat(ctx, []llm.Message{
-		{Role: "user", Content: prompt},
-	})
-	if err != nil {
-		applogger.L.Error("Failed to generate acknowledgment, using default",
-			"agent_id", r.agentID, "error", err)
-		return "Got it, I'll work on that."
-	}
-
-	return result
+	return nil
 }
 
 // newWork creates a new Work from an event, persists it to the database,
 // and sets the agent status to working.
-func (r *agentRuntime) newWork(ctx context.Context, event eventqueue.AgentEvent, workType int) *work {
+//
+// After the cognitive order refactoring, WorkPlan carries the Decide phase's
+// execution intent (Guidance), and comprehension carries the Comprehend
+// phase's understanding. The Work has full context without re-interpreting
+// the event.
+func (r *agentRuntime) newWork(ctx context.Context, event eventqueue.AgentEvent, plan WorkPlan, comprehension *ComprehensionResult) *work {
 	sessionID := event.SessionID
 
 	description := extractDescription(event)
@@ -354,7 +356,7 @@ func (r *agentRuntime) newWork(ctx context.Context, event eventqueue.AgentEvent,
 		AgentID:     r.agentID,
 		SessionID:   sessionID,
 		DraftID:     nilDraftID(draft),
-		Type:        workType,
+		Type:        plan.Type,
 		Description: description,
 		Status:      model.WorkStatusRunning,
 	}
@@ -367,11 +369,11 @@ func (r *agentRuntime) newWork(ctx context.Context, event eventqueue.AgentEvent,
 		agent:          r,
 		sessionID:      sessionID,
 		draft:          draft,
-		workType:       workType,
-		description:    description,
+		plan:           plan,
 		maxIterations:  90, // Default max iterations for task works
-		pendingEvents:  make(chan eventqueue.AgentEvent, 32),
 		initialPayload: event.Payload,
+		comprehension:  comprehension,
+		guidanceCh:     make(chan task.GuidanceDirective, 8), // Buffered channel for guidance/cancel directives
 	}
 
 	r.setStatus(sessionID, model.ParticipantStatusWorking)
@@ -731,31 +733,7 @@ IMPORTANT: Err on the side of silence. Only choose proactive_message if you woul
 		Name:        "HeartbeatReflection",
 		Description: "Agent's structured self-reflection decision on whether to take proactive action",
 		Strict:      true,
-		Schema: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"action": {
-					Type: jsonschema.String,
-					Enum: []string{"none", "proactive_message"},
-					Description: "The action to take: " +
-						"'none' for no action, " +
-						"'proactive_message' if you have genuinely valuable new information",
-				},
-				"reason": {
-					Type:        jsonschema.String,
-					Description: "Brief explanation of why this action was chosen, referencing the three thresholds if applicable",
-				},
-				"target_session_id": {
-					Type:        jsonschema.Number,
-					Description: "If proactive_message, the session ID to send the message to. Omit for other actions.",
-				},
-				"message_draft": {
-					Type:        jsonschema.String,
-					Description: "If proactive_message, the draft message content. Omit for other actions.",
-				},
-			},
-			Required: []string{"action", "reason"},
-		},
+		Schema:      llm.GenerateSchema[heartbeatOutput](),
 	})
 
 	if err != nil {
@@ -853,7 +831,7 @@ func (r *agentRuntime) executeProactiveMessage(ctx context.Context, output heart
 	pushMessageEvent(output.TargetSessionID, msg.ID, msg.Content, msg.HasInteractions)
 
 	// Trigger summary generation if needed
-	chatcontext.MaybeTriggerSummary(ctx, output.TargetSessionID, r.agentID)
+	comprehend.MaybeTriggerSummary(ctx, output.TargetSessionID, r.agentID)
 
 	applogger.L.Info("Proactive message sent",
 		"agent_id", r.agentID,
@@ -957,21 +935,13 @@ func (r *agentRuntime) commitDraft(ctx context.Context, req commitRequest) {
 	pushMessageEvent(draft.SessionID, msg.ID, msg.Content, msg.HasInteractions)
 
 	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	chatcontext.MaybeTriggerSummary(ctx, draft.SessionID, r.agentID)
+	comprehend.MaybeTriggerSummary(ctx, draft.SessionID, r.agentID)
 }
 
-// GetActiveWorkCount returns the number of currently active works.
-// Used for monitoring and debugging.
-func (r *agentRuntime) GetActiveWorkCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.activeWorks)
-}
-
-// removeWork removes a work from the active works slice.
-func removeWork(works []*work, target *work) []*work {
+// removeWorkByID removes a work from the active works slice by its ID.
+func removeWorkByID(works []*work, workID int64) []*work {
 	for i, w := range works {
-		if w == target {
+		if w.ID == workID {
 			return append(works[:i], works[i+1:]...)
 		}
 	}
@@ -1070,20 +1040,51 @@ func recoverActiveWorks(agentID int64, runtime *agentRuntime) []*work {
 	return nil
 }
 
+// buildSessionInfo loads session-level parameters needed for comprehension.
+// This is called once per event in the event loop, before Comprehend().
+func (r *agentRuntime) buildSessionInfo(sessionID int64, agent *model.Agent) *SessionInfo {
+	info := &SessionInfo{
+		SessionID:  sessionID,
+		WindowSize: 50, // Default window size
+		UserName:   service.GetUserName(),
+	}
+
+	// Get message count for this session
+	var messageCount int64
+	if err := database.DB.Model(&model.Message{}).
+		Where("session_id = ? AND status = ?", sessionID, model.MessageStatusCompleted).
+		Count(&messageCount).Error; err != nil {
+		applogger.L.Warn("buildSessionInfo: failed to count messages",
+			"session_id", sessionID, "error", err,
+		)
+	}
+	info.MessageCount = messageCount
+
+	// Get knowledge base IDs for this agent
+	if agent.KnowledgeBaseIDs != "" && agent.KnowledgeBaseIDs != "[]" {
+		var ids []int64
+		if err := json.Unmarshal([]byte(agent.KnowledgeBaseIDs), &ids); err == nil {
+			var validIDs []int64
+			for _, id := range ids {
+				var kb model.KnowledgeBase
+				if err := database.DB.First(&kb, id).Error; err == nil {
+					validIDs = append(validIDs, id)
+				}
+			}
+			info.KBIDs = validIDs
+		}
+	}
+
+	return info
+}
+
 // createAgentRuntime creates and initializes an agentRuntime struct without starting
 // the event loop. Loads the agent's LLM config, subscribes to the event queue,
 // and recovers abandoned works from a previous run.
 func createAgentRuntime(agentID int64, onStatusChange func(agentID, sessionID int64, status int)) *agentRuntime {
-	agent := service.GetAgent(agentID)
-	var llmConfig *model.LLMConfig
-	if agent != nil {
-		llmConfig = service.GetLLMConfig(agent.LLMConfigID)
-	}
-
-	router := newSemanticWorkRouter(llmConfig)
 	eventCh := eventqueue.Subscribe(agentID)
 
-	runtime := newAgentRuntime(agentID, router, eventCh, 30*time.Second, onStatusChange)
+	runtime := newAgentRuntime(agentID, eventCh, 30*time.Second, onStatusChange)
 
 	// Recover any abandoned works from previous run
 	recoverActiveWorks(agentID, runtime)

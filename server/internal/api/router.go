@@ -100,9 +100,6 @@ func SetupRouter() *gin.Engine {
 			chat.GET("/agents/:session_id", h.GetSessionAgents)
 		}
 
-		api.GET("/interactions", h.GetInteractions)
-		api.GET("/messages/:id/interaction-status", h.GetInteractionStatus)
-
 		searchConfig := api.Group("/search-config")
 		{
 			searchConfig.GET("", h.GetSearchConfig)

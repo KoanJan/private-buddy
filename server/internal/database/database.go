@@ -449,31 +449,67 @@ func migrateKnowledgeBasesIndexTypeToInt() {
 	applogger.L.Info("Successfully migrated knowledge_bases.index_type to INTEGER")
 }
 
-// migrateInteractionsTable migrates the interactions table from the old schema
-// (user_msg_id + agent_msg_id) to the new schema (draft_id).
-// This aligns with the draft-based architecture where interactions are grouped
-// by draft_id instead of message pairs.
+// migrateInteractionsTable migrates the interactions table schema.
+// Phase 1: user_msg_id + agent_msg_id → draft_id (legacy)
+// Phase 2: draft_id → work_id (current)
+//
+// Interactions are now grouped by work_id, directly modeling the relationship
+// between a Work and its execution trace, independent of the message stream.
 func migrateInteractionsTable() {
 	if !DB.Migrator().HasTable(&model.Interaction{}) {
 		return
 	}
-	// If the new draft_id column already exists, migration is done
-	if DB.Migrator().HasColumn(&model.Interaction{}, "draft_id") {
+
+	// Phase 2: draft_id → work_id
+	// If work_id column already exists, migration is fully done
+	if DB.Migrator().HasColumn(&model.Interaction{}, "work_id") {
 		return
 	}
+	// If draft_id column exists, migrate from draft_id to work_id
+	if DB.Migrator().HasColumn(&model.Interaction{}, "draft_id") {
+		applogger.L.Info("Migrating interactions table: draft_id → work_id")
+
+		DB.Exec(`
+			CREATE TABLE interactions_new (
+				id         INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_id INTEGER NOT NULL,
+				work_id    INTEGER NOT NULL,
+				iteration  INTEGER NOT NULL,
+				type       INTEGER NOT NULL,
+				data       TEXT NOT NULL,
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL
+			)
+		`)
+		// Map draft_id to work_id: look up works table by draft_id.
+		// For records with no matching work, default work_id to 0.
+		DB.Exec(`INSERT INTO interactions_new (id, session_id, work_id, iteration, type, data, created_at, updated_at)
+			SELECT i.id, i.session_id,
+				COALESCE((SELECT w.id FROM works w WHERE w.draft_id = i.draft_id LIMIT 1), 0),
+				i.iteration, i.type, i.data, i.created_at, i.updated_at
+			FROM interactions i`)
+		DB.Exec(`DROP TABLE interactions`)
+		DB.Exec(`ALTER TABLE interactions_new RENAME TO interactions`)
+		DB.Exec(`CREATE INDEX idx_interactions_session_id ON interactions(session_id)`)
+		DB.Exec(`CREATE INDEX idx_interactions_work_id ON interactions(work_id)`)
+
+		applogger.L.Info("Successfully migrated interactions table to work_id schema")
+		return
+	}
+
+	// Phase 1 (legacy): user_msg_id + agent_msg_id → work_id
 	// If the old user_msg_id column doesn't exist, nothing to migrate
 	if !DB.Migrator().HasColumn(&model.Interaction{}, "user_msg_id") {
 		return
 	}
 
-	applogger.L.Info("Migrating interactions table: user_msg_id+agent_msg_id → draft_id")
+	applogger.L.Info("Migrating interactions table: user_msg_id+agent_msg_id → work_id")
 
-	// Rebuild the interactions table with the new schema
 	DB.Exec(`
 		CREATE TABLE interactions_new (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id INTEGER NOT NULL,
-			draft_id   INTEGER NOT NULL,
+			work_id    INTEGER NOT NULL,
 			iteration  INTEGER NOT NULL,
 			type       INTEGER NOT NULL,
 			data       TEXT NOT NULL,
@@ -481,14 +517,14 @@ func migrateInteractionsTable() {
 			updated_at DATETIME NOT NULL
 		)
 	`)
-	DB.Exec(`INSERT INTO interactions_new (id, session_id, draft_id, iteration, type, data, created_at, updated_at)
+	DB.Exec(`INSERT INTO interactions_new (id, session_id, work_id, iteration, type, data, created_at, updated_at)
 		SELECT id, session_id, 0, iteration, type, data, created_at, updated_at FROM interactions`)
 	DB.Exec(`DROP TABLE interactions`)
 	DB.Exec(`ALTER TABLE interactions_new RENAME TO interactions`)
 	DB.Exec(`CREATE INDEX idx_interactions_session_id ON interactions(session_id)`)
-	DB.Exec(`CREATE INDEX idx_interactions_draft_id ON interactions(draft_id)`)
+	DB.Exec(`CREATE INDEX idx_interactions_work_id ON interactions(work_id)`)
 
-	applogger.L.Info("Successfully migrated interactions table to draft_id schema")
+	applogger.L.Info("Successfully migrated interactions table to work_id schema")
 }
 
 // migrateHistoricalSummariesTable adds the agent_id column to historical_summaries.

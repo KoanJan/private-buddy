@@ -83,18 +83,6 @@ export const SESSION_STATUS_IDLE = 1;
 export const MESSAGE_STATUS_STREAMING = 0;
 export const MESSAGE_STATUS_COMPLETED = 1;
 
-export interface Interaction {
-  id: number;
-  session_id: number;
-  user_msg_id: number;
-  agent_msg_id: number;
-  iteration: number;
-  type: number;
-  updated_at: string;
-  data: string;
-  created_at: string;
-}
-
 export const INTERACTION_TYPE_REQUEST = 1;
 export const INTERACTION_TYPE_RESPONSE = 2;
 

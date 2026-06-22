@@ -9,10 +9,12 @@ const (
 	WorkStatusAbandoned = -1 // Work was abandoned (e.g., user correction, cancellation)
 )
 
-// Work type constants.
+// WorkType represents the type of work execution strategy.
+type WorkType int
+
 const (
-	WorkTypeChat = 1 // Single LLM call (streaming response)
-	WorkTypeTask = 2 // ReAct loop (multi-iteration with tool calls)
+	WorkTypeChat WorkType = 1 // Single LLM call (streaming response)
+	WorkTypeTask WorkType = 2 // ReAct loop (multi-iteration with tool calls)
 )
 
 // Work represents a unit of work for an agent within a session.
@@ -26,9 +28,9 @@ type Work struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	AgentID     int64     `gorm:"not null;index:idx_agent_status" json:"agent_id"`
 	SessionID   int64     `gorm:"not null" json:"session_id"`
-	DraftID     *int64    `gorm:"column:draft_id" json:"draft_id"`              // References message_drafts.id, NULL if not yet created
-	Type        int       `gorm:"not null" json:"type"`                         // 1=chat, 2=task
-	Description string    `gorm:"type:text;not null" json:"description"`        // Natural language description for semantic routing and recovery
+	DraftID     *int64    `gorm:"column:draft_id" json:"draft_id"`                         // References message_drafts.id, NULL if not yet created
+	Type        WorkType  `gorm:"not null" json:"type"`                                    // 1=chat, 2=task
+	Description string    `gorm:"type:text;not null" json:"description"`                   // Natural language description for semantic routing and recovery
 	Status      int       `gorm:"not null;default:0;index:idx_agent_status" json:"status"` // 0=running, 1=completed, -1=abandoned
 	CreatedAt   time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`

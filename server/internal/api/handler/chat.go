@@ -24,7 +24,6 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/chat/chatcontext"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/memory"
 
@@ -197,9 +196,6 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		applogger.L.Warn("failed to update last_read_message_id on session create", "session_id", session.ID, "error", err)
 	}
 
-	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	chatcontext.MaybeTriggerSummary(c.Request.Context(), session.ID, agentID)
-
 	// Send event to Agent Runtime instead of creating placeholder AI message
 	h.sendEventToRuntime(agentID, session.ID, userMsg.ID, message)
 
@@ -262,9 +258,6 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		Update("last_read_message_id", userMsg.ID).Error; err != nil {
 		applogger.L.Warn("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
 	}
-
-	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	chatcontext.MaybeTriggerSummary(c.Request.Context(), sessionID, session.AgentID)
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
 	h.sendEventToRuntime(session.AgentID, sessionID, userMsg.ID, message)

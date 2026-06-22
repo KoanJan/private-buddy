@@ -1,9 +1,4 @@
-// Package context implements the context engineering pipeline for chat processing.
-//
-// This package provides the context assembly services that build the LLM message
-// sequence from various context sources: summaries, narratives, retrieval results,
-// person state, and task results. It matches Python's chat/context module.
-package chatcontext
+package comprehend
 
 import (
 	"context"
@@ -194,8 +189,7 @@ func getLatestSummaryByID(sessionID, agentID int64) *model.HistoricalSummary {
 	return &summary
 }
 
-// generateSummaryForSession is a shared function for triggering summary generation
-// from both the API handler and ChatService.
+// generateSummaryForSession is a shared function for triggering summary generation.
 // It loads the session, agent, and LLM config before delegating to generateSummary.
 func generateSummaryForSession(ctx context.Context, sessionID, agentID int64, version int, windowSize int) {
 	var llmConfig model.LLMConfig

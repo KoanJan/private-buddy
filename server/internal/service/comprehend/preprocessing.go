@@ -1,12 +1,10 @@
-package chatcontext
+package comprehend
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/sashabaranov/go-openai/jsonschema"
 
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
@@ -57,9 +55,9 @@ Output only the clarification question, without any additional content.`
 // QueryRoutingResult represents the structured output of query routing.
 // Defines the expected format when the LLM classifies and processes a user query.
 type QueryRoutingResult struct {
-	Type           string `json:"type"`
-	RewrittenQuery string `json:"rewritten_query"`
-	Reason         string `json:"reason"`
+	Type           string `json:"type" jsonschema:"description=Query type classification,enum=no_query,enum=clear,enum=ambiguous,enum=vague,required"`
+	RewrittenQuery string `json:"rewritten_query" jsonschema:"description=Rewritten query that is self-contained and clear (required for ambiguous type)"`
+	Reason         string `json:"reason" jsonschema:"description=Reason why the query is vague and needs clarification (required for vague type)"`
 }
 
 // PreprocessingResult represents the full output of query preprocessing,
@@ -122,25 +120,7 @@ func routeQuery(
 		Name:        "QueryRoutingResult",
 		Description: "Classify and process the user query",
 		Strict:      true,
-		Schema: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"type": {
-					Type:        jsonschema.String,
-					Enum:        []string{"no_query", "clear", "ambiguous", "vague"},
-					Description: "Query type classification",
-				},
-				"rewritten_query": {
-					Type:        jsonschema.String,
-					Description: "Rewritten query that is self-contained and clear (required for ambiguous type)",
-				},
-				"reason": {
-					Type:        jsonschema.String,
-					Description: "Reason why the query is vague and needs clarification (required for vague type)",
-				},
-			},
-			Required: []string{"type"},
-		},
+		Schema:      llm.GenerateSchema[QueryRoutingResult](),
 	})
 
 	if err != nil {

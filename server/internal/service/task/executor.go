@@ -20,6 +20,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -35,7 +36,7 @@ import (
 
 // TaskResult represents the outcome of a task execution.
 // On success, Output contains the final content. On failure, Error contains the reason.
-// Notes, Workspace, NotesPath, and TaskPath are always populated for observability.
+// Notes, Workspace, and NotesPath are always populated for observability.
 type TaskResult struct {
 	Status      string `json:"status"`
 	Output      string `json:"output,omitempty"`
@@ -43,22 +44,105 @@ type TaskResult struct {
 	Notes       string `json:"notes,omitempty"`
 	Workspace   string `json:"workspace,omitempty"`
 	NotesPath   string `json:"notes_path,omitempty"`
-	TaskPath    string `json:"task_path,omitempty"`
 	NotesLength int    `json:"notes_length,omitempty"`
+}
+
+// GuidanceDirective is a structured guidance message sent from the Runtime
+// to the TaskLoop during execution. It carries both the executable directive
+// (Guidance) and the cognitive context explaining why (Reason).
+//
+// This struct is passed through the guidance channel instead of a bare string,
+// so the TaskLoop's LLM can understand the full context of a route or cancel
+// decision — not just the "what" but also the "why".
+type GuidanceDirective struct {
+	Guidance string // What to do: the executable directive
+	Reason   string // Why: user's original message, inferred intent, and Decide's reasoning
+}
+
+// RunTaskParams contains all parameters needed for the full task pipeline.
+// After the cognitive order refactoring, Guidance from the Decide phase
+// replaces the old Rewrite step — comprehension and decision have already
+// produced a clear execution intent, so rewriting is unnecessary.
+type RunTaskParams struct {
+	LLMConfig  *model.LLMConfig
+	SessionID  int64
+	AgentID    int64
+	UserMsgID  int64
+	WorkID     int64
+	Guidance   string // Execution intent from Decide phase (replaces Rewrite)
+	Ctx        context.Context
+	OnNotify   func(data string)        // Optional callback for frontend notifications
+	GuidanceCh <-chan GuidanceDirective // Channel for receiving new guidance during execution
+}
+
+// RunTask executes the full task pipeline using Guidance as the task requirement.
+//
+// After the cognitive order refactoring, the Comprehend-Decide pipeline has
+// already produced a clear execution intent (Guidance). This replaces the
+// old Rewrite step — there is no need to rewrite the user message because
+// all cognitive work (understanding intent, resolving references, determining
+// what to do) was completed before this point.
+//
+// New guidance can arrive via GuidanceCh during execution. The TaskLoop
+// observes the channel at each iteration boundary and injects new directives
+// as environment events in the ReAct cycle.
+func RunTask(params RunTaskParams) *TaskResult {
+	// Notify frontend that agent is processing
+	if params.OnNotify != nil {
+		notifyData, _ := json.Marshal(map[string]string{
+			"type":    "agent_processing",
+			"message": "Agent is processing your request...",
+		})
+		params.OnNotify(string(notifyData))
+	}
+
+	applogger.L.Info("RunTask: starting with Guidance",
+		"session_id", params.SessionID,
+		"guidance", truncateString(params.Guidance, 100),
+	)
+
+	// Load search config for web search tool
+	var searchConfig model.SearchConfig
+	if err := database.DB.Where("is_active = ?", true).First(&searchConfig).Error; err != nil {
+		applogger.L.Warn("failed to load active search config, proceeding without search", "error", err)
+	}
+
+	return Execute(TaskParams{
+		TaskRequirement: params.Guidance, // Guidance IS the task requirement
+		Guidance:        params.Guidance,
+		LLMConfig:       params.LLMConfig,
+		MaxIterations:   0,
+		SessionID:       params.SessionID,
+		AgentID:         params.AgentID,
+		UserMsgID:       params.UserMsgID,
+		WorkID:          params.WorkID,
+		SearchConfig:    &searchConfig,
+		Ctx:             params.Ctx,
+		GuidanceCh:      params.GuidanceCh,
+	})
+}
+
+// truncateString truncates a string to maxLen for logging.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }
 
 // TaskParams contains all parameters needed for task execution.
 type TaskParams struct {
-	TaskRequirement string              // The rewritten task description to execute
-	LLMConfig       *model.LLMConfig    // LLM configuration for the task
-	MaxIterations   int                 // Override for max loop iterations (0 = use default)
-	SessionID       int64               // Session ID for interaction records and workspace
-	AgentID         int64               // Agent ID for tools that need agent context (e.g., wake_me_when)
-	UserMsgID       int64               // User message ID that triggered execution
-	DraftID         int64               // Draft ID for interaction record association
-	SearchConfig    *model.SearchConfig // Search configuration for web search tool
-	DeliveryType    string              // Expected delivery type ("text" or "file"), affects system prompt
-	Ctx             context.Context     // Cancellation context from the caller
+	TaskRequirement string                   // The task description to execute (from Decide phase Guidance)
+	Guidance        string                   // Execution intent from Decide phase, injected into system prompt
+	LLMConfig       *model.LLMConfig         // LLM configuration for the task
+	MaxIterations   int                      // Override for max loop iterations (0 = use default)
+	SessionID       int64                    // Session ID for interaction records and workspace
+	AgentID         int64                    // Agent ID for tools that need agent context (e.g., wake_me_when)
+	UserMsgID       int64                    // User message ID that triggered execution
+	WorkID          int64                    // Work ID for interaction record association
+	SearchConfig    *model.SearchConfig      // Search configuration for web search tool
+	Ctx             context.Context          // Cancellation context from the caller
+	GuidanceCh      <-chan GuidanceDirective // Channel for receiving new guidance during execution
 }
 
 // Execute runs a task and returns the result.
@@ -77,9 +161,7 @@ func Execute(params TaskParams) *TaskResult {
 		"max_iterations", maxIterations,
 	)
 
-	workspace := initSessionWorkspace(params.SessionID, params.TaskRequirement)
-
-	taskContent := readTaskMD(params.SessionID)
+	workspace := initWorkspace(params.SessionID)
 
 	settings := config.Get()
 	iterationWindow := settings.ContextWindowIterations
@@ -89,12 +171,11 @@ func Execute(params TaskParams) *TaskResult {
 	writeNotesTool := tools.NewWriteNotesTool(params.SessionID, workspaceRoot, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	systemPrompt := buildSystemPrompt(params.SessionID, params.DeliveryType)
+	systemPrompt := buildSystemPrompt(params.SessionID, params.Guidance)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
 		iterationWindow,
-		taskContent,
 		notesContent,
 	)
 
@@ -105,7 +186,9 @@ func Execute(params TaskParams) *TaskResult {
 		llm.TemperatureCreative,
 	)
 
-	toolList := buildToolList(workspace, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, workspaceRoot, notesMaxChars)
+	sessionWorkspace := getSessionWorkspace(params.SessionID)
+	sessionOutputDir := getSessionOutputDir(params.SessionID)
+	toolList := buildToolList(sessionWorkspace, sessionOutputDir, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, workspaceRoot, notesMaxChars)
 
 	taskLoop := NewTaskLoop(
 		llmClient,
@@ -115,8 +198,9 @@ func Execute(params TaskParams) *TaskResult {
 		maxIterations,
 		params.SessionID,
 		params.UserMsgID,
-		params.DraftID,
+		params.WorkID,
 		writeNotesTool,
+		params.GuidanceCh,
 	)
 
 	loopResult := taskLoop.Run(params.Ctx)
@@ -126,7 +210,6 @@ func Execute(params TaskParams) *TaskResult {
 	result := &TaskResult{
 		Workspace: workspace,
 		NotesPath: fmt.Sprintf("%s/.meta/notes.md", workspace),
-		TaskPath:  fmt.Sprintf("%s/.meta/task.md", workspace),
 		Notes:     finalNotes,
 	}
 
@@ -158,10 +241,11 @@ func Execute(params TaskParams) *TaskResult {
 }
 
 // buildSystemPrompt constructs the system prompt for the task loop.
-// Includes basic rules, available tools, working directory, and delivery type guidance.
-func buildSystemPrompt(sessionID int64, deliveryType string) string {
-	workspace := getSessionWorkspace(sessionID)
-	workingDir := fmt.Sprintf("%s/output", workspace)
+// Includes basic rules, available tools, working directory, delivery guidance,
+// and the execution directive (Guidance) from the Decide phase.
+func buildSystemPrompt(sessionID int64, guidance string) string {
+	sessionDir := getSessionWorkspace(sessionID)
+	outputDir := getSessionOutputDir(sessionID)
 	hasWS := hasWebSearch()
 
 	parts := []string{
@@ -185,35 +269,40 @@ func buildSystemPrompt(sessionID int64, deliveryType string) string {
 		"",
 		"Always verify your actions by checking the results.",
 		"",
-		fmt.Sprintf("Your working directory is: %s", workingDir),
-		"All files you create MUST be within this directory.",
-		"Do not write files to any other location.",
+		fmt.Sprintf("Your session directory is: %s", sessionDir),
+		fmt.Sprintf("Your default working directory is: %s", outputDir),
+		"",
+		"WORKSPACE ORGANIZATION:",
+		fmt.Sprintf("- Your default working directory is: %s", outputDir),
+		"- Before creating files, consider whether this task relates to an existing project:",
+		"  - If starting a new project (e.g., building an app, writing a report), create a dedicated subdirectory for it",
+		"  - If continuing or modifying existing work, first check what subdirectories exist and work within the appropriate one",
+		"- This keeps your workspace organized but is not enforced — use your judgment",
+		"",
+		"DELIVERY GUIDANCE:",
+		"When the task is complete, your final output will be shown to the user.",
+		"First, determine what kind of deliverable the task requires:",
+		"- File deliverables (code, documents, etc.) → provide the full ABSOLUTE file path so the user can click to open it",
+		"- Information deliverables (answers, analysis, etc.) → present the information directly in your response",
+		"- Mixed deliverables → provide both the information summary and the file paths",
+		"",
+		"The user should be able to reach the deliverable directly from your response — zero friction:",
+		"- ALWAYS provide ABSOLUTE file paths, not relative paths. Use `pwd` if unsure of the full path",
+		"- Never make the user guess where things are or manually type paths",
+		"- Never fabricate or guess file paths — verify with `pwd` or `ls` if needed",
+		"- If something was partially completed, clearly state what's done and what's remaining",
 	)
 
-	if deliveryType == "file" {
+	// Inject Guidance as a self-directive in the system prompt.
+	// This is the execution intent from the Decide phase — the agent's
+	// own understanding of what it should accomplish.
+	if guidance != "" {
 		parts = append(parts,
 			"",
-			"DELIVERY TYPE: file",
-			"The user expects file deliverables (code, documents, etc.).",
-			"Create the required files in your working directory.",
-			"When finished, list all created files and provide a summary.",
-		)
-	} else if deliveryType == "text" {
-		parts = append(parts,
-			"",
-			"DELIVERY TYPE: text",
-			"The user expects a text answer as the deliverable.",
-			"Provide a clear, concise text response.",
-			"You may use tools to gather information, but the final",
-			"output should be a direct text answer.",
+			"[Execution Directive]",
+			guidance,
 		)
 	}
-
-	parts = append(parts,
-		"",
-		"When the task is complete, provide a clear and concise summary of what was accomplished.",
-		"If the task cannot be completed, explain why and what was attempted.",
-	)
 
 	return strings.Join(parts, "\n")
 }
@@ -229,9 +318,9 @@ func hasWebSearch() bool {
 
 // buildToolList creates the list of available tools for the task loop.
 // Always includes bash, write_notes, and wake_me_when; adds web_search if search config is available.
-func buildToolList(workspace string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
+func buildToolList(sessionWorkspace, workDir string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
-		tools.NewBashTool(workspace),
+		tools.NewBashTool(sessionWorkspace, workDir),
 		tools.NewWriteNotesTool(sessionID, workspaceRoot, notesMaxChars),
 		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
 	}
