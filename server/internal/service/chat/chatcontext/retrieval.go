@@ -15,11 +15,11 @@ import (
 
 // RetrievalResult holds all context components retrieved for chat processing.
 type RetrievalResult struct {
-	RecentMessages   []model.Message     `json:"recent_messages"`
+	RecentMessages   []model.Message      `json:"recent_messages"`
 	RelevantSegments []comprehend.Segment `json:"relevant_segments"`
-	SummaryVersion   int                 `json:"summary_version"`
-	Narrative        string              `json:"narrative"`
-	HasEmbedding     bool                `json:"has_embedding"`
+	SummaryVersion   int                  `json:"summary_version"`
+	Narrative        string               `json:"narrative"`
+	HasEmbedding     bool                 `json:"has_embedding"`
 }
 
 // getEmbeddingConfig returns the global embedding config.
@@ -88,7 +88,7 @@ func GetContextForChat(ctx context.Context, sessionID, agentID int64, query stri
 		if err := vectorStore.Init(); err == nil {
 			searchResults, err := vectorStore.Search(ctx, sessionID, query, ragCount)
 			if err != nil {
-				applogger.L.Error("RAG retrieval failed", "error", err)
+				applogger.Error("RAG retrieval failed", "error", err)
 			} else {
 				for _, sr := range searchResults {
 					result.RelevantSegments = append(result.RelevantSegments, comprehend.Segment{
@@ -97,7 +97,7 @@ func GetContextForChat(ctx context.Context, sessionID, agentID int64, query stri
 						Source:    comprehend.SourceChatHistory,
 					})
 				}
-				applogger.L.Info("RAG retrieved segments",
+				applogger.Info("RAG retrieved segments",
 					"session_id", sessionID,
 					"count", len(searchResults),
 				)
@@ -122,25 +122,25 @@ func GetContextForChat(ctx context.Context, sessionID, agentID int64, query stri
 func IndexMessages(ctx context.Context, sessionID int64, messageIDs []int64) bool {
 	embeddingConfig := getEmbeddingConfig()
 	if embeddingConfig == nil {
-		applogger.L.Info("No embedding config, skipping indexing", "session_id", sessionID)
+		applogger.Info("No embedding config, skipping indexing", "session_id", sessionID)
 		return false
 	}
 
 	var messages []model.Message
 	if err := database.DB.Where("id IN ? AND session_id = ?", messageIDs, sessionID).Find(&messages).Error; err != nil {
-		applogger.L.Warn("IndexMessages: failed to load messages", "session_id", sessionID, "error", err)
+		applogger.Warn("IndexMessages: failed to load messages", "session_id", sessionID, "error", err)
 		return false
 	}
 
 	if len(messages) == 0 {
-		applogger.L.Warn("No messages found for indexing", "session_id", sessionID)
+		applogger.Warn("No messages found for indexing", "session_id", sessionID)
 		return false
 	}
 
 	embeddingSvc := llm.NewEmbeddingService(embeddingConfig.BaseURL, embeddingConfig.APIKey, embeddingConfig.ModelID, 0)
 	vectorStore := vectorstore.NewVectorStoreService(embeddingSvc)
 	if err := vectorStore.Init(); err != nil {
-		applogger.L.Error("Failed to init vector store for indexing", "error", err)
+		applogger.Error("Failed to init vector store for indexing", "error", err)
 		return false
 	}
 	defer vectorStore.Close()
@@ -164,10 +164,10 @@ func IndexMessages(ctx context.Context, sessionID int64, messageIDs []int64) boo
 	}
 
 	if err := vectorStore.AddMessages(ctx, sessionID, msgIDs, contents, metadatas); err != nil {
-		applogger.L.Error("Failed to index messages", "error", err)
+		applogger.Error("Failed to index messages", "error", err)
 		return false
 	}
 
-	applogger.L.Info("Indexed messages for session", "session_id", sessionID, "count", len(messages))
+	applogger.Info("Indexed messages for session", "session_id", sessionID, "count", len(messages))
 	return true
 }

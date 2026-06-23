@@ -52,7 +52,7 @@ func (vss *VectorStoreService) Init() error {
 	}
 
 	vss.db = db
-	applogger.L.Info("Vector store initialized", "path", settings.VectorDBFile())
+	applogger.Info("Vector store initialized", "path", settings.VectorDBFile())
 	return nil
 }
 
@@ -117,7 +117,7 @@ type VectorMetadata struct {
 func (vss *VectorStoreService) AddMessages(ctx context.Context, sessionID int64, messageIDs []int64, contents []string, metadatas []VectorMetadata) error {
 	// Skip if embedding service is not configured
 	if vss.embeddingSvc == nil {
-		applogger.L.Warn("Embedding service not available, skipping vector store add")
+		applogger.Warn("Embedding service not available, skipping vector store add")
 		return nil
 	}
 
@@ -141,11 +141,11 @@ func (vss *VectorStoreService) AddMessages(ctx context.Context, sessionID int64,
 			meta.MessageID, meta.Role, meta.Content, blob,
 		)
 		if err != nil {
-			applogger.L.Error("Failed to insert vector", "error", err)
+			applogger.Error("Failed to insert vector", "error", err)
 		}
 	}
 
-	applogger.L.Info("Added messages to vector store",
+	applogger.Info("Added messages to vector store",
 		"session_id", sessionID,
 		"count", len(contents),
 	)

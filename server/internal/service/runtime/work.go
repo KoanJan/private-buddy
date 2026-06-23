@@ -4,14 +4,18 @@ import (
 	"context"
 
 	"private-buddy-server/internal/database"
+	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/chat"
+	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/task"
-
-	applogger "private-buddy-server/internal/logger"
 )
+
+// userFriendlyErrorMsg is the default error message shown to users when
+// server-side processing fails.
+const userFriendlyErrorMsg = "Sorry, something went wrong on the server. Please try again later."
 
 // work represents a unit of work for an agent within a session.
 // It is created when an agent decides to act on an event, and it may
@@ -32,12 +36,12 @@ type work struct {
 	agent          *agentRuntime
 	sessionID      int64
 	draft          *model.MessageDraft
-	plan           WorkPlan // From Decide phase: type + guidance
+	plan           *WorkPlan // From Decide phase: type + guidance
 	maxIterations  int
-	initialPayload any                         // The payload from the event that created this work
-	comprehension  *ComprehensionResult        // Results from the Comprehend phase
-	taskResult     *task.TaskResult            // Task execution result (only set for TaskWork)
-	guidanceCh     chan task.GuidanceDirective // Channel for sending guidance/cancel directives to TaskLoop
+	initialPayload any                             // The payload from the event that created this work
+	comprehension  *comprehend.ComprehensionResult // Results from the Comprehend phase
+	taskResult     *task.TaskResult                // Task execution result (only set for TaskWork)
+	guidanceCh     chan task.GuidanceDirective     // Channel for sending guidance/cancel directives to TaskLoop
 }
 
 // Run executes the work. After the cognitive order refactoring, the execution
@@ -58,7 +62,7 @@ func (w *work) Run(ctx context.Context) {
 		if err := database.DB.Model(&model.Work{}).
 			Where("id = ? AND status = ?", w.ID, model.WorkStatusRunning).
 			Update("status", model.WorkStatusCompleted).Error; err != nil {
-			applogger.L.Error("work: failed to update work status", "work_id", w.ID, "error", err)
+			applogger.Error("work: failed to update work status", "work_id", w.ID, "error", err)
 		}
 
 		// Send work completed event to the agent's event queue.
@@ -76,7 +80,7 @@ func (w *work) Run(ctx context.Context) {
 			}
 		}
 
-		eventqueue.SendEvent(w.agent.agentID, eventqueue.AgentEvent{
+		eventqueue.SendEvent(w.agent.agentID, &eventqueue.AgentEvent{
 			Type:      eventqueue.EventTypeWorkCompleted,
 			SessionID: w.sessionID,
 			Payload: &eventqueue.WorkCompletedPayload{
@@ -91,7 +95,7 @@ func (w *work) Run(ctx context.Context) {
 		})
 	}()
 
-	applogger.L.Info("work started",
+	applogger.Info("work started",
 		"work_id", w.ID,
 		"session_id", w.sessionID,
 		"type", w.plan.Type,
@@ -100,7 +104,7 @@ func (w *work) Run(ctx context.Context) {
 
 	// Check cancellation before starting
 	if ctx.Err() != nil {
-		applogger.L.Info("work cancelled before pipeline", "work_id", w.ID)
+		applogger.Info("work cancelled before pipeline", "work_id", w.ID)
 		w.abandon()
 		return
 	}
@@ -108,11 +112,13 @@ func (w *work) Run(ctx context.Context) {
 	switch w.plan.Type {
 	case model.WorkTypeTask:
 		w.runTask(ctx)
-	default:
+	case model.WorkTypeChat:
 		w.runChat(ctx)
+	default:
+		applogger.Error("unknown type of work plan", "work_type", w.plan.Type)
 	}
 
-	applogger.L.Info("work completed",
+	applogger.Info("work completed",
 		"work_id", w.ID,
 		"session_id", w.sessionID,
 	)
@@ -142,7 +148,7 @@ func (w *work) runTask(ctx context.Context) {
 		GuidanceCh: w.guidanceCh,
 	})
 
-	applogger.L.Info("TaskWork completed",
+	applogger.Info("TaskWork completed",
 		"work_id", w.ID,
 		"session_id", w.sessionID,
 		"status", w.taskResult.Status,
@@ -159,7 +165,7 @@ func (w *work) discardDraft() {
 	if w.draft != nil {
 		if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", w.draft.ID).
 			Update("status", model.DraftStatusDiscarded).Error; err != nil {
-			applogger.L.Warn("work: failed to discard draft", "draft_id", w.draft.ID, "error", err)
+			applogger.Warn("work: failed to discard draft", "draft_id", w.draft.ID, "error", err)
 		}
 	}
 }
@@ -174,20 +180,20 @@ func (w *work) discardDraft() {
 // decides how to wrap up — this is "appealable" cancellation, not forceful kill.
 func (w *work) FeedGuidance(directive task.GuidanceDirective) {
 	if w.guidanceCh == nil {
-		applogger.L.Warn("FeedGuidance called on work with nil guidanceCh",
+		applogger.Warn("FeedGuidance called on work with nil guidanceCh",
 			"work_id", w.ID,
 		)
 		return
 	}
 	select {
 	case w.guidanceCh <- directive:
-		applogger.L.Info("Guidance fed to work",
+		applogger.Info("Guidance fed to work",
 			"work_id", w.ID,
 			"guidance", directive.Guidance,
 			"reason", directive.Reason,
 		)
 	default:
-		applogger.L.Warn("work guidanceCh full, dropping guidance",
+		applogger.Warn("work guidanceCh full, dropping guidance",
 			"work_id", w.ID,
 			"guidance", directive.Guidance,
 		)
@@ -238,11 +244,11 @@ func (w *work) runChat(ctx context.Context) {
 
 	if err != nil {
 		if ctx.Err() != nil {
-			applogger.L.Info("work cancelled during pipeline", "work_id", w.ID)
+			applogger.Info("work cancelled during pipeline", "work_id", w.ID)
 			w.abandon()
 			return
 		}
-		applogger.L.Error("Chat processing failed in work",
+		applogger.Error("Chat processing failed in work",
 			"work_id", w.ID,
 			"session_id", w.sessionID,
 			"error", err,
@@ -262,11 +268,11 @@ func (w *work) runChat(ctx context.Context) {
 // The commit handler creates a message from the draft content and pushes it to SSE clients.
 func (w *work) commitDraft(content string, hasInteractions int) {
 	if w.draft == nil {
-		applogger.L.Error("work.commitDraft called with nil draft", "work_id", w.ID)
+		applogger.Error("work.commitDraft called with nil draft", "work_id", w.ID)
 		return
 	}
 
-	w.agent.commitCh <- commitRequest{
+	w.agent.draftCommitCh <- &draftCommitRequest{
 		draft:           w.draft,
 		sessionID:       w.sessionID,
 		content:         content,
@@ -282,7 +288,7 @@ func (w *work) updateDraftContent(content string) {
 	w.draft.Content = content
 	if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", w.draft.ID).
 		Update("content", content).Error; err != nil {
-		applogger.L.Warn("work: failed to update draft content", "draft_id", w.draft.ID, "error", err)
+		applogger.Warn("work: failed to update draft content", "draft_id", w.draft.ID, "error", err)
 	}
 }
 
@@ -297,13 +303,13 @@ func (w *work) updateDraftContent(content string) {
 func (w *work) abandon() {
 	if err := database.DB.Model(&model.Work{}).Where("id = ?", w.ID).
 		Update("status", model.WorkStatusAbandoned).Error; err != nil {
-		applogger.L.Error("work: failed to mark work as abandoned", "work_id", w.ID, "error", err)
+		applogger.Error("work: failed to mark work as abandoned", "work_id", w.ID, "error", err)
 	}
 
 	if w.draft != nil {
 		if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", w.draft.ID).
 			Update("status", model.DraftStatusDiscarded).Error; err != nil {
-			applogger.L.Warn("work: failed to discard draft on abandon", "draft_id", w.draft.ID, "error", err)
+			applogger.Warn("work: failed to discard draft on abandon", "draft_id", w.draft.ID, "error", err)
 		}
 	}
 }
@@ -312,19 +318,19 @@ func (w *work) abandon() {
 func (w *work) loadChatDependencies() (*model.Session, *model.Agent, *model.LLMConfig) {
 	session := service.GetSession(w.sessionID)
 	if session == nil {
-		applogger.L.Error("Session not found", "session_id", w.sessionID)
+		applogger.Error("Session not found", "session_id", w.sessionID)
 		return nil, nil, nil
 	}
 
 	agent := service.GetAgent(session.AgentID)
 	if agent == nil {
-		applogger.L.Error("Agent not found", "agent_id", session.AgentID)
+		applogger.Error("Agent not found", "agent_id", session.AgentID)
 		return session, nil, nil
 	}
 
 	llmConfig := service.GetLLMConfig(agent.LLMConfigID)
 	if llmConfig == nil {
-		applogger.L.Error("LLM config not found", "config_id", agent.LLMConfigID)
+		applogger.Error("LLM config not found", "config_id", agent.LLMConfigID)
 		return session, agent, nil
 	}
 
@@ -358,4 +364,57 @@ func (w *work) handleChatError() {
 	if w.draft != nil {
 		w.commitDraft(userFriendlyErrorMsg, model.HasInteractionsNone)
 	}
+}
+
+// removeWorkByID removes a work from the active works slice by its ID.
+func removeWorkByID(works []*work, workID int64) []*work {
+	for i, w := range works {
+		if w.ID == workID {
+			return append(works[:i], works[i+1:]...)
+		}
+	}
+	return works
+}
+
+// recoverActiveWorks loads active works from the database for agent recovery
+// after a service restart. Abandoned works are marked and no new Work objects
+// are returned since mid-execution resumption is not supported.
+func recoverActiveWorks(agentID int64) []*work {
+	var workRecords []model.Work
+	if err := database.DB.Where("agent_id = ? AND status = ?", agentID, model.WorkStatusRunning).Find(&workRecords).Error; err != nil {
+		applogger.Error("recoverActiveWorks: failed to load work records", "agent_id", agentID, "error", err)
+		return nil
+	}
+
+	for _, wr := range workRecords {
+		// Mark recovered works as abandoned since we can't resume mid-execution
+		if err := database.DB.Model(&model.Work{}).Where("id = ?", wr.ID).
+			Update("status", model.WorkStatusAbandoned).Error; err != nil {
+			applogger.Error("recoverActiveWorks: failed to mark work as abandoned", "work_id", wr.ID, "error", err)
+		}
+
+		if wr.DraftID != 0 {
+			if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", wr.DraftID).
+				Update("status", model.DraftStatusDiscarded).Error; err != nil {
+				applogger.Error("recoverActiveWorks: failed to discard draft", "draft_id", wr.DraftID, "error", err)
+			}
+		}
+
+		// Reset participant status to idle so the frontend doesn't show stuck "responding"
+		if err := database.DB.Model(&model.ParticipantSession{}).
+			Where("session_id = ? AND participant_type = ? AND participant_id = ?",
+				wr.SessionID, model.ParticipantTypeAgent, agentID).
+			Update("status", model.ParticipantStatusIdle).Error; err != nil {
+			applogger.Error("recoverActiveWorks: failed to reset participant status",
+				"session_id", wr.SessionID, "agent_id", agentID, "error", err)
+		}
+
+		applogger.Info("Recovered work marked as abandoned",
+			"work_id", wr.ID,
+			"agent_id", agentID,
+			"session_id", wr.SessionID,
+		)
+	}
+
+	return nil
 }

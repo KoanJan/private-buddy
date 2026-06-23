@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.19] - 2026-06-24
+
+### Changed
+- **Runtime File Split**: split the monolithic `agent_runtime.go` into separate files by responsibility — heartbeat, draft commits, SSE hooks, and alarm management
+- **Alarm System Refactoring**: moved alarm goroutine lifecycle from tools layer to runtime layer; tools now only create DB records and emit events, while runtime handles goroutine registration, startup recovery of orphan alarms, and shutdown cleanup
+
+### Removed
+- **Proactive Message Mechanism**: removed heartbeat-driven `selfReflect` — event-driven notification via eventqueue replaces periodic LLM polling for proactive replies
+
+### Fixed
+- **Transactional Integrity**: wrapped `newWork` and `commitDraft` database operations in transactions to prevent orphan records on partial failure; eliminated nullable `DraftID` on Work model
+- **Electron Graceful Shutdown**: aligned Electron's force-kill timeout (5s → 12s) with backend HTTP server's graceful shutdown window, preventing premature SIGKILL during cleanup
+
+
 ## [0.0.18] - 2026-06-23
 
 ### Added

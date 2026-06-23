@@ -104,7 +104,7 @@ func (h *Handler) UpdateLLMConfig(c *gin.Context) {
 	if len(updates) > 0 {
 		h.crudLLM.Update(entity, updates)
 		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.L.Warn("failed to refresh LLM config after update", "id", id, "error", err)
+			applogger.Warn("failed to refresh LLM config after update", "id", id, "error", err)
 		}
 	}
 	response.Success(c, schema.NewLLMConfigResponse(entity))
@@ -119,7 +119,7 @@ func (h *Handler) DeleteLLMConfig(c *gin.Context) {
 	}
 	var referencingAgents []model.Agent
 	if err := database.DB.Where("llm_config_id = ?", id).Find(&referencingAgents).Error; err != nil {
-		applogger.L.Warn("failed to check referencing agents for LLM config", "id", id, "error", err)
+		applogger.Warn("failed to check referencing agents for LLM config", "id", id, "error", err)
 	}
 	if len(referencingAgents) > 0 {
 		names := make([]string, len(referencingAgents))
@@ -224,7 +224,7 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 			return
 		}
 		if err := database.DB.First(existing, existing.ID).Error; err != nil {
-			applogger.L.Warn("failed to refresh user profile after update", "id", existing.ID, "error", err)
+			applogger.Warn("failed to refresh user profile after update", "id", existing.ID, "error", err)
 		}
 		response.Success(c, schema.NewUserProfileResponse(existing))
 		return
@@ -291,7 +291,7 @@ func (h *Handler) ListAgents(c *gin.Context) {
 func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 	var agents []model.Agent
 	if err := database.DB.Order("updated_at DESC").Find(&agents).Error; err != nil {
-		applogger.L.Error("failed to list agents with sessions", "error", err)
+		applogger.Error("failed to list agents with sessions", "error", err)
 		response.InternalError(c, "Failed to list agents")
 		return
 	}
@@ -308,7 +308,7 @@ func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 
 	var allSessions []model.Session
 	if err := database.DB.Where("agent_id IN ?", agentIDs).Order("updated_at DESC").Find(&allSessions).Error; err != nil {
-		applogger.L.Warn("failed to load sessions for agent list, returning without sessions", "error", err)
+		applogger.Warn("failed to load sessions for agent list, returning without sessions", "error", err)
 	}
 
 	sessionsByAgent := make(map[int64][]model.Session)
@@ -356,7 +356,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	if len(updates) > 0 {
 		h.crudAgent.Update(entity, updates)
 		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.L.Warn("failed to refresh agent after update", "id", id, "error", err)
+			applogger.Warn("failed to refresh agent after update", "id", id, "error", err)
 		}
 	}
 	response.Success(c, schema.NewAgentResponse(entity))
@@ -377,7 +377,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 
 	var sessionIDs []int64
 	if err := database.DB.Model(&model.Session{}).Where("agent_id = ?", id).Pluck("id", &sessionIDs).Error; err != nil {
-		applogger.L.Warn("failed to pluck session IDs for agent deletion", "agent_id", id, "error", err)
+		applogger.Warn("failed to pluck session IDs for agent deletion", "agent_id", id, "error", err)
 	}
 
 	if len(sessionIDs) > 0 {
@@ -395,28 +395,28 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		// 6. Messages
 		// 7. Sessions
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Work{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete works", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete works", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.MessageDraft{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete message drafts", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete message drafts", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Interaction{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete interactions", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete interactions", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.HistoricalSummary{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete historical summaries", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete historical summaries", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.ParticipantSession{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete participant sessions", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete participant sessions", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Message{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete messages", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete messages", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("agent_id = ?", id).Delete(&model.Session{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete sessions", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete sessions", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.ScheduledEvent{}).Error; err != nil {
-			applogger.L.Error("DeleteAgent: failed to delete scheduled events", "agent_id", id, "error", err)
+			applogger.Error("DeleteAgent: failed to delete scheduled events", "agent_id", id, "error", err)
 		}
 
 		for _, sid := range sessionIDs {
@@ -426,10 +426,10 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 
 	// Delete agent-level memory and cognition (not session-scoped)
 	if err := database.DB.Where("agent_id = ?", id).Delete(&model.AgentObservation{}).Error; err != nil {
-		applogger.L.Error("DeleteAgent: failed to delete agent observations", "agent_id", id, "error", err)
+		applogger.Error("DeleteAgent: failed to delete agent observations", "agent_id", id, "error", err)
 	}
 	if err := database.DB.Where("agent_id = ?", id).Delete(&model.EntityProfile{}).Error; err != nil {
-		applogger.L.Error("DeleteAgent: failed to delete entity profiles", "agent_id", id, "error", err)
+		applogger.Error("DeleteAgent: failed to delete entity profiles", "agent_id", id, "error", err)
 	}
 
 	h.crudAgent.Delete(id)
@@ -493,7 +493,7 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 	if len(updates) > 0 {
 		h.crudSession.Update(entity, updates)
 		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.L.Warn("failed to refresh session after update", "id", id, "error", err)
+			applogger.Warn("failed to refresh session after update", "id", id, "error", err)
 		}
 	}
 	response.Success(c, schema.NewSessionResponse(entity))
@@ -516,22 +516,22 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	// 6. Messages
 	// 7. Session itself
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.Work{}).Error; err != nil {
-		applogger.L.Error("DeleteSession: failed to delete works", "session_id", id, "error", err)
+		applogger.Error("DeleteSession: failed to delete works", "session_id", id, "error", err)
 	}
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.MessageDraft{}).Error; err != nil {
-		applogger.L.Error("DeleteSession: failed to delete message drafts", "session_id", id, "error", err)
+		applogger.Error("DeleteSession: failed to delete message drafts", "session_id", id, "error", err)
 	}
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.Interaction{}).Error; err != nil {
-		applogger.L.Error("DeleteSession: failed to delete interactions", "session_id", id, "error", err)
+		applogger.Error("DeleteSession: failed to delete interactions", "session_id", id, "error", err)
 	}
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.HistoricalSummary{}).Error; err != nil {
-		applogger.L.Error("DeleteSession: failed to delete historical summaries", "session_id", id, "error", err)
+		applogger.Error("DeleteSession: failed to delete historical summaries", "session_id", id, "error", err)
 	}
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.ParticipantSession{}).Error; err != nil {
-		applogger.L.Error("DeleteSession: failed to delete participant sessions", "session_id", id, "error", err)
+		applogger.Error("DeleteSession: failed to delete participant sessions", "session_id", id, "error", err)
 	}
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.Message{}).Error; err != nil {
-		applogger.L.Error("DeleteSession: failed to delete messages", "session_id", id, "error", err)
+		applogger.Error("DeleteSession: failed to delete messages", "session_id", id, "error", err)
 	}
 	h.crudSession.Delete(id)
 	removeSessionWorkspace(id)
@@ -581,7 +581,7 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	}
 	var messages []model.Message
 	if err := database.DB.Where("session_id = ?", sessionID).Order("created_at ASC").Find(&messages).Error; err != nil {
-		applogger.L.Error("failed to list messages", "session_id", sessionID, "error", err)
+		applogger.Error("failed to list messages", "session_id", sessionID, "error", err)
 		response.InternalError(c, "Failed to list messages")
 		return
 	}

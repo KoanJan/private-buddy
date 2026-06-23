@@ -1,0 +1,109 @@
+package runtime
+
+import (
+	"context"
+	"time"
+
+	"private-buddy-server/internal/database"
+	applogger "private-buddy-server/internal/logger"
+	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service/comprehend"
+	"private-buddy-server/internal/service/memory"
+)
+
+// handleDraftCommits processes draft commit requests from the commitCh.
+// Runs in a separate goroutine to serialize message writes.
+func (r *agentRuntime) handleDraftCommits(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-r.draftCommitCh:
+			r.commitDraft(ctx, req)
+		}
+	}
+}
+
+// commitDraft atomically commits a draft to the messages table.
+// This is the only path through which agent messages enter the messages table.
+func (r *agentRuntime) commitDraft(ctx context.Context, req *draftCommitRequest) {
+	if req == nil {
+		applogger.Error("commitDraft called with nil commitRequest")
+		return
+	}
+
+	draft := req.draft
+	if draft == nil {
+		applogger.Error("commitDraft called with nil draft")
+		return
+	}
+
+	// tx
+	tx := database.DB.Begin()
+	defer tx.Rollback()
+
+	// Create the message from the draft content
+	msg := model.Message{
+		SessionID:       draft.SessionID,
+		Role:            model.MessageRoleAssistant,
+		Content:         req.content,
+		Status:          model.MessageStatusCompleted,
+		HasInteractions: req.hasInteractions,
+		DraftID:         &draft.ID,
+	}
+	if err := tx.Create(&msg).Error; err != nil {
+		applogger.Error("Failed to commit draft to messages",
+			"draft_id", draft.ID,
+			"session_id", draft.SessionID,
+			"error", err,
+		)
+		return
+	}
+
+	// Update draft status and content
+	if err := tx.Model(&model.MessageDraft{}).Where("id = ?", draft.ID).Updates(map[string]interface{}{
+		"status":  model.DraftStatusCommitted,
+		"content": req.content,
+	}).Error; err != nil {
+		applogger.Error("commitDraft: failed to update draft", "draft_id", draft.ID, "error", err)
+		return
+	}
+
+	// Update agent's last_active_at and last_read_message_id in the participant session.
+	// The agent has "read" everything up to and including its own message,
+	// since it produced it based on all prior context.
+	if err := tx.Model(&model.ParticipantSession{}).
+		Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
+			draft.SessionID, model.ParticipantTypeAgent, r.agentID, msg.ID).
+		Updates(map[string]interface{}{
+			"last_active_at":       time.Now(),
+			"last_read_message_id": msg.ID,
+		}).Error; err != nil {
+		applogger.Error("commitDraft: failed to update participant session", "draft_id", draft.ID, "error", err)
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		applogger.Error("commitDraft: failed to commit tx", "draft_id", draft.ID, "error", err)
+		return
+	}
+
+	applogger.Info("Draft committed to messages",
+		"draft_id", draft.ID,
+		"message_id", msg.ID,
+		"session_id", draft.SessionID,
+	)
+
+	// Submit to the event vectorization service for embedding + observation.
+	memory.SubmitVectorization(memory.VectorizationTask{
+		MessageID: msg.ID,
+		SessionID: msg.SessionID,
+		Content:   msg.Content,
+	})
+
+	// Push message event to SSE clients
+	pushMessageEvent(draft.SessionID, msg.ID, msg.Content, msg.HasInteractions)
+
+	// Trigger summary generation if needed (sender-agnostic, based on message count)
+	comprehend.MaybeTriggerSummary(ctx, draft.SessionID, r.agentID)
+}

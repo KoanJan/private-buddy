@@ -159,14 +159,14 @@ func InferPersonState(
 	})
 
 	if err != nil {
-		applogger.L.Error("Failed to infer person state", "error", err)
+		applogger.Error("Failed to infer person state", "error", err)
 		return nil
 	}
 
 	if result != "" {
 		var state PersonState
 		if err := json.Unmarshal([]byte(result), &state); err == nil {
-			applogger.L.Info("Inferred person state",
+			applogger.Info("Inferred person state",
 				"emotion", state.Emotion,
 				"purpose", state.Purpose,
 				"situation", state.Situation,

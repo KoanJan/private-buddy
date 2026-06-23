@@ -31,7 +31,7 @@ func Init(es *llm.EmbeddingService) {
 	initOnce.Do(func() {
 		embeddingSvc = es
 		ready.Store(true)
-		applogger.L.Info("Memory system initialized")
+		applogger.Info("Memory system initialized")
 	})
 }
 
@@ -48,7 +48,7 @@ func Start(ctx context.Context) {
 	panicIfNotReady()
 	go startEventVectorization(ctx)
 	go runDailyCron(ctx)
-	applogger.L.Info("Memory background services started")
+	applogger.Info("Memory background services started")
 }
 
 // OnRAGHit is the package-level entry point for applying retrieval hits
@@ -74,7 +74,7 @@ func ingestMessage(ctx context.Context, messageID, sessionID int64, content stri
 	// Create event + embedding in one step
 	eventID, err := createEventWithEmbedding(ctx, model.EventTypeMessage, messageID, content)
 	if err != nil {
-		applogger.L.Error("Failed to ingest message event",
+		applogger.Error("Failed to ingest message event",
 			"message_id", messageID, "error", err)
 		return
 	}
@@ -83,13 +83,13 @@ func ingestMessage(ctx context.Context, messageID, sessionID int64, content stri
 	var participants []model.ParticipantSession
 	if err := database.DB.Where("session_id = ? AND participant_type = ?", sessionID, model.ParticipantTypeAgent).
 		Find(&participants).Error; err != nil {
-		applogger.L.Error("failed to load participants for observation creation", "session_id", sessionID, "error", err)
+		applogger.Error("failed to load participants for observation creation", "session_id", sessionID, "error", err)
 		return
 	}
 
 	for _, p := range participants {
 		if err := createObservation(ctx, p.ParticipantID, eventID); err != nil {
-			applogger.L.Warn("Failed to create observation for agent",
+			applogger.Warn("Failed to create observation for agent",
 				"agent_id", p.ParticipantID,
 				"event_id", eventID,
 				"error", err,
@@ -97,7 +97,7 @@ func ingestMessage(ctx context.Context, messageID, sessionID int64, content stri
 		}
 	}
 
-	applogger.L.Debug("Message ingested into memory system",
+	applogger.Debug("Message ingested into memory system",
 		"message_id", messageID,
 		"event_id", eventID,
 		"agent_count", len(participants),
@@ -122,7 +122,7 @@ func onRAGHit(agentID int64, messageIDs []int64) {
 	var events []model.Event
 	if err := database.DB.Where("event_type = ? AND ref_id IN ?", model.EventTypeMessage, messageIDs).
 		Find(&events).Error; err != nil {
-		applogger.L.Warn("processRAGHit: failed to load events", "error", err)
+		applogger.Warn("processRAGHit: failed to load events", "error", err)
 		return
 	}
 
@@ -139,7 +139,7 @@ func onRAGHit(agentID int64, messageIDs []int64) {
 	var observations []model.AgentObservation
 	if err := database.DB.Where("agent_id = ? AND event_id IN ?", agentID, eventIDs).
 		Find(&observations).Error; err != nil {
-		applogger.L.Warn("processRAGHit: failed to load observations", "error", err)
+		applogger.Warn("processRAGHit: failed to load observations", "error", err)
 		return
 	}
 
@@ -157,7 +157,7 @@ func onRAGHit(agentID int64, messageIDs []int64) {
 			"last_accessed_at": obs.LastAccessedAt,
 			"last_scored_at":   obs.LastScoredAt,
 		}).Error; err != nil {
-			applogger.L.Error("processRAGHit: failed to persist observation scores", "obs_id", obs.ID, "error", err)
+			applogger.Error("processRAGHit: failed to persist observation scores", "obs_id", obs.ID, "error", err)
 		}
 
 		// Propagate relevance (time-adjacent, similar, same-session)
@@ -168,7 +168,7 @@ func onRAGHit(agentID int64, messageIDs []int64) {
 	}
 
 	if hitCount > 0 {
-		applogger.L.Info("RAG hit applied to memory observations",
+		applogger.Info("RAG hit applied to memory observations",
 			"agent_id", agentID,
 			"message_ids", len(messageIDs),
 			"observation_count", len(observations),
@@ -190,7 +190,7 @@ func propagateRAGHit(obs *model.AgentObservation, delta float64) {
 	if err := database.DB.Where("agent_id = ? AND event_id IN (SELECT id FROM events WHERE event_type = ? AND ref_id IN (SELECT id FROM messages WHERE session_id = ?))",
 		obs.AgentID, model.EventTypeMessage, sessionID).
 		Find(&sessionObservations).Error; err != nil {
-		applogger.L.Warn("propagateRelevanceForHit: failed to load session observations", "agent_id", obs.AgentID, "session_id", sessionID, "error", err)
+		applogger.Warn("propagateRelevanceForHit: failed to load session observations", "agent_id", obs.AgentID, "session_id", sessionID, "error", err)
 		return
 	}
 
@@ -354,7 +354,7 @@ func Search(ctx context.Context, agentID int64, query string, k int) ([]memoryRe
 		})
 	}
 
-	applogger.L.Info("Memory search completed",
+	applogger.Info("Memory search completed",
 		"agent_id", agentID,
 		"total_observations", len(observations),
 		"results", len(results),
@@ -433,7 +433,7 @@ func applySurvivalBoost(obs model.AgentObservation) float64 {
 	}
 
 	if err := database.DB.Model(&model.AgentObservation{}).Where("id = ?", obs.ID).Updates(updates).Error; err != nil {
-		applogger.L.Error("Failed to persist survival boost",
+		applogger.Error("Failed to persist survival boost",
 			"obs_id", obs.ID, "error", err)
 	}
 

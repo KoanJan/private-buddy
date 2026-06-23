@@ -48,12 +48,12 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
 func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *model.LLMConfig, agentName string, version int, windowSize int) error {
 	existing := getSummary(sessionID, agentID, version)
 	if existing != nil {
-		applogger.L.Info("Summary already exists", "session_id", sessionID, "agent_id", agentID, "version", version)
+		applogger.Info("Summary already exists", "session_id", sessionID, "agent_id", agentID, "version", version)
 		return nil
 	}
 
 	if version < windowSize {
-		applogger.L.Info("Version < window_size, skipping summary generation",
+		applogger.Info("Version < window_size, skipping summary generation",
 			"session_id", sessionID, "agent_id", agentID, "version", version, "window_size", windowSize)
 		return nil
 	}
@@ -63,7 +63,7 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 	if version < 2*windowSize {
 		messages := getMessagesByRange(sessionID, 1, version)
 		if len(messages) == 0 {
-			applogger.L.Warn("No messages found for session", "session_id", sessionID, "range", fmt.Sprintf("1-%d", version))
+			applogger.Warn("No messages found for session", "session_id", sessionID, "range", fmt.Sprintf("1-%d", version))
 			return nil
 		}
 
@@ -74,10 +74,10 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 
 		baselineSummary := getSummary(sessionID, agentID, baselineVersion)
 		if baselineSummary == nil {
-			applogger.L.Info("Baseline summary not found, generating recursively",
+			applogger.Info("Baseline summary not found, generating recursively",
 				"session_id", sessionID, "agent_id", agentID, "baseline_version", baselineVersion)
 			if err := generateSummary(ctx, sessionID, agentID, llmConfig, agentName, baselineVersion, windowSize); err != nil {
-				applogger.L.Error("Failed to generate baseline summary recursively",
+				applogger.Error("Failed to generate baseline summary recursively",
 					"session_id", sessionID, "agent_id", agentID, "baseline_version", baselineVersion, "error", err)
 			}
 			baselineSummary = getSummary(sessionID, agentID, baselineVersion)
@@ -91,7 +91,7 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 		startSeq := version - windowSize + 1
 		messages := getMessagesByRange(sessionID, startSeq, version)
 		if len(messages) == 0 {
-			applogger.L.Warn("No messages found for session", "session_id", sessionID, "range", fmt.Sprintf("%d-%d", startSeq, version))
+			applogger.Warn("No messages found for session", "session_id", sessionID, "range", fmt.Sprintf("%d-%d", startSeq, version))
 			return nil
 		}
 
@@ -104,15 +104,15 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
-		applogger.L.Error("Summary generation LLM call failed", "session_id", sessionID, "agent_id", agentID, "error", err)
+		applogger.Error("Summary generation LLM call failed", "session_id", sessionID, "agent_id", agentID, "error", err)
 		return fmt.Errorf("summary generation failed: %w", err)
 	}
 
-	applogger.L.Info("Generated summary content", "session_id", sessionID, "agent_id", agentID, "version", version)
+	applogger.Info("Generated summary content", "session_id", sessionID, "agent_id", agentID, "version", version)
 
 	narrativeResult := generateNarrativeFromSummary(ctx, llmConfig, summaryContent)
 	if narrativeResult == "" {
-		applogger.L.Error("Narrative generation failed, aborting atomic write", "session_id", sessionID, "agent_id", agentID, "version", version)
+		applogger.Error("Narrative generation failed, aborting atomic write", "session_id", sessionID, "agent_id", agentID, "version", version)
 		return fmt.Errorf("narrative generation failed")
 	}
 
@@ -127,7 +127,7 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 		return err
 	}
 
-	applogger.L.Info("Atomically created summary+record", "session_id", sessionID, "agent_id", agentID, "version", version)
+	applogger.Info("Atomically created summary+record", "session_id", sessionID, "agent_id", agentID, "version", version)
 	return nil
 }
 
@@ -150,7 +150,7 @@ func getMessagesByRange(sessionID int64, startSeq, endSeq int) []model.Message {
 		Offset(startSeq - 1).
 		Limit(endSeq - startSeq + 1).
 		Find(&messages).Error; err != nil {
-		applogger.L.Warn("getMessagesByRange: failed to load messages", "session_id", sessionID, "error", err)
+		applogger.Warn("getMessagesByRange: failed to load messages", "session_id", sessionID, "error", err)
 		return nil
 	}
 	return messages
@@ -195,16 +195,16 @@ func generateSummaryForSession(ctx context.Context, sessionID, agentID int64, ve
 	var llmConfig model.LLMConfig
 	var agent model.Agent
 	if err := database.DB.First(&agent, agentID).Error; err != nil {
-		applogger.L.Error("Agent not found for summary generation", "agent_id", agentID, "error", err)
+		applogger.Error("Agent not found for summary generation", "agent_id", agentID, "error", err)
 		return
 	}
 	if err := database.DB.First(&llmConfig, agent.LLMConfigID).Error; err != nil {
-		applogger.L.Error("LLMConfig not found for summary generation", "config_id", agent.LLMConfigID, "error", err)
+		applogger.Error("LLMConfig not found for summary generation", "config_id", agent.LLMConfigID, "error", err)
 		return
 	}
 
 	if err := generateSummary(ctx, sessionID, agentID, &llmConfig, agent.Name, version, windowSize); err != nil {
-		applogger.L.Error("Summary generation failed", "session_id", sessionID, "agent_id", agentID, "error", err)
+		applogger.Error("Summary generation failed", "session_id", sessionID, "agent_id", agentID, "error", err)
 	}
 }
 
@@ -221,12 +221,12 @@ func MaybeTriggerSummary(ctx context.Context, sessionID, agentID int64) {
 
 	var messageCount int64
 	if err := database.DB.Model(&model.Message{}).Where("session_id = ?", sessionID).Count(&messageCount).Error; err != nil {
-		applogger.L.Warn("MaybeTriggerSummary: failed to count messages", "session_id", sessionID, "error", err)
+		applogger.Warn("MaybeTriggerSummary: failed to count messages", "session_id", sessionID, "error", err)
 		return
 	}
 
 	if messageCount >= int64(windowSize) && messageCount%int64(windowSize) == 0 {
-		applogger.L.Info("Triggering summary generation",
+		applogger.Info("Triggering summary generation",
 			"session_id", sessionID, "agent_id", agentID, "V", messageCount)
 		go generateSummaryForSession(ctx, sessionID, agentID, int(messageCount), windowSize)
 	}

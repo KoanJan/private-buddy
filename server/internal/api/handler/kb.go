@@ -70,7 +70,7 @@ func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
 	for _, entity := range entities {
 		var count int64
 		if err := database.DB.Model(&model.Document{}).Where("knowledge_base_id = ?", entity.ID).Count(&count).Error; err != nil {
-			applogger.L.Warn("failed to count documents for KB list", "kb_id", entity.ID, "error", err)
+			applogger.Warn("failed to count documents for KB list", "kb_id", entity.ID, "error", err)
 		}
 		results = append(results, kbWithStats{
 			KnowledgeBase: entity,
@@ -212,22 +212,22 @@ func (h *KBHandler) DeleteDocument(c *gin.Context) {
 
 	var chunkCount int64
 	if err := database.DB.Model(&model.DocumentChunk{}).Where("document_id = ? AND deleted = 0", docID).Count(&chunkCount).Error; err != nil {
-		applogger.L.Error("failed to count chunks for document soft-delete", "doc_id", docID, "error", err)
+		applogger.Error("failed to count chunks for document soft-delete", "doc_id", docID, "error", err)
 		response.InternalError(c, "Failed to delete document")
 		return
 	}
 	if chunkCount > 0 {
 		if err := database.DB.Model(&model.DocumentChunk{}).Where("document_id = ? AND deleted = 0", docID).Update("deleted", 1).Error; err != nil {
-			applogger.L.Error("failed to soft-delete document chunks", "doc_id", docID, "error", err)
+			applogger.Error("failed to soft-delete document chunks", "doc_id", docID, "error", err)
 		}
 		if err := database.DB.Model(&model.KnowledgeBase{}).Where("id = ?", doc.KnowledgeBaseID).
 			Update("deleted_count", gorm.Expr("deleted_count + ?", chunkCount)).Error; err != nil {
-			applogger.L.Warn("failed to update KB deleted_count after document delete", "kb_id", doc.KnowledgeBaseID, "error", err)
+			applogger.Warn("failed to update KB deleted_count after document delete", "kb_id", doc.KnowledgeBaseID, "error", err)
 		}
 	}
 
 	if err := database.DB.Delete(&doc).Error; err != nil {
-		applogger.L.Error("failed to delete document", "doc_id", docID, "error", err)
+		applogger.Error("failed to delete document", "doc_id", docID, "error", err)
 		response.InternalError(c, "Failed to delete document")
 		return
 	}

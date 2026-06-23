@@ -30,13 +30,13 @@ func GenerateSchema[T any]() json.RawMessage {
 
 	data, err := json.Marshal(schema)
 	if err != nil {
-		applogger.L.Error("llm: failed to marshal invopop schema", "error", err)
+		applogger.Error("llm: failed to marshal invopop schema", "error", err)
 		return json.RawMessage(`{"type":"object","properties":{}}`)
 	}
 
 	// invopop/jsonschema generates schemas using $ref/$defs by default.
-// We inline all references to produce a flat schema where all nested types
-// are fully expanded and directly consumable by LLM APIs.
+	// We inline all references to produce a flat schema where all nested types
+	// are fully expanded and directly consumable by LLM APIs.
 	return inlineSchemaRefs(data)
 }
 

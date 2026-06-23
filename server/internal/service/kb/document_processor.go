@@ -90,25 +90,25 @@ func (dp *documentProcessor) Process(ctx context.Context, kbID int64, doc *model
 	for i := range chunkModels {
 		if err := database.DB.Model(&model.DocumentChunk{}).Where("id = ?", chunkModels[i].ID).
 			Update("vector_id", 1).Error; err != nil {
-			applogger.L.Warn("failed to update vector_id for chunk", "chunk_id", chunkModels[i].ID, "error", err)
+			applogger.Warn("failed to update vector_id for chunk", "chunk_id", chunkModels[i].ID, "error", err)
 		}
 	}
 
 	if err := database.DB.Model(&model.KnowledgeBase{}).Where("id = ?", kbID).
 		Update("vector_count", gorm.Expr("vector_count + ?", len(chunkModels))).Error; err != nil {
-		applogger.L.Error("failed to update KB vector_count", "kb_id", kbID, "error", err)
+		applogger.Error("failed to update KB vector_count", "kb_id", kbID, "error", err)
 	}
 
 	dp.updateStatus(doc.ID, model.DocumentStatusReady, "")
 	if err := database.DB.Model(&model.Document{}).Where("id = ?", doc.ID).Update("chunk_count", len(chunkModels)).Error; err != nil {
-		applogger.L.Warn("failed to update document chunk_count", "doc_id", doc.ID, "error", err)
+		applogger.Warn("failed to update document chunk_count", "doc_id", doc.ID, "error", err)
 	}
 	if err := database.DB.Model(&model.KnowledgeBase{}).Where("id = ?", kbID).
 		Update("document_count", gorm.Expr("document_count + 1")).Error; err != nil {
-		applogger.L.Error("failed to update KB document_count", "kb_id", kbID, "error", err)
+		applogger.Error("failed to update KB document_count", "kb_id", kbID, "error", err)
 	}
 
-	applogger.L.Info("Document processed successfully",
+	applogger.Info("Document processed successfully",
 		"doc_id", doc.ID, "chunks", len(chunkModels))
 	return nil
 }
@@ -126,7 +126,7 @@ func (dp *documentProcessor) storechunks(kbID, docID int64, chunks []chunk) []mo
 		}
 	}
 	if err := database.DB.Create(&models).Error; err != nil {
-		applogger.L.Error("failed to create document chunks", "doc_id", docID, "count", len(models), "error", err)
+		applogger.Error("failed to create document chunks", "doc_id", docID, "count", len(models), "error", err)
 	}
 	return models
 }
@@ -163,20 +163,20 @@ func (dp *documentProcessor) updateStatus(docID int64, status int, errMsg string
 		updates["error_message"] = errMsg
 	}
 	if err := database.DB.Model(&model.Document{}).Where("id = ?", docID).Updates(updates).Error; err != nil {
-		applogger.L.Warn("failed to update document status", "doc_id", docID, "status", status, "error", err)
+		applogger.Warn("failed to update document status", "doc_id", docID, "status", status, "error", err)
 	}
 }
 
 func (dp *documentProcessor) cleanupchunks(docID int64) {
 	var chunkIDs []int64
 	if err := database.DB.Model(&model.DocumentChunk{}).Where("document_id = ?", docID).Pluck("id", &chunkIDs).Error; err != nil {
-		applogger.L.Error("failed to pluck chunk IDs for cleanup", "doc_id", docID, "error", err)
+		applogger.Error("failed to pluck chunk IDs for cleanup", "doc_id", docID, "error", err)
 		return
 	}
 	if len(chunkIDs) > 0 {
 		if err := database.DB.Delete(&model.DocumentChunk{}, chunkIDs).Error; err != nil {
-			applogger.L.Error("failed to delete orphan chunks", "doc_id", docID, "count", len(chunkIDs), "error", err)
+			applogger.Error("failed to delete orphan chunks", "doc_id", docID, "count", len(chunkIDs), "error", err)
 		}
-		applogger.L.Info("Cleaned up orphan chunks", "doc_id", docID, "count", len(chunkIDs))
+		applogger.Info("Cleaned up orphan chunks", "doc_id", docID, "count", len(chunkIDs))
 	}
 }

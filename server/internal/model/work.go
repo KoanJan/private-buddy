@@ -28,7 +28,7 @@ type Work struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	AgentID     int64     `gorm:"not null;index:idx_agent_status" json:"agent_id"`
 	SessionID   int64     `gorm:"not null" json:"session_id"`
-	DraftID     *int64    `gorm:"column:draft_id" json:"draft_id"`                         // References message_drafts.id, NULL if not yet created
+	DraftID     int64     `gorm:"column:draft_id" json:"draft_id"`
 	Type        WorkType  `gorm:"not null" json:"type"`                                    // 1=chat, 2=task
 	Description string    `gorm:"type:text;not null" json:"description"`                   // Natural language description for semantic routing and recovery
 	Status      int       `gorm:"not null;default:0;index:idx_agent_status" json:"status"` // 0=running, 1=completed, -1=abandoned

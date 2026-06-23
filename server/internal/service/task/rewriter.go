@@ -100,14 +100,14 @@ func Rewrite(
 	})
 
 	if err != nil {
-		applogger.L.Error("Task requirement rewrite failed", "error", err)
+		applogger.Error("Task requirement rewrite failed", "error", err)
 		return userMessage
 	}
 
 	if result != "" {
 		var rewritten RewrittenRequirement
 		if err := json.Unmarshal([]byte(result), &rewritten); err == nil {
-			applogger.L.Info("Task requirement rewritten",
+			applogger.Info("Task requirement rewritten",
 				"original", userMessage[:min(50, len(userMessage))],
 				"rewritten", rewritten.Requirement[:min(50, len(rewritten.Requirement))],
 			)

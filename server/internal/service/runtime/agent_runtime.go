@@ -2,9 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -13,20 +10,22 @@ import (
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
-	"private-buddy-server/internal/service/llm"
-	"private-buddy-server/internal/service/memory"
 	"private-buddy-server/internal/service/task"
 
 	applogger "private-buddy-server/internal/logger"
 )
 
-// commitRequest represents a request to commit a draft to the messages table.
+// ==========================================================================
+// Types & Constants
+// ==========================================================================
+
+// draftCommitRequest represents a request to commit a draft to the messages table.
 // Sent through commitCh to serialize message writes across concurrent Works.
-type commitRequest struct {
+type draftCommitRequest struct {
+	content         string // Final content to write
 	draft           *model.MessageDraft
 	sessionID       int64
-	content         string // Final content to write
-	hasInteractions int    // HasInteractionsPending, HasInteractionsExists, or HasInteractionsNone
+	hasInteractions int // HasInteractionsPending, HasInteractionsExists, or HasInteractionsNone
 }
 
 // Heartbeat interval constants for the tickless three-phase model.
@@ -41,21 +40,6 @@ const (
 	ticksToDormant   = 6 // Consecutive none → transition to dormant
 )
 
-// heartbeatOutput is the structured output schema for the LLM heartbeat self-reflection.
-type heartbeatOutput struct {
-	Action          string `json:"action" jsonschema:"description=The action to take: none for no action, proactive_message if you have genuinely valuable new information,enum=none,enum=proactive_message,required"`
-	Reason          string `json:"reason" jsonschema:"description=Brief explanation of why this action was chosen, referencing the three thresholds if applicable,required"`
-	TargetSessionID int64  `json:"target_session_id" jsonschema:"description=If proactive_message, the session ID to send the message to. Omit for other actions."`
-	MessageDraft    string `json:"message_draft" jsonschema:"description=If proactive_message, the draft message content. Omit for other actions."`
-}
-
-// Proactive message frequency control constants.
-// Ensures the agent doesn't spam the user with unsolicited messages.
-const (
-	proactiveMinIntervalHours = 12 // Minimum hours between proactive messages
-	proactiveMinHeartbeats    = 6  // Minimum heartbeat ticks between proactive messages
-)
-
 // agentRuntime is the event-driven execution engine for an agent.
 // It transforms an Agent from a passive configuration object into an active,
 // stateful entity with its own lifecycle.
@@ -63,44 +47,55 @@ const (
 // The runtime runs a single goroutine event loop (for-select + eventCh + heartbeatTimer).
 // Work execution runs in separate goroutines, allowing the event loop to remain responsive.
 type agentRuntime struct {
-	agentID             int64
-	activeWorks         []*work
-	eventCh             <-chan eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
-	commitCh            chan commitRequest
-	heartbeatInterval   time.Duration                              // Base heartbeat interval (adaptive)
-	idleTicks           int                                        // Consecutive idle heartbeats (for tickless backoff)
-	heartbeatTick       int                                        // Total heartbeat ticks (for check scheduling)
-	lastProactiveSent   time.Time                                  // Last time a proactive message was sent
-	ticksSinceProactive int                                        // Heartbeat ticks since last proactive message
-	mu                  sync.Mutex                                 // Protects activeWrites for external queries
-	onStatusChange      func(agentID, sessionID int64, status int) // Callback for SSE push
+	activeWorks       []*work
+	agentID           int64
+	eventCh           <-chan *eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
+	draftCommitCh     chan *draftCommitRequest
+	heartbeatInterval time.Duration                              // Base heartbeat interval (adaptive)
+	idleTicks         int                                        // Consecutive idle heartbeats (for tickless backoff)
+	heartbeatTick     int                                        // Total heartbeat ticks (for check scheduling)
+	mu                sync.Mutex                                 // Protects activeWrites for external queries
+	onStatusChange    func(agentID, sessionID int64, status int) // Callback for SSE push
 }
 
-// newAgentRuntime creates a new runtime for an agent.
-// eventCh is the read-only event channel obtained from eventqueue.Subscribe().
+// ==========================================================================
+// Construction
+// ==========================================================================
+
+// newAgentRuntime creates a new runtime for an agent with minimal initialization.
+// This is the internal constructor — for external use, see createAgentRuntime
+// which adds event subscription and work recovery.
 func newAgentRuntime(
 	agentID int64,
-	eventCh <-chan eventqueue.AgentEvent,
+	eventCh <-chan *eventqueue.AgentEvent,
 	heartbeatInterval time.Duration,
 	onStatusChange func(agentID, sessionID int64, status int),
 ) *agentRuntime {
 	return &agentRuntime{
 		agentID:           agentID,
 		eventCh:           eventCh,
-		commitCh:          make(chan commitRequest, 16),
+		draftCommitCh:     make(chan *draftCommitRequest, 16),
 		heartbeatInterval: heartbeatInterval,
 		onStatusChange:    onStatusChange,
 	}
 }
 
-// Run starts the agent's event loop. Blocks until context is cancelled.
-// The ctx should be the runtime's lifecycle context, created with a cancel
-// function stored on the struct for external shutdown via Stop().
+// ==========================================================================
+// Main Event Loop
+// ==========================================================================
+
+// Run starts the agent's event loop. This is the agent's core execution
+// thread — all events (user messages, work completions, scheduled alarms)
+// arrive here and flow through Comprehend→Decide→Execute.
+//
+// Blocks until context is cancelled. The ctx should be the runtime's
+// lifecycle context, created with a cancel function stored on the struct
+// for external shutdown via Stop().
 func (r *agentRuntime) Run(ctx context.Context) {
 	heartbeatTimer := time.NewTimer(r.heartbeatInterval)
 
-	// Start commit handler goroutine
-	go r.handleCommits(ctx)
+	// Start draft-commit handler goroutine
+	go r.handleDraftCommits(ctx)
 
 	for {
 		select {
@@ -111,21 +106,25 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			case <-heartbeatTimer.C:
 			default:
 			}
-			applogger.L.Info("agentRuntime stopped", "agent_id", r.agentID)
+			applogger.Info("agentRuntime stopped", "agent_id", r.agentID)
 			return
 
 		case event := <-r.eventCh:
 			// Reset idle counter on event arrival
 			r.idleTicks = 0
 
+			// ── Pre-processing: acknowledge the event ──
+			// Mark messages as read so the agent won't re-process them in
+			// subsequent heartbeats. Trigger summary generation for new messages.
+			switch event.Type {
 			// Handle work completion: remove from active works and update status.
 			// This is the agent's self-perception — "I just finished doing X."
 			// It goes through the same Comprehend→Decide pipeline so the agent
 			// can decide whether to inform the user.
-			if event.Type == eventqueue.EventTypeWorkCompleted {
+			case eventqueue.EventTypeWorkCompleted:
 				if payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload); ok {
 					r.activeWorks = removeWorkByID(r.activeWorks, payload.WorkID)
-					applogger.L.Info("Work completed event received",
+					applogger.Info("Work completed event received",
 						"agent_id", r.agentID,
 						"work_id", payload.WorkID,
 						"work_type", payload.WorkType,
@@ -134,50 +133,62 @@ func (r *agentRuntime) Run(ctx context.Context) {
 					)
 					// Only set idle if no other works are active in this session
 					if !r.hasActiveWorkInSession(event.SessionID) {
-						r.setStatus(event.SessionID, model.ParticipantStatusIdle)
+						r.weakUpdateAgentStatusInSession(event.SessionID, model.ParticipantStatusIdle)
 					}
 				}
-			}
-
 			// Mark the message as read immediately upon receiving the event.
 			// "Read" means the agent is aware of the message — this is separate
 			// from "processed" (which happens after the work completes).
 			// - For EventTypeNewMessage: the actual user message.
 			// - For EventTypeScheduled: the original user message that caused
 			//   the alarm (TriggerMessageID), preserving the causal chain.
-			if payload, ok := event.Payload.(*eventqueue.NewMessagePayload); ok && payload.MessageID > 0 {
-				if err := database.DB.Model(&model.ParticipantSession{}).
-					Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-						event.SessionID, model.ParticipantTypeAgent, r.agentID).
-					Update("last_read_message_id", payload.MessageID).Error; err != nil {
-					applogger.L.Warn("failed to advance last_read_message_id on new message event", "error", err)
+			case eventqueue.EventTypeNewMessage:
+				if payload, ok := event.Payload.(*eventqueue.NewMessagePayload); ok && payload.MessageID > 0 {
+					if err := database.DB.Model(&model.ParticipantSession{}).
+						Where("session_id = ? AND participant_type = ? AND participant_id = ?",
+							event.SessionID, model.ParticipantTypeAgent, r.agentID).
+						Update("last_read_message_id", payload.MessageID).Error; err != nil {
+						applogger.Warn("failed to advance last_read_message_id on new message event", "error", err)
+					}
+					// Trigger summary generation for new user messages.
+					// Only the runtime layer — not the API handler — initiates
+					// background tasks to keep layer boundaries clean.
+					comprehend.MaybeTriggerSummary(ctx, event.SessionID, r.agentID)
 				}
-			}
-			if payload, ok := event.Payload.(*eventqueue.ScheduledEventPayload); ok && payload.TriggerMessageID > 0 {
-				if err := database.DB.Model(&model.ParticipantSession{}).
-					Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
-						event.SessionID, model.ParticipantTypeAgent, r.agentID, payload.TriggerMessageID).
-					Update("last_read_message_id", payload.TriggerMessageID).Error; err != nil {
-					applogger.L.Warn("failed to advance last_read_message_id on scheduled event", "error", err)
+
+			case eventqueue.EventTypeScheduled:
+				if payload, ok := event.Payload.(*eventqueue.ScheduledEventPayload); ok && payload.TriggerMessageID > 0 {
+					if err := database.DB.Model(&model.ParticipantSession{}).
+						Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
+							event.SessionID, model.ParticipantTypeAgent, r.agentID, payload.TriggerMessageID).
+						Update("last_read_message_id", payload.TriggerMessageID).Error; err != nil {
+						applogger.Warn("failed to advance last_read_message_id on scheduled event", "error", err)
+					}
 				}
-			}
+				// Fast path for scheduled events with action=send_message.
+				// Skip the entire LLM pipeline and directly commit the pre-computed
+				// message. This is the optimization for simple reminders where the
+				// agent already knows exactly what to say when setting the alarm.
+				if payload, ok := event.Payload.(*eventqueue.ScheduledEventPayload); ok &&
+					payload.Action == model.ScheduledEventActionSendMessage &&
+					payload.ActionContent != "" {
+					r.handleFastPathSendMessage(event.SessionID, payload)
+					r.resetHeartbeatTimer(heartbeatTimer)
+					continue
+				}
 
-			// Trigger summary generation for new user messages.
-			// Only the runtime layer — not the API handler — initiates
-			// background tasks to keep layer boundaries clean.
-			if event.Type == eventqueue.EventTypeNewMessage {
-				comprehend.MaybeTriggerSummary(ctx, event.SessionID, r.agentID)
-			}
-
-			// Fast path for scheduled events with action=send_message.
-			// Skip the entire LLM pipeline and directly commit the pre-computed
-			// message. This is the optimization for simple reminders where the
-			// agent already knows exactly what to say when setting the alarm.
-			if payload, ok := event.Payload.(*eventqueue.ScheduledEventPayload); ok &&
-				payload.Action == model.ScheduledEventActionSendMessage &&
-				payload.ActionContent != "" {
-				r.handleFastPathSendMessage(event.SessionID, payload)
+			// Alarm created by a tool (wake_me_when). Register a goroutine
+			// to wait for the trigger time. This is a control event — it does
+			// NOT enter the Comprehend→Decide pipeline.
+			case eventqueue.EventTypeAlarmCreated:
+				if payload, ok := event.Payload.(*eventqueue.AlarmCreatedPayload); ok {
+					r.handleAlarmCreated(payload.ScheduledEventID)
+				}
 				r.resetHeartbeatTimer(heartbeatTimer)
+				continue
+
+			default:
+				applogger.Error("unknown event type", "event_type", event.Type)
 				continue
 			}
 
@@ -187,16 +198,20 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			agent := service.GetAgent(r.agentID)
 			llmConfig := service.GetLLMConfig(agent.LLMConfigID)
 
-			// Comprehend: understand what the other party means
-			sessionInfo := r.buildSessionInfo(event.SessionID, agent)
-			comprehension := Comprehend(ctx, event, agent, llmConfig, sessionInfo, r.activeWorks)
+			// ── Phase 1: Comprehend ──
+			// Understand the event in context: who is speaking, what do they mean,
+			// what's the user's state, what knowledge is relevant.
+			activeWorksSummary := buildActiveWorksSummary(r.activeWorks, event.SessionID)
+			comprehension := comprehend.Comprehend(ctx, event, agent, llmConfig, activeWorksSummary)
 
-			// Decide: based on comprehension, determine what to do
+			// ── Phase 2: Decide ──
+			// Based on comprehension, determine what action(s) to take.
+			// A single decision can produce multiple actions: e.g., cancel an
+			// old task AND create a new one.
 			decision := Decide(ctx, event, agent, llmConfig, comprehension, r.activeWorks)
 
-			// Execute all actions from the decision.
-			// A single decision can produce multiple actions of different types,
-			// e.g., cancel an existing task and create a new one.
+			// ── Phase 3: Execute ──
+			// Carry out all actions from the decision.
 			for _, action := range decision.Actions {
 				switch action.Type {
 				case ActionRoute:
@@ -206,14 +221,14 @@ func (r *agentRuntime) Run(ctx context.Context) {
 					wg := action.WorkGuidance
 					target := r.findActiveWorkByID(wg.TargetWorkID)
 					if target == nil {
-						applogger.L.Error("Target work not found for route, skipping",
+						applogger.Error("Target work not found for route, skipping",
 							"agent_id", r.agentID,
 							"target_work_id", wg.TargetWorkID,
 						)
 						continue
 					}
 					if target.plan.Type != model.WorkTypeTask {
-						applogger.L.Error("Route target is not TaskWork, skipping",
+						applogger.Error("Route target is not TaskWork, skipping",
 							"agent_id", r.agentID,
 							"work_id", target.ID,
 							"work_type", target.plan.Type,
@@ -224,7 +239,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						Guidance: wg.Guidance,
 						Reason:   wg.Reason,
 					})
-					applogger.L.Info("Routed guidance to existing TaskWork",
+					applogger.Info("Routed guidance to existing TaskWork",
 						"agent_id", r.agentID,
 						"work_id", target.ID,
 						"guidance", wg.Guidance,
@@ -242,7 +257,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 					wg := action.WorkGuidance
 					target := r.findActiveWorkByID(wg.TargetWorkID)
 					if target == nil {
-						applogger.L.Error("Target work not found for cancel, skipping",
+						applogger.Error("Target work not found for cancel, skipping",
 							"agent_id", r.agentID,
 							"target_work_id", wg.TargetWorkID,
 						)
@@ -252,7 +267,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						// ChatWork has no iteration loop, so it can't absorb a cancel directive.
 						// Fall back to direct abandon for ChatWork.
 						target.abandon()
-						applogger.L.Info("Cancelled ChatWork by direct abandon (no iteration loop)",
+						applogger.Info("Cancelled ChatWork by direct abandon (no iteration loop)",
 							"agent_id", r.agentID,
 							"work_id", wg.TargetWorkID,
 						)
@@ -264,7 +279,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						Guidance: wg.Guidance,
 						Reason:   wg.Reason,
 					})
-					applogger.L.Info("Sent cancel directive to TaskWork",
+					applogger.Info("Sent cancel directive to TaskWork",
 						"agent_id", r.agentID,
 						"work_id", wg.TargetWorkID,
 						"guidance", wg.Guidance,
@@ -274,12 +289,16 @@ func (r *agentRuntime) Run(ctx context.Context) {
 				case ActionCreate:
 					// Instantiate Work from the Action's WorkPlan
 					if action.WorkPlan == nil {
-						applogger.L.Error("Create action has no work_plan, skipping",
+						applogger.Error("Create action has no work_plan, skipping",
 							"agent_id", r.agentID,
 						)
 						continue
 					}
-					w := r.newWork(ctx, event, *action.WorkPlan, comprehension)
+					w, success := r.newWork(event, action.WorkPlan, comprehension)
+					if !success {
+						applogger.Error("failed to create work")
+						continue
+					}
 
 					// For WorkCompleted events, pass the task result to the new
 					// ChatWork so it can reference the execution outcome.
@@ -306,6 +325,10 @@ func (r *agentRuntime) Run(ctx context.Context) {
 	}
 }
 
+// ==========================================================================
+// Work Management
+// ==========================================================================
+
 // findActiveWorkByID finds an active work by its ID.
 // Returns nil if not found.
 func (r *agentRuntime) findActiveWorkByID(workID int64) *work {
@@ -324,61 +347,85 @@ func (r *agentRuntime) findActiveWorkByID(workID int64) *work {
 // execution intent (Guidance), and comprehension carries the Comprehend
 // phase's understanding. The Work has full context without re-interpreting
 // the event.
-func (r *agentRuntime) newWork(ctx context.Context, event eventqueue.AgentEvent, plan WorkPlan, comprehension *ComprehensionResult) *work {
-	sessionID := event.SessionID
-
-	description := extractDescription(event)
+func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, comprehension *comprehend.ComprehensionResult) (*work, bool) {
 
 	// Create draft for this work, snapshotting the agent's current read position
 	// as the context boundary. Messages up to this ID were visible when the
 	// work started, ensuring preprocessing and context assembly have the
 	// correct conversation history.
-	var agentLastReadID int64
-	var ps model.ParticipantSession
-	if err := database.DB.Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-		sessionID, model.ParticipantTypeAgent, r.agentID).First(&ps).Error; err == nil {
-		agentLastReadID = ps.LastReadMessageID
-	}
+	var (
+		agentLastReadID int64
+		ps              *model.ParticipantSession = &model.ParticipantSession{}
+		draft           *model.MessageDraft
+	)
 
-	draft := &model.MessageDraft{
-		AgentID:           r.agentID,
-		SessionID:         sessionID,
-		Status:            model.DraftStatusBuilding,
-		LastReadMessageID: agentLastReadID,
-	}
-	if err := database.DB.Create(draft).Error; err != nil {
-		applogger.L.Error("Failed to create draft", "agent_id", r.agentID, "session_id", sessionID, "error", err)
-		draft = nil
+	// tx
+	tx := database.DB.Begin()
+	defer tx.Rollback()
+
+	if plan.Type == model.WorkTypeChat {
+		// create MessageDraft only creating chat work
+		if err := tx.Where("session_id = ? AND participant_type = ? AND participant_id = ?",
+			event.SessionID, model.ParticipantTypeAgent, r.agentID).First(ps).Error; err == nil {
+			agentLastReadID = ps.LastReadMessageID
+		}
+
+		draft = &model.MessageDraft{
+			AgentID:           r.agentID,
+			SessionID:         event.SessionID,
+			Status:            model.DraftStatusBuilding,
+			LastReadMessageID: agentLastReadID,
+		}
+		if err := tx.Create(draft).Error; err != nil {
+			applogger.Error("Failed to create draft", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
+			return nil, false
+		}
 	}
 
 	// Persist work to database
 	workRecord := &model.Work{
 		AgentID:     r.agentID,
-		SessionID:   sessionID,
-		DraftID:     nilDraftID(draft),
+		SessionID:   event.SessionID,
 		Type:        plan.Type,
-		Description: description,
+		Description: event.FormatDescription(),
 		Status:      model.WorkStatusRunning,
 	}
-	if err := database.DB.Create(workRecord).Error; err != nil {
-		applogger.L.Error("Failed to create work", "agent_id", r.agentID, "session_id", sessionID, "error", err)
+	if plan.Type == model.WorkTypeChat {
+		workRecord.DraftID = draft.ID
+	}
+	if err := tx.Create(workRecord).Error; err != nil {
+		applogger.Error("Failed to create work", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
+		return nil, false
 	}
 
 	w := &work{
 		ID:             workRecord.ID,
 		agent:          r,
-		sessionID:      sessionID,
-		draft:          draft,
+		sessionID:      event.SessionID,
 		plan:           plan,
-		maxIterations:  90, // Default max iterations for task works
 		initialPayload: event.Payload,
 		comprehension:  comprehension,
 		guidanceCh:     make(chan task.GuidanceDirective, 8), // Buffered channel for guidance/cancel directives
 	}
+	switch plan.Type {
+	case model.WorkTypeChat:
+		w.draft = draft
+	case model.WorkTypeTask:
+		w.maxIterations = 90
+	}
 
-	r.setStatus(sessionID, model.ParticipantStatusWorking)
-	return w
+	r.weakUpdateAgentStatusInSession(event.SessionID, model.ParticipantStatusWorking)
+
+	if err := tx.Commit().Error; err != nil {
+		applogger.Error("Failed to create work", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
+		return nil, false
+	}
+	return w, true
 }
+
+// ==========================================================================
+// Fast Path
+// ==========================================================================
 
 // handleFastPathSendMessage handles the fast path for scheduled events with
 // action=send_message. It directly creates a message with the pre-computed
@@ -390,7 +437,7 @@ func (r *agentRuntime) newWork(ctx context.Context, event eventqueue.AgentEvent,
 // so the agent status transitions are handled inline:
 //   - working → (commit) → idle
 func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *eventqueue.ScheduledEventPayload) {
-	applogger.L.Info("Fast path: sending pre-computed message for scheduled event",
+	applogger.Info("Fast path: sending pre-computed message for scheduled event",
 		"agent_id", r.agentID,
 		"session_id", sessionID,
 		"scheduled_event_id", payload.ScheduledEventID,
@@ -412,18 +459,18 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 		LastReadMessageID: agentLastReadID,
 	}
 	if err := database.DB.Create(draft).Error; err != nil {
-		applogger.L.Error("Failed to create draft for fast path message",
+		applogger.Error("Failed to create draft for fast path message",
 			"agent_id", r.agentID, "session_id", sessionID, "error", err)
 		return
 	}
 
 	// Set status to working before committing
-	r.setStatus(sessionID, model.ParticipantStatusWorking)
+	r.weakUpdateAgentStatusInSession(sessionID, model.ParticipantStatusWorking)
 
 	// Commit the pre-computed message through the serialized channel.
 	// This ensures message ordering is preserved even if a normal work
 	// is committing at the same time.
-	r.commitCh <- commitRequest{
+	r.draftCommitCh <- &draftCommitRequest{
 		draft:           draft,
 		sessionID:       sessionID,
 		content:         payload.ActionContent,
@@ -435,9 +482,9 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 	// commitDraft does not modify status — it only updates last_active_at
 	// and last_read_message_id. The SSE push from commitDraft will arrive
 	// at the client after this status change, which is the correct order.
-	r.setStatus(sessionID, model.ParticipantStatusIdle)
+	r.weakUpdateAgentStatusInSession(sessionID, model.ParticipantStatusIdle)
 
-	applogger.L.Info("Fast path message dispatched",
+	applogger.Info("Fast path message dispatched",
 		"agent_id", r.agentID,
 		"session_id", sessionID,
 		"draft_id", draft.ID,
@@ -445,9 +492,13 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 	)
 }
 
-// setStatus updates the agent's ParticipantSession.Status in the database
+// ==========================================================================
+// Status Management
+// ==========================================================================
+
+// weakUpdateAgentStatusInSession updates the agent's ParticipantSession.Status in the database
 // and fires the SSE callback if the status actually changed.
-func (r *agentRuntime) setStatus(sessionID int64, status int) {
+func (r *agentRuntime) weakUpdateAgentStatusInSession(sessionID int64, status int) {
 	// Read current status from DB to detect changes
 	var ps model.ParticipantSession
 	err := database.DB.Where(
@@ -456,7 +507,7 @@ func (r *agentRuntime) setStatus(sessionID int64, status int) {
 	).First(&ps).Error
 
 	if err != nil {
-		applogger.L.Error("Failed to read participant status",
+		applogger.Error("Failed to read participant status",
 			"agent_id", r.agentID, "session_id", sessionID, "error", err)
 		return
 	}
@@ -470,7 +521,7 @@ func (r *agentRuntime) setStatus(sessionID int64, status int) {
 		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
 			sessionID, model.ParticipantTypeAgent, r.agentID).
 		Update("status", status).Error; err != nil {
-		applogger.L.Error("Failed to update participant status",
+		applogger.Error("Failed to update participant status",
 			"agent_id", r.agentID, "session_id", sessionID, "error", err)
 		return
 	}
@@ -492,6 +543,10 @@ func (r *agentRuntime) hasActiveWorkInSession(sessionID int64) bool {
 	}
 	return false
 }
+
+// ==========================================================================
+// Heartbeat Timer
+// ==========================================================================
 
 // resetHeartbeatTimer resets the heartbeat timer with tickless adaptive intervals.
 //
@@ -530,564 +585,19 @@ func (r *agentRuntime) adjustHeartbeatInterval() time.Duration {
 	}
 }
 
-// handleHeartbeat processes a heartbeat tick for agent self-reflection.
-//
-// The heartbeat is the agent's self-preservation mechanism, not the session's.
-// It is the agent's way of asking: "Is there anything I should be doing?"
-//
-// Responsiveness is guaranteed by interrupts (events). Heartbeat only
-// handles proactivity. Even an agent with no active sessions should
-// run heartbeats (they'll just return "none").
-//
-// Self-reflection flow:
-//  1. If agent has active works, skip (works drive themselves)
-//  2. Increment heartbeat tick counter
-//  3. Run scheduled heartbeat checks
-//  4. Load all sessions the agent participates in
-//  5. For each session, check for unread messages and proactive opportunities
-//  6. Use LLM to decide whether to act (none / proactive_message)
-//  7. Execute the decided action
-func (r *agentRuntime) handleHeartbeat(ctx context.Context) {
-	if len(r.activeWorks) > 0 {
-		// Agent is busy — no self-reflection needed
-		return
-	}
-
-	r.heartbeatTick++
-
-	// Obligation check (every 3 ticks)
-	if r.heartbeatTick%obligationCheckInterval == 0 {
-		r.checkObligations(ctx)
-	}
-
-	// Memory density check (every 6 ticks)
-	if r.heartbeatTick%memoryDensityCheckInterval == 0 {
-		r.checkMemoryDensity(ctx)
-	}
-
-	// Load all sessions this agent participates in
-	var sessions []model.ParticipantSession
-	if err := database.DB.Where("participant_type = ? AND participant_id = ?",
-		model.ParticipantTypeAgent, r.agentID).Find(&sessions).Error; err != nil {
-		applogger.L.Error("heartbeat: failed to load agent sessions", "error", err)
-		r.idleTicks++
-		return
-	}
-
-	if len(sessions) == 0 {
-		r.idleTicks++
-		return
-	}
-
-	// Check each session for unread messages (last_read_message_id is advanced
-	// by commitDraft, so agent's own messages won't appear as unread)
-	var sessionsWithActivity []model.ParticipantSession
-	for _, ps := range sessions {
-		var maxMsgID int64
-		if err := database.DB.Model(&model.Message{}).
-			Where("session_id = ?", ps.SessionID).
-			Select("COALESCE(MAX(id), 0)").
-			Scan(&maxMsgID).Error; err != nil {
-			applogger.L.Warn("heartbeat: failed to scan max message ID", "session_id", ps.SessionID, "error", err)
-			continue
-		}
-
-		if maxMsgID > ps.LastReadMessageID {
-			sessionsWithActivity = append(sessionsWithActivity, ps)
-		}
-	}
-
-	// No unread messages in any session — increment idle counter
-	if len(sessionsWithActivity) == 0 {
-		r.idleTicks++
-		applogger.L.Debug("Agent heartbeat (idle)",
-			"agent_id", r.agentID,
-			"idle_ticks", r.idleTicks,
-		)
-		return
-	}
-
-	// Use LLM self-reflection to decide what to do
-	agent := service.GetAgent(r.agentID)
-	llmConfig := service.GetLLMConfig(agent.LLMConfigID)
-	output := r.selfReflect(ctx, agent, llmConfig, sessionsWithActivity)
-
-	// Advance last_read_message_id for all reflected-upon sessions.
-	// The self-reflection IS the act of reading — the agent has acknowledged
-	// these messages exist and decided what (not) to do. Without this,
-	// the same unread messages trigger infinite self-reflection loops,
-	// wasting LLM calls every heartbeat tick.
-	r.markSessionsAsRead(sessionsWithActivity)
-
-	switch output.Action {
-	case "proactive_message":
-		r.executeProactiveMessage(ctx, output)
-	default:
-		r.idleTicks++
-		r.ticksSinceProactive++
-		applogger.L.Debug("Agent heartbeat self-reflection: none",
-			"agent_id", r.agentID,
-			"idle_ticks", r.idleTicks,
-		)
-	}
-}
-
-// markSessionsAsRead advances last_read_message_id to the current max message
-// ID in each session. This prevents infinite self-reflection loops where the
-// same "unread" messages repeatedly trigger heartbeat LLM calls.
-//
-// The self-reflection IS the act of reading — the agent has acknowledged
-// these messages and decided what (not) to do. Not advancing would mean
-// the agent keeps "re-reading" the same messages every heartbeat tick.
-func (r *agentRuntime) markSessionsAsRead(sessions []model.ParticipantSession) {
-	for _, ps := range sessions {
-		var maxMsgID int64
-		if err := database.DB.Model(&model.Message{}).
-			Where("session_id = ?", ps.SessionID).
-			Select("COALESCE(MAX(id), 0)").
-			Scan(&maxMsgID).Error; err != nil {
-			applogger.L.Warn("markSessionsAsRead: failed to scan max message ID", "session_id", ps.SessionID, "error", err)
-			continue
-		}
-
-		if maxMsgID > ps.LastReadMessageID {
-			if err := database.DB.Model(&model.ParticipantSession{}).
-				Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
-					ps.SessionID, model.ParticipantTypeAgent, r.agentID, maxMsgID).
-				Update("last_read_message_id", maxMsgID).Error; err != nil {
-				applogger.L.Warn("markSessionsAsRead: failed to update last_read_message_id", "session_id", ps.SessionID, "error", err)
-			}
-
-			applogger.L.Debug("Heartbeat: advanced last_read_message_id",
-				"agent_id", r.agentID,
-				"session_id", ps.SessionID,
-				"new_last_read_id", maxMsgID,
-			)
-		}
-	}
-}
-
-// selfReflect uses LLM to decide whether the agent should take proactive action
-// based on unread messages and session context.
-//
-// The prompt is intentionally conservative: "only speak up if there is genuine
-// incremental value." Early iterations should err on the side of silence rather
-// than disturbing the user.
-func (r *agentRuntime) selfReflect(ctx context.Context, agent *model.Agent, llmConfig *model.LLMConfig, sessions []model.ParticipantSession) heartbeatOutput {
-	if llmConfig == nil {
-		return heartbeatOutput{Action: "none"}
-	}
-
-	// Build session summaries for the self-reflection prompt
-	var sessionDescs []string
-	for _, ps := range sessions {
-		// Get the latest unread message content (truncated)
-		var lastMsg model.Message
-		if err := database.DB.Where("session_id = ? AND id > ?", ps.SessionID, ps.LastReadMessageID).
-			Order("id DESC").First(&lastMsg).Error; err != nil {
-			continue
-		}
-
-		content := lastMsg.Content
-		if len(content) > 100 {
-			content = content[:100] + "..."
-		}
-
-		timeSinceActive := time.Since(ps.LastActiveAt).Round(time.Minute)
-		sessionDescs = append(sessionDescs, fmt.Sprintf(
-			"- Session %d: last active %s ago, latest unread: \"%s\"",
-			ps.SessionID, timeSinceActive, content,
-		))
-	}
-
-	if len(sessionDescs) == 0 {
-		return heartbeatOutput{Action: "none"}
-	}
-
-	prompt := fmt.Sprintf(`You are an AI agent's self-reflection subsystem. Based on the following structured state, decide your action.
-
-Agent role: %s
-
-Sessions with unread messages:
-%s
-
-Decision rules:
-- "none": No action needed. Default choice.
-- "proactive_message": You have genuinely valuable NEW information the person doesn't know yet (e.g., a long task completed, new findings, important updates). NOT greetings, NOT confirmation of existence.
-
-Three thresholds for proactive_message:
-1. INCREMENTAL VALUE: Can you provide information the person doesn't already have and would find useful?
-2. TIMING: Based on last_active_at, is the person likely awake and receptive?
-3. FREQUENCY: Don't message if you've spoken recently without being prompted.
-
-IMPORTANT: Err on the side of silence. Only choose proactive_message if you would regret NOT informing them.`,
-		agent.Description, strings.Join(sessionDescs, "\n"))
-
-	chatModel := llm.NewChatModelWithTemperature(
-		llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic,
-	)
-
-	result, err := chatModel.ChatWithJSONSchema(ctx, []llm.Message{
-		{Role: "user", Content: prompt},
-	}, llm.JSONSchemaDefinition{
-		Name:        "HeartbeatReflection",
-		Description: "Agent's structured self-reflection decision on whether to take proactive action",
-		Strict:      true,
-		Schema:      llm.GenerateSchema[heartbeatOutput](),
-	})
-
-	if err != nil {
-		applogger.L.Error("Heartbeat self-reflection LLM call failed",
-			"agent_id", r.agentID, "error", err)
-		return heartbeatOutput{Action: "none"}
-	}
-
-	var output heartbeatOutput
-	if err := json.Unmarshal([]byte(result), &output); err != nil {
-		applogger.L.Error("Heartbeat self-reflection output parse failed",
-			"agent_id", r.agentID, "error", err)
-		return heartbeatOutput{Action: "none"}
-	}
-
-	applogger.L.Info("Heartbeat self-reflection result",
-		"agent_id", r.agentID,
-		"action", output.Action,
-		"reason", output.Reason,
-		"target_session_id", output.TargetSessionID,
-	)
-
-	return output
-}
-
-// executeProactiveMessage sends a proactive message generated by the heartbeat
-// self-reflection to the target session. It enforces the frequency gate before
-// sending: the agent must not have sent a proactive message within the last
-// 12 hours or within the last 6 heartbeat ticks.
-func (r *agentRuntime) executeProactiveMessage(ctx context.Context, output heartbeatOutput) {
-	// Frequency gate: check if too soon since last proactive message
-	if !r.canSendProactiveMessage() {
-		applogger.L.Info("Proactive message suppressed by frequency gate",
-			"agent_id", r.agentID,
-			"session_id", output.TargetSessionID,
-			"ticks_since_last", r.ticksSinceProactive,
-		)
-		return
-	}
-
-	// Validate the target session exists and the agent is a participant
-	if output.TargetSessionID <= 0 {
-		applogger.L.Error("Proactive message has no target session",
-			"agent_id", r.agentID)
-		return
-	}
-
-	if strings.TrimSpace(output.MessageDraft) == "" {
-		applogger.L.Warn("Proactive message draft is empty",
-			"agent_id", r.agentID, "session_id", output.TargetSessionID)
-		return
-	}
-
-	// Create the message directly (no draft, since this is spontaneous)
-	msg := model.Message{
-		SessionID:       output.TargetSessionID,
-		Role:            model.MessageRoleAssistant,
-		Content:         output.MessageDraft,
-		Status:          model.MessageStatusCompleted,
-		HasInteractions: model.HasInteractionsNone,
-	}
-	if err := database.DB.Create(&msg).Error; err != nil {
-		applogger.L.Error("Failed to create proactive message",
-			"agent_id", r.agentID,
-			"session_id", output.TargetSessionID,
-			"error", err,
-		)
-		return
-	}
-
-	// Update agent's last_active_at and last_read_message_id
-	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-			output.TargetSessionID, model.ParticipantTypeAgent, r.agentID).
-		Updates(map[string]interface{}{
-			"last_active_at":       time.Now(),
-			"last_read_message_id": msg.ID,
-		}).Error; err != nil {
-		applogger.L.Warn("failed to update participant session after proactive send", "error", err)
-	}
-
-	// Update frequency tracking
-	r.lastProactiveSent = time.Now()
-	r.ticksSinceProactive = 0
-	r.idleTicks = 0
-
-	// Submit to the event vectorization service for embedding + observation.
-	memory.SubmitVectorization(memory.VectorizationTask{
-		MessageID: msg.ID,
-		SessionID: msg.SessionID,
-		Content:   msg.Content,
-	})
-
-	// Push message event to SSE clients
-	pushMessageEvent(output.TargetSessionID, msg.ID, msg.Content, msg.HasInteractions)
-
-	// Trigger summary generation if needed
-	comprehend.MaybeTriggerSummary(ctx, output.TargetSessionID, r.agentID)
-
-	applogger.L.Info("Proactive message sent",
-		"agent_id", r.agentID,
-		"session_id", output.TargetSessionID,
-		"message_id", msg.ID,
-		"reason", output.Reason,
-	)
-}
-
-// canSendProactiveMessage checks whether the frequency gate allows a
-// proactive message. Returns true if both the time-based and tick-based
-// thresholds are satisfied.
-func (r *agentRuntime) canSendProactiveMessage() bool {
-	if !r.lastProactiveSent.IsZero() {
-		if time.Since(r.lastProactiveSent).Hours() < proactiveMinIntervalHours {
-			return false
-		}
-	}
-	if r.ticksSinceProactive < proactiveMinHeartbeats {
-		return false
-	}
-	return true
-}
-
-// handleCommits processes draft commit requests from the commitCh.
-// Runs in a separate goroutine to serialize message writes.
-func (r *agentRuntime) handleCommits(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case req := <-r.commitCh:
-			r.commitDraft(ctx, req)
-		}
-	}
-}
-
-// commitDraft atomically commits a draft to the messages table.
-// This is the only path through which agent messages enter the messages table.
-func (r *agentRuntime) commitDraft(ctx context.Context, req commitRequest) {
-	draft := req.draft
-	if draft == nil {
-		applogger.L.Error("commitDraft called with nil draft")
-		return
-	}
-
-	// Create the message from the draft content
-	msg := model.Message{
-		SessionID:       draft.SessionID,
-		Role:            model.MessageRoleAssistant,
-		Content:         req.content,
-		Status:          model.MessageStatusCompleted,
-		HasInteractions: req.hasInteractions,
-		DraftID:         &draft.ID,
-	}
-	if err := database.DB.Create(&msg).Error; err != nil {
-		applogger.L.Error("Failed to commit draft to messages",
-			"draft_id", draft.ID,
-			"session_id", draft.SessionID,
-			"error", err,
-		)
-		return
-	}
-
-	// Update draft status and content
-	if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", draft.ID).Updates(map[string]interface{}{
-		"status":  model.DraftStatusCommitted,
-		"content": req.content,
-	}).Error; err != nil {
-		applogger.L.Error("commitDraft: failed to update draft", "draft_id", draft.ID, "error", err)
-		return
-	}
-
-	// Update agent's last_active_at and last_read_message_id in the participant session.
-	// The agent has "read" everything up to and including its own message,
-	// since it produced it based on all prior context.
-	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
-			draft.SessionID, model.ParticipantTypeAgent, r.agentID, msg.ID).
-		Updates(map[string]interface{}{
-			"last_active_at":       time.Now(),
-			"last_read_message_id": msg.ID,
-		}).Error; err != nil {
-		applogger.L.Warn("commitDraft: failed to update participant session", "draft_id", draft.ID, "error", err)
-	}
-
-	applogger.L.Info("Draft committed to messages",
-		"draft_id", draft.ID,
-		"message_id", msg.ID,
-		"session_id", draft.SessionID,
-	)
-
-	// Submit to the event vectorization service for embedding + observation.
-	memory.SubmitVectorization(memory.VectorizationTask{
-		MessageID: msg.ID,
-		SessionID: msg.SessionID,
-		Content:   msg.Content,
-	})
-
-	// Push message event to SSE clients
-	pushMessageEvent(draft.SessionID, msg.ID, msg.Content, msg.HasInteractions)
-
-	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	comprehend.MaybeTriggerSummary(ctx, draft.SessionID, r.agentID)
-}
-
-// removeWorkByID removes a work from the active works slice by its ID.
-func removeWorkByID(works []*work, workID int64) []*work {
-	for i, w := range works {
-		if w.ID == workID {
-			return append(works[:i], works[i+1:]...)
-		}
-	}
-	return works
-}
-
-// nilDraftID returns nil if draft is nil, otherwise returns a pointer to draft.ID.
-func nilDraftID(draft *model.MessageDraft) *int64 {
-	if draft == nil {
-		return nil
-	}
-	return &draft.ID
-}
-
-// extractDescription extracts a short description from an event for work routing.
-func extractDescription(event eventqueue.AgentEvent) string {
-	if event.Payload == nil {
-		return "Process event"
-	}
-	// For new message events, use the message content as description
-	type messagePayload interface{ GetMessageContent() string }
-	if mp, ok := event.Payload.(messagePayload); ok {
-		content := mp.GetMessageContent()
-		if len(content) > 200 {
-			return content[:200]
-		}
-		return content
-	}
-	return "Process event"
-}
-
-// pushMessageEvent pushes a message event to SSE clients.
-// This is a package-level function that will be connected to the
-// handler's ConnectionManager during integration.
-var pushMessageEvent = func(sessionID, messageID int64, content string, hasInteractions int) {
-	// Default no-op; will be overridden during integration
-	applogger.L.Debug("pushMessageEvent called (not integrated)",
-		"session_id", sessionID,
-		"message_id", messageID,
-	)
-}
-
-// pushSSEEvent pushes a raw SSE event to all clients of a session.
-// Used for notifications and other non-message events.
-var pushSSEEvent = func(sessionID int64, data string) {
-	// Default no-op; will be overridden during integration
-	applogger.L.Debug("pushSSEEvent called (not integrated)",
-		"session_id", sessionID,
-	)
-}
-
-// userFriendlyErrorMsg is the default error message shown to users when
-// server-side processing fails.
-const userFriendlyErrorMsg = "Sorry, something went wrong on the server. Please try again later."
-
-// recoverActiveWorks loads active works from the database for agent recovery
-// after a service restart. Abandoned works are marked and no new Work objects
-// are returned since mid-execution resumption is not supported.
-func recoverActiveWorks(agentID int64, runtime *agentRuntime) []*work {
-	var workRecords []model.Work
-	if err := database.DB.Where("agent_id = ? AND status = ?", agentID, model.WorkStatusRunning).Find(&workRecords).Error; err != nil {
-		applogger.L.Error("recoverActiveWorks: failed to load work records", "agent_id", agentID, "error", err)
-		return nil
-	}
-
-	for _, wr := range workRecords {
-		// Mark recovered works as abandoned since we can't resume mid-execution
-		if err := database.DB.Model(&model.Work{}).Where("id = ?", wr.ID).
-			Update("status", model.WorkStatusAbandoned).Error; err != nil {
-			applogger.L.Error("recoverActiveWorks: failed to mark work as abandoned", "work_id", wr.ID, "error", err)
-		}
-
-		if wr.DraftID != nil {
-			if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", *wr.DraftID).
-				Update("status", model.DraftStatusDiscarded).Error; err != nil {
-				applogger.L.Error("recoverActiveWorks: failed to discard draft", "draft_id", *wr.DraftID, "error", err)
-			}
-		}
-
-		// Reset participant status to idle so the frontend doesn't show stuck "responding"
-		if err := database.DB.Model(&model.ParticipantSession{}).
-			Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-				wr.SessionID, model.ParticipantTypeAgent, agentID).
-			Update("status", model.ParticipantStatusIdle).Error; err != nil {
-			applogger.L.Error("recoverActiveWorks: failed to reset participant status",
-				"session_id", wr.SessionID, "agent_id", agentID, "error", err)
-		}
-
-		applogger.L.Info("Recovered work marked as abandoned",
-			"work_id", wr.ID,
-			"agent_id", agentID,
-			"session_id", wr.SessionID,
-		)
-	}
-
-	return nil
-}
-
-// buildSessionInfo loads session-level parameters needed for comprehension.
-// This is called once per event in the event loop, before Comprehend().
-func (r *agentRuntime) buildSessionInfo(sessionID int64, agent *model.Agent) *SessionInfo {
-	info := &SessionInfo{
-		SessionID:  sessionID,
-		WindowSize: 50, // Default window size
-		UserName:   service.GetUserName(),
-	}
-
-	// Get message count for this session
-	var messageCount int64
-	if err := database.DB.Model(&model.Message{}).
-		Where("session_id = ? AND status = ?", sessionID, model.MessageStatusCompleted).
-		Count(&messageCount).Error; err != nil {
-		applogger.L.Warn("buildSessionInfo: failed to count messages",
-			"session_id", sessionID, "error", err,
-		)
-	}
-	info.MessageCount = messageCount
-
-	// Get knowledge base IDs for this agent
-	if agent.KnowledgeBaseIDs != "" && agent.KnowledgeBaseIDs != "[]" {
-		var ids []int64
-		if err := json.Unmarshal([]byte(agent.KnowledgeBaseIDs), &ids); err == nil {
-			var validIDs []int64
-			for _, id := range ids {
-				var kb model.KnowledgeBase
-				if err := database.DB.First(&kb, id).Error; err == nil {
-					validIDs = append(validIDs, id)
-				}
-			}
-			info.KBIDs = validIDs
-		}
-	}
-
-	return info
-}
-
 // createAgentRuntime creates and initializes an agentRuntime struct without starting
 // the event loop. Loads the agent's LLM config, subscribes to the event queue,
 // and recovers abandoned works from a previous run.
+//
+// This is the public entry point for creating a new agent runtime — positioned
+// at the bottom because it depends on recoverActiveWorks (defined just above).
 func createAgentRuntime(agentID int64, onStatusChange func(agentID, sessionID int64, status int)) *agentRuntime {
 	eventCh := eventqueue.Subscribe(agentID)
 
 	runtime := newAgentRuntime(agentID, eventCh, 30*time.Second, onStatusChange)
 
 	// Recover any abandoned works from previous run
-	recoverActiveWorks(agentID, runtime)
+	recoverActiveWorks(agentID)
 
 	return runtime
 }

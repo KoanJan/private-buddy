@@ -22,7 +22,6 @@ import (
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/memory"
 	"private-buddy-server/internal/service/runtime"
-	"private-buddy-server/internal/service/task/tools"
 
 	applogger "private-buddy-server/internal/logger"
 
@@ -34,7 +33,7 @@ import (
 func safeMarshalSSE(data map[string]interface{}) string {
 	bytes, err := json.Marshal(data)
 	if err != nil {
-		applogger.L.Error("Failed to marshal SSE event data", "error", err)
+		applogger.Error("Failed to marshal SSE event data", "error", err)
 		return ""
 	}
 	return string(bytes)
@@ -54,7 +53,7 @@ func main() {
 	config.Init()
 	logger.Init()
 
-	applogger.L.Info("Starting Private Buddy Server")
+	applogger.Info("Starting Private Buddy Server")
 
 	database.Init()
 	database.AutoMigrate()
@@ -93,6 +92,9 @@ func main() {
 	// Initialize the global event queue first, before runtimes subscribe to it
 	eventqueue.Init()
 
+	// Start all agent runtimes and recover orphaned scheduled events.
+	// recoverScheduledEvents() is called inside Start() after all runtimes
+	// have subscribed to the event queue.
 	runtime.Start(onStatusChange, onPushMessage, handler.PushSSEToSession)
 
 	kb.Init(1536, 0)
@@ -113,9 +115,9 @@ func main() {
 
 	// Start server in a goroutine so we can listen for shutdown signals
 	go func() {
-		applogger.L.Info("Server listening", "addr", addr)
+		applogger.Info("Server listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			applogger.L.Error("Server failed to start", "error", err)
+			applogger.Error("Server failed to start", "error", err)
 			panic(err)
 		}
 	}()
@@ -124,28 +126,24 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
-	applogger.L.Info("Received shutdown signal", "signal", sig.String())
+	applogger.Info("Received shutdown signal", "signal", sig.String())
 
 	// Stop all agent runtimes and event queue before shutting down
-	applogger.L.Info("Stopping agent runtimes...")
+	applogger.Info("Stopping agent runtimes...")
 	runtime.StopAll()
 
 	// Shut down the memory system (vectorization + daily cron)
 	memCancel()
-
-	// Cancel all pending alarm goroutines
-	applogger.L.Info("Cancelling pending alarms...")
-	tools.CancelAlarms()
 
 	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		applogger.L.Error("Server forced to shutdown", "error", err)
+		applogger.Error("Server forced to shutdown", "error", err)
 	}
 
-	applogger.L.Info("Server stopped gracefully")
+	applogger.Info("Server stopped gracefully")
 }
 
 // getEmbeddingService creates an EmbeddingService from the global embedding config.
@@ -157,7 +155,7 @@ func getEmbeddingService() *llm.EmbeddingService {
 	}
 
 	embSvc := llm.NewEmbeddingService(embConfig.BaseURL, embConfig.APIKey, embConfig.ModelID, 1536)
-	applogger.L.Info("Embedding service created",
+	applogger.Info("Embedding service created",
 		"config_name", embConfig.Name,
 		"model", embConfig.ModelID,
 	)

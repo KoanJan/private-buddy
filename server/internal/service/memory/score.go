@@ -156,7 +156,7 @@ func propagateRelevance(params propagateParams) {
 	// Same-session propagation
 	propagateSameSession(params, &params.AllObservationIDs, processed)
 
-	applogger.L.Debug("Relevance propagation completed",
+	applogger.Debug("Relevance propagation completed",
 		"hit_event_id", params.HitEventID,
 		"delta_base", params.DeltaBase,
 	)
@@ -267,7 +267,7 @@ func applyPropagationToObservation(obsID int64, delta float64) {
 	obs.LastScoredAt = time.Now()
 
 	if err := database.DB.Save(&obs).Error; err != nil {
-		applogger.L.Error("Failed to save propagated observation",
+		applogger.Error("Failed to save propagated observation",
 			"obs_id", obsID, "error", err)
 	}
 }

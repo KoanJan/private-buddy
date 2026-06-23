@@ -50,13 +50,13 @@ func checkDensity(ctx context.Context, agentID int64) int {
 	var observations []model.AgentObservation
 	if err := database.DB.Where("agent_id = ?", agentID).
 		Order("id").Find(&observations).Error; err != nil {
-		applogger.L.Warn("EntityProfile density check: failed to load observations",
+		applogger.Warn("EntityProfile density check: failed to load observations",
 			"agent_id", agentID, "error", err)
 		return 0
 	}
 
 	if len(observations) < profileTriggerMin {
-		applogger.L.Debug("EntityProfile density check: insufficient observations",
+		applogger.Debug("EntityProfile density check: insufficient observations",
 			"agent_id", agentID,
 			"qualified", len(observations),
 			"required", profileTriggerMin,
@@ -73,7 +73,7 @@ func checkDensity(ctx context.Context, agentID int64) int {
 			continue
 		}
 		if isRateLimited(dir.EntityType, dir.EntityID, agentID) {
-			applogger.L.Debug("EntityProfile rate limited",
+			applogger.Debug("EntityProfile rate limited",
 				"agent_id", agentID,
 				"entity_type", dir.EntityType,
 				"entity_id", dir.EntityID,
@@ -108,7 +108,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 	}
 	if len(ids) > 0 {
 		if err := database.DB.Where("id IN ?", ids).Find(&events).Error; err != nil {
-			applogger.L.Warn("resolveEntityDirections: failed to load events", "error", err)
+			applogger.Warn("resolveEntityDirections: failed to load events", "error", err)
 		}
 	}
 
@@ -136,7 +136,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 		return nil
 	}
 	if err := database.DB.Where("id IN ?", mids).Find(&messages).Error; err != nil {
-		applogger.L.Warn("resolveEntityDirections: failed to load messages", "error", err)
+		applogger.Warn("resolveEntityDirections: failed to load messages", "error", err)
 		return nil
 	}
 	msgMap := make(map[int64]model.Message)
@@ -154,7 +154,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 	}
 	if len(sids) > 0 {
 		if err := database.DB.Where("id IN ?", sids).Find(&sessions).Error; err != nil {
-			applogger.L.Warn("resolveEntityDirections: failed to load sessions", "error", err)
+			applogger.Warn("resolveEntityDirections: failed to load sessions", "error", err)
 		}
 	}
 	sessionMap := make(map[int64]model.Session)
@@ -168,7 +168,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 	if len(sids) > 0 {
 		if err := database.DB.Where("session_id IN ? AND participant_type = ?", sids, model.ParticipantTypeUser).
 			Find(&participants).Error; err != nil {
-			applogger.L.Warn("resolveEntityDirections: failed to load participants", "error", err)
+			applogger.Warn("resolveEntityDirections: failed to load participants", "error", err)
 		}
 	}
 	seenUsers := make(map[int64]bool)
@@ -257,7 +257,7 @@ func isRateLimited(entityType int, entityID, agentID int64) bool {
 // (no prior narrative is fed). MD5 of the evidence text is compared with the
 // existing profile's input_md5 — if unchanged, generation is skipped.
 func generateProfile(ctx context.Context, agentID int64, entityType int, entityID int64) {
-	applogger.L.Info("Generating EntityProfile",
+	applogger.Info("Generating EntityProfile",
 		"agent_id", agentID,
 		"entity_type", entityType,
 		"entity_id", entityID,
@@ -266,7 +266,7 @@ func generateProfile(ctx context.Context, agentID int64, entityType int, entityI
 	// Resolve entity label for the prompt
 	entityName, ok := entityLabel(entityType, entityID)
 	if !ok {
-		applogger.L.Error("EntityProfile: failed to resolve entity label",
+		applogger.Error("EntityProfile: failed to resolve entity label",
 			"entity_type", entityType, "entity_id", entityID)
 		return
 	}
@@ -274,7 +274,7 @@ func generateProfile(ctx context.Context, agentID int64, entityType int, entityI
 	// Resolve agent name for self-referencing in the prompt
 	agent := getAgent(agentID)
 	if agent == nil {
-		applogger.L.Error("EntityProfile: agent not found", "agent_id", agentID)
+		applogger.Error("EntityProfile: agent not found", "agent_id", agentID)
 		return
 	}
 	agentName := agent.Name
@@ -308,12 +308,12 @@ Key observations:
 	var existingProfile model.EntityProfile
 	if err := database.DB.Where("agent_id = ? AND entity_type = ? AND entity_id = ?",
 		agentID, entityType, entityID).First(&existingProfile).Error; err != nil {
-		applogger.L.Warn("EntityProfile: failed to check existing profile before generation",
+		applogger.Warn("EntityProfile: failed to check existing profile before generation",
 			"agent_id", agentID, "entity_type", entityType, "entity_id", entityID, "error", err)
 	}
 
 	if existingProfile.ID != 0 && existingProfile.InputMD5 == inputHash && existingProfile.InputMD5 != "" {
-		applogger.L.Info("EntityProfile input unchanged, skipping regeneration",
+		applogger.Info("EntityProfile input unchanged, skipping regeneration",
 			"agent_id", agentID,
 			"entity_type", entityType,
 			"entity_id", entityID,
@@ -324,7 +324,7 @@ Key observations:
 
 	llmConfig := getLLMConfig(agent.LLMConfigID)
 	if llmConfig == nil {
-		applogger.L.Error("EntityProfile: LLM config not found", "agent_id", agentID)
+		applogger.Error("EntityProfile: LLM config not found", "agent_id", agentID)
 		return
 	}
 
@@ -337,7 +337,7 @@ Key observations:
 	})
 
 	if err != nil {
-		applogger.L.Error("EntityProfile LLM call failed",
+		applogger.Error("EntityProfile LLM call failed",
 			"agent_id", agentID,
 			"entity_type", entityType,
 			"entity_id", entityID,
@@ -348,7 +348,7 @@ Key observations:
 
 	narrative = strings.TrimSpace(narrative)
 	if narrative == "" {
-		applogger.L.Warn("EntityProfile LLM returned empty narrative",
+		applogger.Warn("EntityProfile LLM returned empty narrative",
 			"agent_id", agentID,
 		)
 		return
@@ -363,7 +363,7 @@ Key observations:
 			"input_md5":       inputHash,
 			"last_updated_at": time.Now(),
 		}).Error; err != nil {
-			applogger.L.Error("EntityProfile: failed to update profile",
+			applogger.Error("EntityProfile: failed to update profile",
 				"agent_id", agentID, "entity_type", entityType, "error", err)
 			return
 		}
@@ -377,12 +377,12 @@ Key observations:
 			InputMD5:      inputHash,
 		}
 		if err := database.DB.Create(&profile).Error; err != nil {
-			applogger.L.Error("EntityProfile: failed to create profile", "agent_id", agentID, "entity_type", entityType, "error", err)
+			applogger.Error("EntityProfile: failed to create profile", "agent_id", agentID, "entity_type", entityType, "error", err)
 			return
 		}
 	}
 
-	applogger.L.Info("EntityProfile generated",
+	applogger.Info("EntityProfile generated",
 		"agent_id", agentID,
 		"entity_type", entityType,
 		"entity_id", entityID,
@@ -398,14 +398,14 @@ func entityLabel(entityType int, entityID int64) (string, bool) {
 	case model.EntityTypeUser:
 		var user model.User
 		if err := database.DB.Where("id = ?", entityID).Select("name").First(&user).Error; err != nil {
-			applogger.L.Error("entityLabel: failed to load user name", "entity_id", entityID, "error", err)
+			applogger.Error("entityLabel: failed to load user name", "entity_id", entityID, "error", err)
 			return "", false
 		}
 		return user.Name, true
 	case model.EntityTypeAgent:
 		var agent model.Agent
 		if err := database.DB.Where("id = ?", entityID).Select("name").First(&agent).Error; err != nil {
-			applogger.L.Error("entityLabel: failed to load agent name", "entity_id", entityID, "error", err)
+			applogger.Error("entityLabel: failed to load agent name", "entity_id", entityID, "error", err)
 			return "", false
 		}
 		return agent.Name, true
@@ -427,7 +427,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	if err := database.DB.Where("agent_id = ?", agentID).
 		Order("importance DESC, id DESC").
 		Find(&observations).Error; err != nil {
-		applogger.L.Error("loadProfileEvidences: failed to load observations",
+		applogger.Error("loadProfileEvidences: failed to load observations",
 			"agent_id", agentID, "error", err)
 		return nil
 	}
@@ -445,7 +445,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	// Load events (only message-type)
 	var events []model.Event
 	if err := database.DB.Where("id IN ? AND event_type = ?", eventIDs, model.EventTypeMessage).Find(&events).Error; err != nil {
-		applogger.L.Warn("loadProfileEvidences: failed to load events", "error", err)
+		applogger.Warn("loadProfileEvidences: failed to load events", "error", err)
 	}
 	eventMap := make(map[int64]model.Event)
 	refIDs := make([]int64, 0, len(events))
@@ -460,7 +460,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	// Load messages
 	var messages []model.Message
 	if err := database.DB.Where("id IN ?", refIDs).Find(&messages).Error; err != nil {
-		applogger.L.Warn("loadProfileEvidences: failed to load messages", "error", err)
+		applogger.Warn("loadProfileEvidences: failed to load messages", "error", err)
 		return nil
 	}
 	msgMap := make(map[int64]model.Message)
@@ -479,7 +479,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	var sessions []model.Session
 	if len(sids) > 0 {
 		if err := database.DB.Where("id IN ?", sids).Find(&sessions).Error; err != nil {
-			applogger.L.Warn("loadProfileEvidences: failed to load sessions", "error", err)
+			applogger.Warn("loadProfileEvidences: failed to load sessions", "error", err)
 		}
 	}
 	sessionMap := make(map[int64]model.Session)
@@ -494,7 +494,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	if len(sids) > 0 {
 		if err := database.DB.Where("session_id IN ? AND participant_type = ?", sids, model.ParticipantTypeUser).
 			Find(&psList).Error; err != nil {
-			applogger.L.Warn("loadProfileEvidences: failed to load participants", "error", err)
+			applogger.Warn("loadProfileEvidences: failed to load participants", "error", err)
 		}
 	}
 	seen := make(map[int64]bool)
@@ -515,7 +515,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 		}
 		var users []model.User
 		if err := database.DB.Where("id IN ?", uids).Select("id, name").Find(&users).Error; err != nil {
-			applogger.L.Warn("loadProfileEvidences: failed to load user names", "error", err)
+			applogger.Warn("loadProfileEvidences: failed to load user names", "error", err)
 		}
 		for _, u := range users {
 			userNameMap[u.ID] = u.Name

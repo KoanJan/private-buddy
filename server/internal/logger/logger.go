@@ -16,7 +16,7 @@ import (
 )
 
 // L is the global logger instance.
-var L *slog.Logger
+var globalInstance *slog.Logger
 
 // Init initializes the global logger with JSON output to stdout and a daily log file.
 func Init() {
@@ -31,7 +31,7 @@ func Init() {
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
-		L = slog.Default()
+		globalInstance = slog.Default()
 		return
 	}
 
@@ -58,8 +58,8 @@ func Init() {
 	)
 
 	mh := newMultiHandler(handler, fileHandler)
-	L = slog.New(mh)
-	slog.SetDefault(L)
+	globalInstance = slog.New(mh)
+	slog.SetDefault(globalInstance)
 }
 
 type multiHandler struct {

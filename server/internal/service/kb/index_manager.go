@@ -81,7 +81,7 @@ func (m *indexManager) Load() error {
 
 	if m.indexType == indexTypeHNSW {
 		if err := m.loadHNSWGraph(); err != nil {
-			applogger.L.Warn("Failed to load HNSW graph, falling back to flat", "kb_id", m.kbID, "error", err)
+			applogger.Warn("Failed to load HNSW graph, falling back to flat", "kb_id", m.kbID, "error", err)
 			m.indexType = indexTypeFlat
 		}
 	}
@@ -164,7 +164,7 @@ func (m *indexManager) addToMemoryIndex(chunkID uint64, embedding []float32) {
 	case indexTypeHNSW:
 		if m.graph != nil {
 			if err := safeAddToGraph(m.graph, chunkID, embedding); err != nil {
-				applogger.L.Error("Failed to add node to HNSW graph",
+				applogger.Error("Failed to add node to HNSW graph",
 					"kb_id", m.kbID, "chunk_id", chunkID, "error", err)
 			}
 		}
@@ -194,40 +194,40 @@ func (m *indexManager) checkFlatToHNSW() {
 func (m *indexManager) buildHNSWIndex() {
 	defer func() {
 		if r := recover(); r != nil {
-			applogger.L.Error("HNSW build panic", "kb_id", m.kbID, "panic", r)
+			applogger.Error("HNSW build panic", "kb_id", m.kbID, "panic", r)
 			m.casIndexType(indexTypeSwitching, indexTypeFlat)
 		}
 	}()
 
-	applogger.L.Info("Building HNSW index", "kb_id", m.kbID)
+	applogger.Info("Building HNSW index", "kb_id", m.kbID)
 
 	if m.vectorsDB == nil {
-		applogger.L.Error("HNSW build: vectorsDB not initialized", "kb_id", m.kbID)
+		applogger.Error("HNSW build: vectorsDB not initialized", "kb_id", m.kbID)
 		m.casIndexType(indexTypeSwitching, indexTypeFlat)
 		return
 	}
 
 	entries, err := m.loadAllVectors()
 	if err != nil {
-		applogger.L.Error("Failed to load vectors for HNSW build", "kb_id", m.kbID, "error", err)
+		applogger.Error("Failed to load vectors for HNSW build", "kb_id", m.kbID, "error", err)
 		m.casIndexType(indexTypeSwitching, indexTypeFlat)
 		return
 	}
-	applogger.L.Info("HNSW build: vectors loaded", "kb_id", m.kbID, "count", len(entries))
+	applogger.Info("HNSW build: vectors loaded", "kb_id", m.kbID, "count", len(entries))
 
 	dimStats := m.analyzeEmbeddings(entries)
-	applogger.L.Info("HNSW build: embedding stats",
+	applogger.Info("HNSW build: embedding stats",
 		"kb_id", m.kbID, "expected_dim", m.threshold,
 		"min_dim", dimStats.minDim, "max_dim", dimStats.maxDim,
 		"zero_count", dimStats.zeroCount, "nan_count", dimStats.nanCount)
 
 	if dimStats.nanCount > 0 {
-		applogger.L.Error("HNSW build: found NaN/Inf in embeddings, aborting", "kb_id", m.kbID, "count", dimStats.nanCount)
+		applogger.Error("HNSW build: found NaN/Inf in embeddings, aborting", "kb_id", m.kbID, "count", dimStats.nanCount)
 		m.casIndexType(indexTypeSwitching, indexTypeFlat)
 		return
 	}
 	if dimStats.minDim != dimStats.maxDim {
-		applogger.L.Error("HNSW build: inconsistent embedding dimensions",
+		applogger.Error("HNSW build: inconsistent embedding dimensions",
 			"kb_id", m.kbID, "min_dim", dimStats.minDim, "max_dim", dimStats.maxDim)
 		m.casIndexType(indexTypeSwitching, indexTypeFlat)
 		return
@@ -248,7 +248,7 @@ func (m *indexManager) buildHNSWIndex() {
 
 	for i, e := range entries {
 		if !isValidEmbedding(e.Embedding) {
-			applogger.L.Error("HNSW build: invalid embedding",
+			applogger.Error("HNSW build: invalid embedding",
 				"kb_id", m.kbID, "index", i, "total", len(entries),
 				"chunk_id", e.ChunkID, "embedding_len", len(e.Embedding))
 			m.casIndexType(indexTypeSwitching, indexTypeFlat)
@@ -256,7 +256,7 @@ func (m *indexManager) buildHNSWIndex() {
 		}
 		if err := safeAddToGraph(sg, uint64(e.ChunkID), e.Embedding); err != nil {
 			sample := sampleEmbedding(e.Embedding)
-			applogger.L.Error("HNSW build: failed to add node",
+			applogger.Error("HNSW build: failed to add node",
 				"kb_id", m.kbID, "index", i, "total", len(entries),
 				"chunk_id", e.ChunkID, "embedding_len", len(e.Embedding),
 				"sample", sample, "error", err)
@@ -265,7 +265,7 @@ func (m *indexManager) buildHNSWIndex() {
 		}
 		addedChunkIDs[uint64(e.ChunkID)] = true
 		if (i+1)%100 == 0 {
-			applogger.L.Info("HNSW build: progress", "kb_id", m.kbID, "added", i+1, "total", len(entries))
+			applogger.Info("HNSW build: progress", "kb_id", m.kbID, "added", i+1, "total", len(entries))
 		}
 	}
 
@@ -274,7 +274,7 @@ func (m *indexManager) buildHNSWIndex() {
 	m.pendingAdds = nil
 	m.mu.Unlock()
 
-	applogger.L.Info("HNSW build: processing pending vectors", "kb_id", m.kbID, "pending_count", len(pending))
+	applogger.Info("HNSW build: processing pending vectors", "kb_id", m.kbID, "pending_count", len(pending))
 
 	addedFromPending := 0
 	for i, pv := range pending {
@@ -282,7 +282,7 @@ func (m *indexManager) buildHNSWIndex() {
 			continue
 		}
 		if !isValidEmbedding(pv.Embedding) {
-			applogger.L.Error("HNSW build: invalid pending embedding",
+			applogger.Error("HNSW build: invalid pending embedding",
 				"kb_id", m.kbID, "index", i, "total_pending", len(pending),
 				"chunk_id", pv.ChunkID, "embedding_len", len(pv.Embedding))
 			m.casIndexType(indexTypeSwitching, indexTypeFlat)
@@ -290,7 +290,7 @@ func (m *indexManager) buildHNSWIndex() {
 		}
 		if err := safeAddToGraph(sg, pv.ChunkID, pv.Embedding); err != nil {
 			sample := sampleEmbedding(pv.Embedding)
-			applogger.L.Error("HNSW build: failed to add pending node",
+			applogger.Error("HNSW build: failed to add pending node",
 				"kb_id", m.kbID, "index", i, "total_pending", len(pending),
 				"chunk_id", pv.ChunkID, "embedding_len", len(pv.Embedding),
 				"sample", sample, "error", err)
@@ -300,11 +300,11 @@ func (m *indexManager) buildHNSWIndex() {
 		addedChunkIDs[pv.ChunkID] = true
 		addedFromPending++
 	}
-	applogger.L.Info("HNSW build: graph built, saving", "kb_id", m.kbID,
+	applogger.Info("HNSW build: graph built, saving", "kb_id", m.kbID,
 		"entries", len(entries), "pending_total", len(pending), "pending_added", addedFromPending)
 
 	if err := saveGraph(sg); err != nil {
-		applogger.L.Error("Failed to save HNSW graph", "kb_id", m.kbID, "error", err)
+		applogger.Error("Failed to save HNSW graph", "kb_id", m.kbID, "error", err)
 		m.casIndexType(indexTypeSwitching, indexTypeFlat)
 		return
 	}
@@ -317,10 +317,10 @@ func (m *indexManager) buildHNSWIndex() {
 	if err := database.DB.Model(&model.KnowledgeBase{}).
 		Where("id = ? AND index_type = ?", m.kbID, int(indexTypeSwitching)).
 		Update("index_type", int(indexTypeHNSW)).Error; err != nil {
-		applogger.L.Error("failed to update KB index type after HNSW build", "kb_id", m.kbID, "error", err)
+		applogger.Error("failed to update KB index type after HNSW build", "kb_id", m.kbID, "error", err)
 	}
 
-	applogger.L.Info("HNSW index built successfully", "kb_id", m.kbID,
+	applogger.Info("HNSW index built successfully", "kb_id", m.kbID,
 		"total_vectors", len(addedChunkIDs))
 }
 

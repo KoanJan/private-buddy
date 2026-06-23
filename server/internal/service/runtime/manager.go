@@ -63,12 +63,16 @@ func (rm *runtimeManager) StopAll() {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	applogger.L.Info("Stopping all agent runtimes", "count", len(rm.runtimes))
+	applogger.Info("Stopping all agent runtimes", "count", len(rm.runtimes))
 
 	// Cancel the root context — all derived runtime contexts cancel automatically
 	if rm.cancelAll != nil {
 		rm.cancelAll()
 	}
+
+	// Cancel all alarm goroutines — they are not tied to the root context
+	// because they need to survive across runtime restarts (via DB recovery).
+	CancelAlarms()
 
 	for agentID := range rm.runtimes {
 		// Unsubscribe from the event queue to prevent sending to closed channels
@@ -128,17 +132,22 @@ func Start(
 	if err := database.DB.Model(&model.ParticipantSession{}).
 		Where("participant_type = ? AND status = ?", model.ParticipantTypeAgent, model.ParticipantStatusWorking).
 		Update("status", model.ParticipantStatusIdle).Error; err != nil {
-		applogger.L.Error("Failed to reset stale participant statuses on startup", "error", err)
+		applogger.Error("Failed to reset stale participant statuses on startup", "error", err)
 	}
 
 	// Eagerly start runtimes for all agents
 	var agents []model.Agent
 	if err := database.DB.Find(&agents).Error; err != nil {
-		applogger.L.Error("Failed to load agents for runtime initialization", "error", err)
+		applogger.Error("Failed to load agents for runtime initialization", "error", err)
 	} else {
 		for _, agent := range agents {
 			globalRuntimeManager.StartRuntime(agent.ID)
 		}
-		applogger.L.Info("All agent runtimes started", "count", len(agents))
+		applogger.Info("All agent runtimes started", "count", len(agents))
 	}
+
+	// Recover scheduled events that were orphaned by the previous shutdown.
+	// Must be called after all agent runtimes have started so that recovered
+	// events can be routed to their subscribed channels.
+	recoverScheduledEvents()
 }

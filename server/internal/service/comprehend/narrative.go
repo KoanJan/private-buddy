@@ -71,10 +71,10 @@ func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfi
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
-		applogger.L.Error("Failed to generate cached narrative", "error", err)
+		applogger.Error("Failed to generate cached narrative", "error", err)
 		return ""
 	}
 
-	applogger.L.Info("Generated cached narrative from summary", "length", len(result))
+	applogger.Info("Generated cached narrative from summary", "length", len(result))
 	return result
 }

@@ -54,7 +54,7 @@ func searchKB(ctx context.Context, kbID int64, query string, topK int) ([]schema
 	if err := database.DB.Model(&model.DocumentChunk{}).
 		Where("knowledge_base_id = ? AND deleted = 1", kbID).
 		Pluck("id", &deletedChunkIDs).Error; err != nil {
-		applogger.L.Warn("search: failed to load deleted chunk IDs, results may include deleted chunks", "kb_id", kbID, "error", err)
+		applogger.Warn("search: failed to load deleted chunk IDs, results may include deleted chunks", "kb_id", kbID, "error", err)
 	}
 
 	tracker := newDeletedVectorTracker()
@@ -113,7 +113,7 @@ func searchMultiKB(ctx context.Context, kbIDs []int64, query string, topK int) (
 			if err := database.DB.Model(&model.DocumentChunk{}).
 				Where("knowledge_base_id = ? AND deleted = 1", id).
 				Pluck("id", &deletedChunkIDs).Error; err != nil {
-				applogger.L.Warn("multiSearch: failed to load deleted chunk IDs", "kb_id", id, "error", err)
+				applogger.Warn("multiSearch: failed to load deleted chunk IDs", "kb_id", id, "error", err)
 			}
 
 			tracker := newDeletedVectorTracker()

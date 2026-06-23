@@ -96,7 +96,7 @@ func RunTask(params RunTaskParams) *TaskResult {
 		params.OnNotify(string(notifyData))
 	}
 
-	applogger.L.Info("RunTask: starting with Guidance",
+	applogger.Info("RunTask: starting with Guidance",
 		"session_id", params.SessionID,
 		"guidance", truncateString(params.Guidance, 100),
 	)
@@ -104,7 +104,7 @@ func RunTask(params RunTaskParams) *TaskResult {
 	// Load search config for web search tool
 	var searchConfig model.SearchConfig
 	if err := database.DB.Where("is_active = ?", true).First(&searchConfig).Error; err != nil {
-		applogger.L.Warn("failed to load active search config, proceeding without search", "error", err)
+		applogger.Warn("failed to load active search config, proceeding without search", "error", err)
 	}
 
 	return Execute(TaskParams{
@@ -156,7 +156,7 @@ func Execute(params TaskParams) *TaskResult {
 		maxIterations = defaultMaxIterations
 	}
 
-	applogger.L.Info("TaskExecutor starting",
+	applogger.Info("TaskExecutor starting",
 		"session_id", params.SessionID,
 		"max_iterations", maxIterations,
 	)
@@ -220,7 +220,7 @@ func Execute(params TaskParams) *TaskResult {
 	if loopResult.Status == "success" && loopResult.Result != "" {
 		result.Status = "success"
 		result.Output = loopResult.Result
-		applogger.L.Info("TaskExecutor completed successfully",
+		applogger.Info("TaskExecutor completed successfully",
 			"session_id", params.SessionID,
 			"output_len", len(result.Output),
 		)
@@ -231,7 +231,7 @@ func Execute(params TaskParams) *TaskResult {
 		} else {
 			result.Error = "Unknown error"
 		}
-		applogger.L.Error("TaskExecutor failed",
+		applogger.Error("TaskExecutor failed",
 			"session_id", params.SessionID,
 			"error", result.Error,
 		)

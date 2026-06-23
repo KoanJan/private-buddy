@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/llm"
 
@@ -140,19 +141,19 @@ Write guidance, reason, and plan in the same language as the event content.`
 //
 // For other event types, simple rule-based decisions are used.
 // The LLM call uses TemperatureDeterministic for consistent decision making.
-func Decide(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *ComprehensionResult, activeWorks []*work) DecisionResult {
+func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, activeWorks []*work) DecisionResult {
 	// Non-message events use simple rule-based decisions
 	switch event.Type {
 	case eventqueue.EventTypeSessionJoined:
-		applogger.L.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "session_joined event")
+		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "session_joined event")
 		return DecisionResult{}
 	case eventqueue.EventTypeSessionLeft, eventqueue.EventTypeSystemNotification:
-		applogger.L.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "non-message event")
+		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "non-message event")
 		return DecisionResult{}
 	case eventqueue.EventTypeWorkCompleted:
 		return decideWorkCompleted(event, agent)
 	case eventqueue.EventTypeScheduled:
-		applogger.L.Info("Decision made (rule-based)", "agent_id", agent.ID, "action", ActionCreate, "reason", "scheduled event")
+		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "action", ActionCreate, "reason", "scheduled event")
 		return DecisionResult{
 			Actions: []Action{{
 				Type:     ActionCreate,
@@ -162,7 +163,7 @@ func Decide(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent
 	case eventqueue.EventTypeNewMessage:
 		// Proceed to LLM-based decision below
 	default:
-		applogger.L.Warn("Unknown event type in Decide",
+		applogger.Error("Unknown event type in Decide",
 			"event_type", event.Type,
 			"agent_id", agent.ID,
 		)
@@ -185,17 +186,17 @@ func Decide(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent
 // ChatWork completion produces no action — chat works are one-shot replies
 // that don't need follow-up.
 // Task work failure also creates a ChatWork to inform the user of the failure.
-func decideWorkCompleted(event eventqueue.AgentEvent, agent *model.Agent) DecisionResult {
+func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) DecisionResult {
 	payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload)
 	if !ok || payload == nil {
-		applogger.L.Error("WorkCompleted event has invalid payload", "agent_id", agent.ID)
+		applogger.Error("WorkCompleted event has invalid payload", "agent_id", agent.ID)
 		return DecisionResult{}
 	}
 
 	// Only TaskWork completion needs a follow-up chat.
 	// ChatWork completion is a one-shot reply — no follow-up needed.
 	if payload.WorkType != int(model.WorkTypeTask) {
-		applogger.L.Info("WorkCompleted: ChatWork, no follow-up needed",
+		applogger.Info("WorkCompleted: ChatWork, no follow-up needed",
 			"agent_id", agent.ID, "work_id", payload.WorkID)
 		return DecisionResult{}
 	}
@@ -207,7 +208,7 @@ func decideWorkCompleted(event eventqueue.AgentEvent, agent *model.Agent) Decisi
 		guidance = fmt.Sprintf("The task failed. Original task: %s. Inform the user of the failure and reason.", payload.Guidance)
 	}
 
-	applogger.L.Info("Decision made (rule-based, work completed)",
+	applogger.Info("Decision made (rule-based, work completed)",
 		"agent_id", agent.ID,
 		"work_id", payload.WorkID,
 		"status", payload.Status,
@@ -223,11 +224,11 @@ func decideWorkCompleted(event eventqueue.AgentEvent, agent *model.Agent) Decisi
 }
 
 // decideWithLLM uses LLM to decide whether to create new work or route to an existing one.
-func decideWithLLM(ctx context.Context, event eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *ComprehensionResult, sameSessionWorks []*work) DecisionResult {
+func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, sameSessionWorks []*work) DecisionResult {
 	// Validate event has content before calling LLM
 	eventDescription := event.FormatDescription()
 	if eventDescription == "" {
-		applogger.L.Error("Decision: event has empty content, ignoring",
+		applogger.Error("Decision: event has empty content, ignoring",
 			"agent_id", agent.ID,
 			"session_id", event.SessionID,
 		)
@@ -266,7 +267,7 @@ func decideWithLLM(ctx context.Context, event eventqueue.AgentEvent, agent *mode
 	})
 
 	if err != nil {
-		applogger.L.Error("Decision LLM call failed, ignoring",
+		applogger.Error("Decision LLM call failed, ignoring",
 			"agent_id", agent.ID,
 			"error", err,
 		)
@@ -275,14 +276,14 @@ func decideWithLLM(ctx context.Context, event eventqueue.AgentEvent, agent *mode
 
 	var decision DecisionResult
 	if err := json.Unmarshal([]byte(result), &decision); err != nil {
-		applogger.L.Error("Decision LLM output parse failed, ignoring",
+		applogger.Error("Decision LLM output parse failed, ignoring",
 			"agent_id", agent.ID,
 			"error", err,
 		)
 		return DecisionResult{}
 	}
 
-	applogger.L.Info("Decision made",
+	applogger.Info("Decision made",
 		"agent_id", agent.ID,
 		"thoughts", decision.Thoughts,
 		"action_count", len(decision.Actions),
@@ -291,7 +292,7 @@ func decideWithLLM(ctx context.Context, event eventqueue.AgentEvent, agent *mode
 	// Validate the LLM's decision — invalid actions are removed
 	validActions := filterValidActions(decision.Actions, sameSessionWorks)
 	if len(validActions) == 0 {
-		applogger.L.Error("Decision: no valid actions, ignoring")
+		applogger.Error("Decision: no valid actions, ignoring")
 		return DecisionResult{}
 	}
 
@@ -321,7 +322,7 @@ func filterValidActions(actions []Action, sameSessionWorks []*work) []Action {
 				valid = append(valid, action)
 			}
 		default:
-			applogger.L.Error("Decision: unknown action type, skipping",
+			applogger.Error("Decision: unknown action type, skipping",
 				"action_type", action.Type,
 			)
 		}
@@ -333,21 +334,21 @@ func filterValidActions(actions []Action, sameSessionWorks []*work) []Action {
 // and its target work exists and is a TaskWork.
 func isValidRouteAction(action Action, sameSessionWorks []*work) bool {
 	if action.WorkGuidance == nil {
-		applogger.L.Error("Decision route: missing work_guidance, skipping")
+		applogger.Error("Decision route: missing work_guidance, skipping")
 		return false
 	}
 	if action.WorkGuidance.Guidance == "" {
-		applogger.L.Error("Decision route: missing guidance, skipping")
+		applogger.Error("Decision route: missing guidance, skipping")
 		return false
 	}
 	if action.WorkGuidance.Reason == "" {
-		applogger.L.Error("Decision route: missing reason, skipping")
+		applogger.Error("Decision route: missing reason, skipping")
 		return false
 	}
 	for _, w := range sameSessionWorks {
 		if w.ID == action.WorkGuidance.TargetWorkID {
 			if w.plan.Type != model.WorkTypeTask {
-				applogger.L.Error("Decision route: target is not TaskWork, skipping",
+				applogger.Error("Decision route: target is not TaskWork, skipping",
 					"target_work_id", action.WorkGuidance.TargetWorkID,
 					"work_type", w.plan.Type,
 				)
@@ -356,7 +357,7 @@ func isValidRouteAction(action Action, sameSessionWorks []*work) bool {
 			return true
 		}
 	}
-	applogger.L.Error("Decision route: target work not found, skipping",
+	applogger.Error("Decision route: target work not found, skipping",
 		"target_work_id", action.WorkGuidance.TargetWorkID,
 	)
 	return false
@@ -365,11 +366,11 @@ func isValidRouteAction(action Action, sameSessionWorks []*work) bool {
 // isValidCreateAction checks whether a create action has a work plan with guidance.
 func isValidCreateAction(action Action) bool {
 	if action.WorkPlan == nil {
-		applogger.L.Error("Decision create: missing work_plan, skipping")
+		applogger.Error("Decision create: missing work_plan, skipping")
 		return false
 	}
 	if action.WorkPlan.Guidance == "" {
-		applogger.L.Error("Decision create: missing guidance, skipping")
+		applogger.Error("Decision create: missing guidance, skipping")
 		return false
 	}
 	return true
@@ -381,15 +382,15 @@ func isValidCreateAction(action Action) bool {
 // must carry guidance (what to do) and reason (why).
 func isValidCancelAction(action Action, sameSessionWorks []*work) bool {
 	if action.WorkGuidance == nil {
-		applogger.L.Error("Decision cancel: missing work_guidance, skipping")
+		applogger.Error("Decision cancel: missing work_guidance, skipping")
 		return false
 	}
 	if action.WorkGuidance.Guidance == "" {
-		applogger.L.Error("Decision cancel: missing guidance, skipping")
+		applogger.Error("Decision cancel: missing guidance, skipping")
 		return false
 	}
 	if action.WorkGuidance.Reason == "" {
-		applogger.L.Error("Decision cancel: missing reason, skipping")
+		applogger.Error("Decision cancel: missing reason, skipping")
 		return false
 	}
 	for _, w := range sameSessionWorks {
@@ -397,7 +398,7 @@ func isValidCancelAction(action Action, sameSessionWorks []*work) bool {
 			return true
 		}
 	}
-	applogger.L.Error("Decision cancel: target work not found, skipping",
+	applogger.Error("Decision cancel: target work not found, skipping",
 		"target_work_id", action.WorkGuidance.TargetWorkID,
 	)
 	return false
@@ -435,7 +436,7 @@ func buildActiveWorksContext(works []*work) string {
 // buildComprehensionContext formats comprehension results for the Decide prompt.
 // This provides the LLM with the agent's understanding of the message,
 // enabling informed decision-making instead of guessing from raw text.
-func buildComprehensionContext(comprehension *ComprehensionResult) string {
+func buildComprehensionContext(comprehension *comprehend.ComprehensionResult) string {
 	if comprehension == nil {
 		return ""
 	}

@@ -147,7 +147,7 @@ export function stopServer(): void {
         serverProcess.kill('SIGKILL');
         serverProcess = null;
       }
-    }, 5000);
+    }, 12000);
 
     serverProcess.on('exit', () => {
       clearTimeout(forceKillTimer);

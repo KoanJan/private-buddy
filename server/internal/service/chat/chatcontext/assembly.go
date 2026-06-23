@@ -251,7 +251,7 @@ func AssembleContext(
 		{Role: "user", Content: oneBigMessage},
 	}
 
-	applogger.L.Info("Assembled context",
+	applogger.Info("Assembled context",
 		"message_count", len(messages),
 		"has_person_state", personStateDescription != "",
 		"has_task_result", taskResult != nil,

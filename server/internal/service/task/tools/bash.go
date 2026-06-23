@@ -89,7 +89,7 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 			if len(cmdPreview) > 200 {
 				cmdPreview = cmdPreview[:200]
 			}
-			applogger.L.Warn("BashTool blocked command", "command", cmdPreview, "reason", blocked)
+			applogger.Warn("BashTool blocked command", "command", cmdPreview, "reason", blocked)
 			return fmt.Sprintf(`{"stdout": "", "stderr": "Error: %s", "exit_code": 1}`, blocked), nil
 		}
 	}
@@ -98,7 +98,7 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	if len(cmdPreview) > 200 {
 		cmdPreview = cmdPreview[:200]
 	}
-	applogger.L.Info("BashTool executing", "command", cmdPreview, "timeout_ms", timeoutMs)
+	applogger.Info("BashTool executing", "command", cmdPreview, "timeout_ms", timeoutMs)
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {

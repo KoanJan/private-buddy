@@ -53,18 +53,18 @@ func RecoverProcessingDocuments() {
 		Where("status = ?", model.DocumentStatusProcessing).
 		Update("status", model.DocumentStatusFailed)
 	if result.RowsAffected > 0 {
-		applogger.L.Info("Recovered processing documents", "count", result.RowsAffected)
+		applogger.Info("Recovered processing documents", "count", result.RowsAffected)
 	}
 
 	var switchingKBs []model.KnowledgeBase
 	if err := database.DB.Where("index_type = ?", model.KnowledgeBaseIndexTypeSwitching).Find(&switchingKBs).Error; err != nil {
-		applogger.L.Warn("failed to load switching KBs for recovery", "error", err)
+		applogger.Warn("failed to load switching KBs for recovery", "error", err)
 		return
 	}
 	for _, kb := range switchingKBs {
-		applogger.L.Info("Recovering switching KB, resetting to flat", "kb_id", kb.ID)
+		applogger.Info("Recovering switching KB, resetting to flat", "kb_id", kb.ID)
 		if err := database.DB.Model(&kb).Update("index_type", model.KnowledgeBaseIndexTypeFlat).Error; err != nil {
-			applogger.L.Error("failed to reset KB index type to flat", "kb_id", kb.ID, "error", err)
+			applogger.Error("failed to reset KB index type to flat", "kb_id", kb.ID, "error", err)
 		}
 	}
 }
@@ -112,7 +112,7 @@ func DeleteKnowledgeBase(kbID int64) error {
 			if id == kbID {
 				ids = append(ids[:i], ids[i+1:]...)
 				if err := database.DB.Model(&a).Update("knowledge_base_ids", jsonMarshal(ids)).Error; err != nil {
-					applogger.L.Error("failed to update agent KB IDs after KB deletion", "agent_id", a.ID, "error", err)
+					applogger.Error("failed to update agent KB IDs after KB deletion", "agent_id", a.ID, "error", err)
 				}
 				break
 			}
@@ -125,10 +125,10 @@ func DeleteKnowledgeBase(kbID int64) error {
 	os.RemoveAll(kbDir)
 
 	if err := database.DB.Where("knowledge_base_id = ?", kbID).Delete(&model.DocumentChunk{}).Error; err != nil {
-		applogger.L.Error("failed to delete document chunks for KB", "kb_id", kbID, "error", err)
+		applogger.Error("failed to delete document chunks for KB", "kb_id", kbID, "error", err)
 	}
 	if err := database.DB.Where("knowledge_base_id = ?", kbID).Delete(&model.Document{}).Error; err != nil {
-		applogger.L.Error("failed to delete documents for KB", "kb_id", kbID, "error", err)
+		applogger.Error("failed to delete documents for KB", "kb_id", kbID, "error", err)
 	}
 	if err := database.DB.Delete(&model.KnowledgeBase{}, kbID).Error; err != nil {
 		return fmt.Errorf("failed to delete knowledge base: %w", err)
@@ -216,17 +216,17 @@ func worker(kbID int64, ch chan int64) {
 }
 
 func processDocument(ctx context.Context, kbID, docID int64) {
-	applogger.L.Info("Processing document", "kb_id", kbID, "doc_id", docID)
+	applogger.Info("Processing document", "kb_id", kbID, "doc_id", docID)
 
 	var doc model.Document
 	if err := database.DB.First(&doc, docID).Error; err != nil {
-		applogger.L.Error("Document not found", "doc_id", docID, "error", err)
+		applogger.Error("Document not found", "doc_id", docID, "error", err)
 		return
 	}
 
 	var kb model.KnowledgeBase
 	if err := database.DB.First(&kb, kbID).Error; err != nil {
-		applogger.L.Error("Knowledge base not found", "kb_id", kbID, "error", err)
+		applogger.Error("Knowledge base not found", "kb_id", kbID, "error", err)
 		return
 	}
 
@@ -236,7 +236,7 @@ func processDocument(ctx context.Context, kbID, docID int64) {
 			"status":        model.DocumentStatusFailed,
 			"error_message": "Embedding config not found",
 		}).Error; err != nil {
-			applogger.L.Error("failed to mark document as failed", "doc_id", docID, "error", err)
+			applogger.Error("failed to mark document as failed", "doc_id", docID, "error", err)
 		}
 		return
 	}
@@ -245,7 +245,7 @@ func processDocument(ctx context.Context, kbID, docID int64) {
 	processor := newDocumentProcessor(embService)
 
 	if err := processor.Process(ctx, kbID, &doc); err != nil {
-		applogger.L.Error("Document processing failed", "doc_id", docID, "error", err)
+		applogger.Error("Document processing failed", "doc_id", docID, "error", err)
 		return
 	}
 
@@ -257,27 +257,27 @@ func processDocument(ctx context.Context, kbID, docID int64) {
 func addVectorsToIndex(kbID, docID int64) {
 	mgr, err := getOrCreateIndexManager(kbID)
 	if err != nil {
-		applogger.L.Warn("Failed to get index manager for vector update", "kb_id", kbID, "error", err)
+		applogger.Warn("Failed to get index manager for vector update", "kb_id", kbID, "error", err)
 		return
 	}
 
 	var chunkIDs []int64
 	if err := database.DB.Model(&model.DocumentChunk{}).Where("document_id = ?", docID).Pluck("id", &chunkIDs).Error; err != nil {
-		applogger.L.Error("failed to pluck chunk IDs for index update", "doc_id", docID, "error", err)
+		applogger.Error("failed to pluck chunk IDs for index update", "doc_id", docID, "error", err)
 		return
 	}
 
 	for _, chunkID := range chunkIDs {
 		embedding, err := mgr.GetVector(chunkID)
 		if err != nil {
-			applogger.L.Warn("Failed to get embedding for index update", "chunk_id", chunkID, "error", err)
+			applogger.Warn("Failed to get embedding for index update", "chunk_id", chunkID, "error", err)
 			continue
 		}
 		if embedding == nil {
 			continue
 		}
 		if err := mgr.AddToIndex(uint64(chunkID), embedding); err != nil {
-			applogger.L.Warn("Failed to add vector to index", "chunk_id", chunkID, "error", err)
+			applogger.Warn("Failed to add vector to index", "chunk_id", chunkID, "error", err)
 		}
 	}
 }

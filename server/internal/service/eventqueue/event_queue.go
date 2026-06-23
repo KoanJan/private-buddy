@@ -35,13 +35,14 @@ const (
 	EventTypeSystemNotification                       // System-level notification
 	EventTypeScheduled                                // Scheduled event (self-wake alarm) fired
 	EventTypeWorkCompleted                            // A Work (task/chat) completed execution
+	EventTypeAlarmCreated                             // A new scheduled alarm was created (by tool or recovery)
 )
 
 // AgentEvent represents an event that should be processed by an agent.
 type AgentEvent struct {
+	Payload   any // Type depends on the event type
 	Type      AgentEventType
 	SessionID int64
-	Payload   any // Type depends on the event type
 }
 
 // FormatDescription formats the event with a type-specific prefix and its payload content.
@@ -78,11 +79,6 @@ type NewMessagePayload struct {
 	MessageContent string
 }
 
-// GetMessageContent returns the message content for description extraction.
-func (p *NewMessagePayload) GetMessageContent() string {
-	return p.MessageContent
-}
-
 // ScheduledEventPayload is the payload type for EventTypeScheduled events.
 // When a scheduled alarm fires, the agent receives this payload so it can
 // recall why it set the alarm and what to do.
@@ -104,11 +100,6 @@ type ScheduledEventPayload struct {
 	ActionContent    string // Pre-computed message content for fast path (ActionSendMessage)
 }
 
-// GetMessageContent returns the alarm message for description extraction.
-func (p *ScheduledEventPayload) GetMessageContent() string {
-	return p.Message
-}
-
 // WorkCompletedPayload is the payload type for EventTypeWorkCompleted events.
 // When a Work finishes execution (success or failure), the agent receives this
 // event so it can decide whether to inform the user or take other action.
@@ -117,13 +108,24 @@ func (p *ScheduledEventPayload) GetMessageContent() string {
 // The agent processes it through the same Comprehend→Decide pipeline as
 // external events, ensuring consistent cognitive handling.
 type WorkCompletedPayload struct {
-	WorkID          int64  // ID of the completed work
-	WorkType        int    // model.WorkTypeChat or model.WorkTypeTask
-	Guidance        string // The original guidance (execution intent) of the work
-	Status          string // "success" or "failure"
-	TaskOutput      string // Task execution output (for TaskWork success)
-	TaskError       string // Task execution error (for TaskWork failure)
-	TriggerMessageID int64 // The user message that originally triggered this work
+	WorkID           int64  // ID of the completed work
+	WorkType         int    // model.WorkTypeChat or model.WorkTypeTask
+	Guidance         string // The original guidance (execution intent) of the work
+	Status           string // "success" or "failure"
+	TaskOutput       string // Task execution output (for TaskWork success)
+	TaskError        string // Task execution error (for TaskWork failure)
+	TriggerMessageID int64  // The user message that originally triggered this work
+}
+
+// AlarmCreatedPayload is the payload type for EventTypeAlarmCreated events.
+// When a tool (or recovery logic) creates a new scheduled alarm, this event
+// notifies the runtime so it can register a goroutine to wait for the trigger time.
+//
+// The runtime is the sole manager of alarm goroutines — tools only create DB
+// records and send this event. This avoids circular dependencies and keeps
+// goroutine lifecycle management centralized.
+type AlarmCreatedPayload struct {
+	ScheduledEventID int64 // ID of the newly created ScheduledEvent record
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +141,7 @@ const channelSize = 64 // Per-agent event channel buffer size
 // Thread-safe.  All public methods may be called concurrently.
 type eventQueue struct {
 	mu    sync.RWMutex
-	chans map[int64]chan AgentEvent // agentID -> event channel
+	chans map[int64]chan *AgentEvent // agentID -> event channel
 }
 
 // global is the singleton eventQueue instance.
@@ -149,16 +151,16 @@ var global *eventQueue
 // Init creates and sets the global eventQueue singleton.
 func Init() {
 	global = newEventQueue()
-	applogger.L.Info("Global event queue initialized")
+	applogger.Info("Global event queue initialized")
 }
 
 // SendEvent sends an event to the given agent via the global event queue.
-func SendEvent(agentID int64, event AgentEvent) {
+func SendEvent(agentID int64, event *AgentEvent) {
 	global.SendEvent(agentID, event)
 }
 
 // Subscribe returns the event channel for the given agent via the global queue.
-func Subscribe(agentID int64) <-chan AgentEvent {
+func Subscribe(agentID int64) <-chan *AgentEvent {
 	return global.Subscribe(agentID)
 }
 
@@ -170,7 +172,7 @@ func Unsubscribe(agentID int64) {
 // newEventQueue creates a new eventQueue.
 func newEventQueue() *eventQueue {
 	return &eventQueue{
-		chans: make(map[int64]chan AgentEvent),
+		chans: make(map[int64]chan *AgentEvent),
 	}
 }
 
@@ -181,7 +183,7 @@ func newEventQueue() *eventQueue {
 // Returns a read-only channel.  The channel is buffered (channelSize) and is
 // unique per agent — calling Subscribe multiple times for the same agent
 // returns the same channel.
-func (q *eventQueue) Subscribe(agentID int64) <-chan AgentEvent {
+func (q *eventQueue) Subscribe(agentID int64) <-chan *AgentEvent {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -189,7 +191,7 @@ func (q *eventQueue) Subscribe(agentID int64) <-chan AgentEvent {
 		return ch
 	}
 
-	ch := make(chan AgentEvent, channelSize)
+	ch := make(chan *AgentEvent, channelSize)
 	q.chans[agentID] = ch
 	return ch
 }
@@ -220,13 +222,13 @@ func (q *eventQueue) Unsubscribe(agentID int64) {
 // SendEvent sends an event to the given agent's event channel.
 // Non-blocking: drops the event if the channel is full.
 // If no agent is subscribed, the event is silently dropped with a warning.
-func (q *eventQueue) SendEvent(agentID int64, event AgentEvent) {
+func (q *eventQueue) SendEvent(agentID int64, event *AgentEvent) {
 	q.mu.RLock()
 	ch, ok := q.chans[agentID]
 	q.mu.RUnlock()
 
 	if !ok {
-		applogger.L.Warn("No subscriber for agent event, dropping",
+		applogger.Warn("No subscriber for agent event, dropping",
 			"agent_id", agentID,
 			"event_type", event.Type,
 			"session_id", event.SessionID,
@@ -237,7 +239,7 @@ func (q *eventQueue) SendEvent(agentID int64, event AgentEvent) {
 	select {
 	case ch <- event:
 	default:
-		applogger.L.Warn("Agent event channel full, dropping event",
+		applogger.Warn("Agent event channel full, dropping event",
 			"agent_id", agentID,
 			"event_type", event.Type,
 			"session_id", event.SessionID,

@@ -21,7 +21,7 @@ func createEvent(ctx context.Context, eventType int, refID int64) (int64, error)
 		return 0, fmt.Errorf("failed to create event: %w", err)
 	}
 
-	applogger.L.Debug("Event created",
+	applogger.Debug("Event created",
 		"event_id", event.ID,
 		"event_type", eventType,
 		"ref_id", refID,
@@ -41,7 +41,7 @@ func createEventWithEmbedding(ctx context.Context, eventType int, refID int64, c
 
 	if embeddingSvc != nil {
 		if err := storeEventEmbedding(ctx, eventID, content); err != nil {
-			applogger.L.Warn("Failed to store event embedding, event created without vector",
+			applogger.Warn("Failed to store event embedding, event created without vector",
 				"event_id", eventID, "error", err)
 		}
 	}
@@ -66,7 +66,7 @@ func storeEventEmbedding(ctx context.Context, eventID int64, content string) err
 		return fmt.Errorf("failed to store event vector: %w", err)
 	}
 
-	applogger.L.Debug("Event vector stored",
+	applogger.Debug("Event vector stored",
 		"event_id", eventID,
 		"dimension", len(embedding),
 	)
@@ -82,7 +82,7 @@ func createObservation(ctx context.Context, agentID, eventID int64) error {
 		return fmt.Errorf("failed to create observation: %w", err)
 	}
 
-	applogger.L.Debug("Observation created",
+	applogger.Debug("Observation created",
 		"agent_id", agentID,
 		"event_id", eventID,
 		"obs_id", obs.ID,

@@ -11,7 +11,7 @@ import (
 func GetSession(sessionID int64) *model.Session {
 	var session model.Session
 	if err := database.DB.First(&session, sessionID).Error; err != nil {
-		applogger.L.Error("Session not found", "session_id", sessionID, "error", err)
+		applogger.Error("Session not found", "session_id", sessionID, "error", err)
 		return nil
 	}
 	return &session
@@ -21,7 +21,7 @@ func GetSession(sessionID int64) *model.Session {
 func GetAgent(agentID int64) *model.Agent {
 	var agent model.Agent
 	if err := database.DB.First(&agent, agentID).Error; err != nil {
-		applogger.L.Error("Agent not found", "agent_id", agentID, "error", err)
+		applogger.Error("Agent not found", "agent_id", agentID, "error", err)
 		return nil
 	}
 	return &agent
@@ -31,7 +31,7 @@ func GetAgent(agentID int64) *model.Agent {
 func GetLLMConfig(llmConfigID int64) *model.LLMConfig {
 	var config model.LLMConfig
 	if err := database.DB.First(&config, llmConfigID).Error; err != nil {
-		applogger.L.Error("LLM config not found", "llm_config_id", llmConfigID, "error", err)
+		applogger.Error("LLM config not found", "llm_config_id", llmConfigID, "error", err)
 		return nil
 	}
 	return &config
@@ -41,7 +41,7 @@ func GetLLMConfig(llmConfigID int64) *model.LLMConfig {
 func GetSearchConfig() *model.SearchConfig {
 	var config model.SearchConfig
 	if err := database.DB.Where("id = ?", 1).First(&config).Error; err != nil {
-		applogger.L.Warn("SearchConfig not found, creating default")
+		applogger.Warn("SearchConfig not found, creating default")
 		config = model.SearchConfig{
 			Provider:    "tavily",
 			APIKey:      "",
@@ -49,7 +49,7 @@ func GetSearchConfig() *model.SearchConfig {
 			IsActive:    false,
 		}
 		if err := database.DB.Create(&config).Error; err != nil {
-			applogger.L.Error("failed to create default search config", "error", err)
+			applogger.Error("failed to create default search config", "error", err)
 		}
 	}
 	return &config
@@ -75,14 +75,14 @@ func UpdateSearchConfig(provider, apiKey, description *string, isActive *bool) *
 
 	if len(updates) > 0 {
 		if err := database.DB.Model(config).Updates(updates).Error; err != nil {
-			applogger.L.Error("failed to update search config", "error", err)
+			applogger.Error("failed to update search config", "error", err)
 		}
 		if err := database.DB.First(config, 1).Error; err != nil {
-			applogger.L.Warn("failed to refresh search config after update", "error", err)
+			applogger.Warn("failed to refresh search config after update", "error", err)
 		}
 	}
 
-	applogger.L.Info("SearchConfig updated",
+	applogger.Info("SearchConfig updated",
 		"provider", config.Provider,
 		"is_active", config.IsActive,
 		"has_api_key", config.APIKey != "",
@@ -95,7 +95,7 @@ func UpdateSearchConfig(provider, apiKey, description *string, isActive *bool) *
 func GetEmbeddingConfig() *model.EmbeddingConfig {
 	var config model.EmbeddingConfig
 	if err := database.DB.Order("id ASC").First(&config).Error; err != nil {
-		applogger.L.Warn("No embedding config found, embedding-dependent features unavailable")
+		applogger.Warn("No embedding config found, embedding-dependent features unavailable")
 		return nil
 	}
 	return &config
@@ -114,21 +114,21 @@ func UpdateEmbeddingConfig(req model.EmbeddingConfig) *model.EmbeddingConfig {
 	config := GetEmbeddingConfig()
 	if config == nil {
 		if err := database.DB.Create(&req).Error; err != nil {
-			applogger.L.Error("Failed to create embedding config", "error", err)
+			applogger.Error("Failed to create embedding config", "error", err)
 			return nil
 		}
 		config = &req
 	} else {
 		if err := database.DB.Model(config).Updates(req).Error; err != nil {
-			applogger.L.Error("Failed to update embedding config", "error", err)
+			applogger.Error("Failed to update embedding config", "error", err)
 			return nil
 		}
 		if err := database.DB.First(config, config.ID).Error; err != nil {
-			applogger.L.Warn("failed to refresh embedding config after update", "id", config.ID, "error", err)
+			applogger.Warn("failed to refresh embedding config after update", "id", config.ID, "error", err)
 		}
 	}
 
-	applogger.L.Info("Embedding config updated",
+	applogger.Info("Embedding config updated",
 		"name", config.Name,
 		"model", config.ModelID,
 	)
@@ -152,7 +152,7 @@ func CreateUser(name, bio string) (*model.User, error) {
 	if err := database.DB.Create(&user).Error; err != nil {
 		return nil, err
 	}
-	applogger.L.Info("User profile created", "name", name)
+	applogger.Info("User profile created", "name", name)
 	return &user, nil
 }
 
@@ -160,7 +160,7 @@ func CreateUser(name, bio string) (*model.User, error) {
 func GetUserName() string {
 	var user model.User
 	if err := database.DB.Where("id = ?", 1).Select("name").First(&user).Error; err != nil {
-		applogger.L.Warn("failed to load user name", "error", err)
+		applogger.Warn("failed to load user name", "error", err)
 		return ""
 	}
 	return user.Name

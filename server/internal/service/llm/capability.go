@@ -26,14 +26,14 @@ var capabilityCache sync.Map
 func LoadCapabilityCache() {
 	var caps []model.ModelCapability
 	if err := database.DB.Find(&caps).Error; err != nil {
-		applogger.L.Error("failed to load capability cache from database", "error", err)
+		applogger.Error("failed to load capability cache from database", "error", err)
 		return
 	}
 	for _, c := range caps {
 		key := capabilityCacheKey(c.BaseURL, c.ModelID)
 		capabilityCache.Store(key, c.SupportsJSONSchema)
 	}
-	applogger.L.Info("capability cache loaded from database", "count", len(caps))
+	applogger.Info("capability cache loaded from database", "count", len(caps))
 }
 
 // capabilityCacheKey builds the cache key from baseURL and modelID.
@@ -47,14 +47,14 @@ func (cm *ChatModel) lookupCapability() (*model.ModelCapability, bool) {
 	key := capabilityCacheKey(cm.baseURL, cm.modelID)
 	if val, ok := capabilityCache.Load(key); ok {
 		supports := val.(int)
-		applogger.L.Debug("capability cache hit", "base_url", cm.baseURL, "model_id", cm.modelID, "supports_json_schema", supports)
+		applogger.Debug("capability cache hit", "base_url", cm.baseURL, "model_id", cm.modelID, "supports_json_schema", supports)
 		return &model.ModelCapability{
 			BaseURL:            cm.baseURL,
 			ModelID:            cm.modelID,
 			SupportsJSONSchema: supports,
 		}, true
 	}
-	applogger.L.Debug("capability cache miss", "base_url", cm.baseURL, "model_id", cm.modelID)
+	applogger.Debug("capability cache miss", "base_url", cm.baseURL, "model_id", cm.modelID)
 	return nil, false
 }
 
@@ -76,7 +76,7 @@ func (cm *ChatModel) saveCapability(supportsJSONSchema int) {
 			"supports_json_schema": supportsJSONSchema,
 		}).FirstOrCreate(&cap)
 		if result.Error != nil {
-			applogger.L.Error("failed to persist capability cache to database", "base_url", cm.baseURL, "model_id", cm.modelID, "error", result.Error)
+			applogger.Error("failed to persist capability cache to database", "base_url", cm.baseURL, "model_id", cm.modelID, "error", result.Error)
 		}
 	}()
 }

@@ -70,7 +70,7 @@ func Init() {
 	sqlDB.SetMaxOpenConns(1)
 
 	DB = db
-	applogger.L.Info("Database initialized", "path", dbPath)
+	applogger.Info("Database initialized", "path", dbPath)
 }
 
 // AutoMigrate creates all database tables and adds missing columns.
@@ -117,7 +117,7 @@ func AutoMigrate() {
 			if err := DB.AutoMigrate(m); err != nil {
 				panic(fmt.Sprintf("Failed to auto-migrate %T: %v", m, err))
 			}
-			applogger.L.Info("Created table", "model", fmt.Sprintf("%T", m))
+			applogger.Info("Created table", "model", fmt.Sprintf("%T", m))
 		}
 	}
 
@@ -134,7 +134,7 @@ func AutoMigrate() {
 	// Migrate enum columns from TEXT to INTEGER across all tables
 	migrateEnumColumnsToInt()
 
-	applogger.L.Info("Database migration completed")
+	applogger.Info("Database migration completed")
 }
 
 // addMissingColumns inspects the model struct and adds any columns that
@@ -149,7 +149,7 @@ func addMissingColumns(m interface{}) {
 	for _, field := range stmt.Schema.Fields {
 		colName := field.DBName
 		if !DB.Migrator().HasColumn(m, colName) {
-			applogger.L.Info("Adding missing column", "table", stmt.Table, "column", colName)
+			applogger.Info("Adding missing column", "table", stmt.Table, "column", colName)
 			if err := DB.Migrator().AddColumn(m, colName); err != nil {
 				panic(fmt.Sprintf("Failed to add column %s.%s: %v", stmt.Table, colName, err))
 			}
@@ -175,7 +175,7 @@ func dropSessionsStatusColumn() {
 		return
 	}
 
-	applogger.L.Info("Dropping sessions.status column (removed from model)")
+	applogger.Info("Dropping sessions.status column (removed from model)")
 
 	// Rebuild sessions table without the status column
 	DB.Exec(`
@@ -195,7 +195,7 @@ func dropSessionsStatusColumn() {
 	// Recreate the index on agent_id
 	DB.Exec(`CREATE INDEX idx_sessions_agent_id ON sessions(agent_id)`)
 
-	applogger.L.Info("Successfully dropped sessions.status column")
+	applogger.Info("Successfully dropped sessions.status column")
 }
 
 // dropSurvivalCountColumn removes the `survival_count` column from the
@@ -213,7 +213,7 @@ func dropSurvivalCountColumn() {
 		return
 	}
 
-	applogger.L.Info("Dropping agent_observations.survival_count column (removed from model)")
+	applogger.Info("Dropping agent_observations.survival_count column (removed from model)")
 
 	DB.Exec(`
 		CREATE TABLE agent_observations_new (
@@ -235,7 +235,7 @@ func dropSurvivalCountColumn() {
 	// Recreate the unique index on (agent_id, event_id)
 	DB.Exec(`CREATE UNIQUE INDEX idx_observations_agent_event ON agent_observations(agent_id, event_id)`)
 
-	applogger.L.Info("Successfully dropped agent_observations.survival_count column")
+	applogger.Info("Successfully dropped agent_observations.survival_count column")
 }
 
 // migrateEnumColumnsToInt migrates all enum columns from TEXT to INTEGER
@@ -295,7 +295,7 @@ func migrateParticipantSessionsEnumToInt() {
 		return
 	}
 
-	applogger.L.Info("Migrating participant_sessions: enum TEXT → INTEGER")
+	applogger.Info("Migrating participant_sessions: enum TEXT → INTEGER")
 
 	DB.Exec(`
 		CREATE TABLE participant_sessions_new (
@@ -326,7 +326,7 @@ func migrateParticipantSessionsEnumToInt() {
 	DB.Exec(`ALTER TABLE participant_sessions_new RENAME TO participant_sessions`)
 	DB.Exec(`CREATE INDEX idx_participant_sessions_session_id ON participant_sessions(session_id)`)
 
-	applogger.L.Info("Successfully migrated participant_sessions enum columns to INTEGER")
+	applogger.Info("Successfully migrated participant_sessions enum columns to INTEGER")
 }
 
 // migrateMessagesRoleToInt rebuilds messages with role as INTEGER column.
@@ -338,7 +338,7 @@ func migrateMessagesRoleToInt() {
 		return
 	}
 
-	applogger.L.Info("Migrating messages: role TEXT → INTEGER")
+	applogger.Info("Migrating messages: role TEXT → INTEGER")
 
 	DB.Exec(`
 		CREATE TABLE messages_new (
@@ -365,7 +365,7 @@ func migrateMessagesRoleToInt() {
 	DB.Exec(`ALTER TABLE messages_new RENAME TO messages`)
 	DB.Exec(`CREATE INDEX idx_messages_session_id ON messages(session_id)`)
 
-	applogger.L.Info("Successfully migrated messages.role to INTEGER")
+	applogger.Info("Successfully migrated messages.role to INTEGER")
 }
 
 // migrateDocumentsStatusToInt rebuilds documents with status as INTEGER column.
@@ -377,7 +377,7 @@ func migrateDocumentsStatusToInt() {
 		return
 	}
 
-	applogger.L.Info("Migrating documents: status TEXT → INTEGER")
+	applogger.Info("Migrating documents: status TEXT → INTEGER")
 
 	DB.Exec(`
 		CREATE TABLE documents_new (
@@ -406,7 +406,7 @@ func migrateDocumentsStatusToInt() {
 	DB.Exec(`DROP TABLE documents`)
 	DB.Exec(`ALTER TABLE documents_new RENAME TO documents`)
 
-	applogger.L.Info("Successfully migrated documents.status to INTEGER")
+	applogger.Info("Successfully migrated documents.status to INTEGER")
 }
 
 // migrateKnowledgeBasesIndexTypeToInt rebuilds knowledge_bases with index_type as INTEGER column.
@@ -418,7 +418,7 @@ func migrateKnowledgeBasesIndexTypeToInt() {
 		return
 	}
 
-	applogger.L.Info("Migrating knowledge_bases: index_type TEXT → INTEGER")
+	applogger.Info("Migrating knowledge_bases: index_type TEXT → INTEGER")
 
 	DB.Exec(`
 		CREATE TABLE knowledge_bases_new (
@@ -446,7 +446,7 @@ func migrateKnowledgeBasesIndexTypeToInt() {
 	DB.Exec(`DROP TABLE knowledge_bases`)
 	DB.Exec(`ALTER TABLE knowledge_bases_new RENAME TO knowledge_bases`)
 
-	applogger.L.Info("Successfully migrated knowledge_bases.index_type to INTEGER")
+	applogger.Info("Successfully migrated knowledge_bases.index_type to INTEGER")
 }
 
 // migrateInteractionsTable migrates the interactions table schema.
@@ -467,7 +467,7 @@ func migrateInteractionsTable() {
 	}
 	// If draft_id column exists, migrate from draft_id to work_id
 	if DB.Migrator().HasColumn(&model.Interaction{}, "draft_id") {
-		applogger.L.Info("Migrating interactions table: draft_id → work_id")
+		applogger.Info("Migrating interactions table: draft_id → work_id")
 
 		DB.Exec(`
 			CREATE TABLE interactions_new (
@@ -493,7 +493,7 @@ func migrateInteractionsTable() {
 		DB.Exec(`CREATE INDEX idx_interactions_session_id ON interactions(session_id)`)
 		DB.Exec(`CREATE INDEX idx_interactions_work_id ON interactions(work_id)`)
 
-		applogger.L.Info("Successfully migrated interactions table to work_id schema")
+		applogger.Info("Successfully migrated interactions table to work_id schema")
 		return
 	}
 
@@ -503,7 +503,7 @@ func migrateInteractionsTable() {
 		return
 	}
 
-	applogger.L.Info("Migrating interactions table: user_msg_id+agent_msg_id → work_id")
+	applogger.Info("Migrating interactions table: user_msg_id+agent_msg_id → work_id")
 
 	DB.Exec(`
 		CREATE TABLE interactions_new (
@@ -524,7 +524,7 @@ func migrateInteractionsTable() {
 	DB.Exec(`CREATE INDEX idx_interactions_session_id ON interactions(session_id)`)
 	DB.Exec(`CREATE INDEX idx_interactions_work_id ON interactions(work_id)`)
 
-	applogger.L.Info("Successfully migrated interactions table to work_id schema")
+	applogger.Info("Successfully migrated interactions table to work_id schema")
 }
 
 // migrateHistoricalSummariesTable adds the agent_id column to historical_summaries.
@@ -546,7 +546,7 @@ func migrateHistoricalSummariesTable() {
 		return
 	}
 
-	applogger.L.Info("Migrating historical_summaries table: adding agent_id column")
+	applogger.Info("Migrating historical_summaries table: adding agent_id column")
 
 	// Rebuild with agent_id, backfilling from sessions.agent_id
 	DB.Exec(`
@@ -570,7 +570,7 @@ func migrateHistoricalSummariesTable() {
 	DB.Exec(`CREATE INDEX idx_historical_summaries_session_id ON historical_summaries(session_id)`)
 	DB.Exec(`CREATE INDEX idx_historical_summaries_agent_id ON historical_summaries(agent_id)`)
 
-	applogger.L.Info("Successfully migrated historical_summaries table with agent_id column")
+	applogger.Info("Successfully migrated historical_summaries table with agent_id column")
 }
 
 // ensureSearchConfig creates the default search config record if it doesn't exist.

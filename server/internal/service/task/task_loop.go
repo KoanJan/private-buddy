@@ -102,7 +102,7 @@ type LoopResult struct {
 // (as part of the system prompt with Guidance), so it is not passed
 // as a parameter here.
 func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
-	applogger.L.Info("TaskLoop starting",
+	applogger.Info("TaskLoop starting",
 		"max_iterations", tl.maxIterations,
 		"session_id", tl.sessionID,
 		"work_id", tl.workID,
@@ -111,7 +111,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 	for iteration := 1; iteration <= tl.maxIterations; iteration++ {
 		// Check if the task has been cancelled (e.g., session deleted)
 		if ctx != nil && ctx.Err() != nil {
-			applogger.L.Info("TaskLoop cancelled, stopping execution",
+			applogger.Info("TaskLoop cancelled, stopping execution",
 				"session_id", tl.sessionID,
 				"iteration", iteration,
 			)
@@ -125,7 +125,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 		// Drain all pending guidance to handle multiple updates.
 		tl.observeNewGuidance(iteration)
 
-		applogger.L.Info("TaskLoop iteration", "iteration", iteration, "max", tl.maxIterations)
+		applogger.Info("TaskLoop iteration", "iteration", iteration, "max", tl.maxIterations)
 
 		if tl.writeNotesTool != nil {
 			tl.writeNotesTool.TrimNotes()
@@ -145,13 +145,13 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			continue
 		}
 
-		tl.writeInteraction(iteration, model.InteractionTypeRequest, map[string]interface{}{
+		tl.weakWriteInteraction(iteration, model.InteractionTypeRequest, map[string]interface{}{
 			"messages": messages,
 		})
 
 		response, err := tl.invokeLLM(ctx, messages)
 		if err != nil {
-			applogger.L.Error("TaskLoop LLM error", "iteration", iteration, "error", err)
+			applogger.Error("TaskLoop LLM error", "iteration", iteration, "error", err)
 			return &LoopResult{Status: "failure", Reason: fmt.Sprintf("LLM invocation failed at iteration %d: %s", iteration, err.Error())}
 		}
 
@@ -165,7 +165,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			if len(contentPreview) > 500 {
 				contentPreview = contentPreview[:500]
 			}
-			applogger.L.Debug("TaskLoop LLM response",
+			applogger.Debug("TaskLoop LLM response",
 				"finish_reason", "stop",
 				"content", contentPreview,
 			)
@@ -186,7 +186,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			if len(contentPreview) > 500 {
 				contentPreview = contentPreview[:500]
 			}
-			applogger.L.Debug("TaskLoop LLM response",
+			applogger.Debug("TaskLoop LLM response",
 				"finish_reason", "tool_calls",
 				"content", contentPreview,
 				"tool_calls", fmt.Sprintf("%v", tcSummary),
@@ -196,13 +196,13 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			if len(contentPreview) > 500 {
 				contentPreview = contentPreview[:500]
 			}
-			applogger.L.Debug("TaskLoop LLM response",
+			applogger.Debug("TaskLoop LLM response",
 				"finish_reason", "length",
 				"content", contentPreview,
 			)
 		}
 
-		tl.writeInteraction(iteration, model.InteractionTypeResponse, map[string]interface{}{
+		tl.weakWriteInteraction(iteration, model.InteractionTypeResponse, map[string]interface{}{
 			"content":       content,
 			"tool_calls":    toolCalls,
 			"finish_reason": finishReason,
@@ -210,13 +210,13 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 
 		switch finishReason {
 		case "stop":
-			applogger.L.Info("TaskLoop completed", "iteration", iteration)
+			applogger.Info("TaskLoop completed", "iteration", iteration)
 			tl.updateNotesOnSuccess(ctx, iteration, content, messages)
 			return &LoopResult{Status: "success", Result: content}
 
 		case "tool_calls":
 			if content != "" {
-				applogger.L.Info("TaskLoop thoughts", "iteration", iteration, "thoughts", content[:min(500, len(content))])
+				applogger.Info("TaskLoop thoughts", "iteration", iteration, "thoughts", content[:min(500, len(content))])
 			}
 
 			// Discard reasoning content from tool_calls to establish an information
@@ -252,13 +252,13 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 
 			if hasWriteNotes {
 				tl.lastNotesIter = iteration
-				applogger.L.Info("Agent voluntarily called write_notes", "iteration", iteration)
+				applogger.Info("Agent voluntarily called write_notes", "iteration", iteration)
 			}
 
 			tl.contextManager.AddIteration(assistantMsg, toolResults)
 
 		case "length":
-			applogger.L.Warn("TaskLoop finish_reason=length", "iteration", iteration)
+			applogger.Warn("TaskLoop finish_reason=length", "iteration", iteration)
 
 			assistantMsg := llm.Message{
 				Role:    "assistant",
@@ -279,7 +279,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			)
 
 		default:
-			applogger.L.Warn("TaskLoop unexpected finish_reason", "finish_reason", finishReason, "iteration", iteration)
+			applogger.Warn("TaskLoop unexpected finish_reason", "finish_reason", finishReason, "iteration", iteration)
 		}
 	}
 
@@ -309,7 +309,7 @@ func (tl *TaskLoop) observeNewGuidance(iteration int) {
 	for {
 		select {
 		case directive := <-tl.guidanceCh:
-			applogger.L.Info("TaskLoop: observed new guidance",
+			applogger.Info("TaskLoop: observed new guidance",
 				"session_id", tl.sessionID,
 				"work_id", tl.workID,
 				"iteration", iteration,
@@ -319,7 +319,7 @@ func (tl *TaskLoop) observeNewGuidance(iteration int) {
 
 			// 1. Write to interactions: this is a cognitive event that changes
 			// the execution direction. Must be visible in the audit trail.
-			tl.writeInteraction(iteration, model.InteractionTypeGuidance, map[string]interface{}{
+			tl.weakWriteInteraction(iteration, model.InteractionTypeGuidance, map[string]interface{}{
 				"guidance": directive.Guidance,
 				"reason":   directive.Reason,
 			})
@@ -363,7 +363,7 @@ func (tl *TaskLoop) isCheckpointIteration(iteration int) bool {
 // On checkpoint iteration, returns success to continue the loop.
 func (tl *TaskLoop) runNotesIteration(ctx context.Context, iteration int, messages []llm.Message, isFinal bool) *LoopResult {
 	if tl.writeNotesTool == nil {
-		applogger.L.Error("Cannot run notes iteration: write_notes_tool not initialized")
+		applogger.Error("Cannot run notes iteration: write_notes_tool not initialized")
 		if isFinal {
 			return &LoopResult{Status: "failure", Reason: "Task did not complete within max iterations"}
 		}
@@ -378,7 +378,7 @@ func (tl *TaskLoop) runNotesIteration(ctx context.Context, iteration int, messag
 	if isFinal {
 		iterType = "final"
 	}
-	applogger.L.Info("Running notes iteration", "type", iterType, "iteration", iteration)
+	applogger.Info("Running notes iteration", "type", iterType, "iteration", iteration)
 
 	var checkpointMsg string
 	if isFinal {
@@ -426,7 +426,7 @@ After writing notes, you will regain access to all tools.`
 		Content: checkpointMsg,
 	})
 
-	tl.writeInteraction(iteration, model.InteractionTypeRequest, map[string]interface{}{
+	tl.weakWriteInteraction(iteration, model.InteractionTypeRequest, map[string]interface{}{
 		"messages":      messagesWithCheckpoint,
 		"is_checkpoint": true,
 	})
@@ -434,7 +434,7 @@ After writing notes, you will regain access to all tools.`
 	toolDefs := []llm.FunctionDefinition{tl.writeNotesTool.Schema()}
 	response, err := tl.checkpointClient.ChatWithTools(ctx, messagesWithCheckpoint, toolDefs)
 	if err != nil {
-		applogger.L.Error("Notes iteration LLM error", "error", err)
+		applogger.Error("Notes iteration LLM error", "error", err)
 		if isFinal {
 			return &LoopResult{Status: "failure", Reason: "Task did not complete within max iterations"}
 		}
@@ -445,7 +445,7 @@ After writing notes, you will regain access to all tools.`
 	content := response.Content
 	toolCalls := response.ToolCalls
 
-	tl.writeInteraction(iteration, model.InteractionTypeResponse, map[string]interface{}{
+	tl.weakWriteInteraction(iteration, model.InteractionTypeResponse, map[string]interface{}{
 		"content":       content,
 		"tool_calls":    toolCalls,
 		"finish_reason": finishReason,
@@ -458,7 +458,7 @@ After writing notes, you will regain access to all tools.`
 			toolCallID := tc.ID
 
 			if tc.Function.Name != "write_notes" {
-				applogger.L.Warn("Notes iteration: unexpected tool call", "tool", tc.Function.Name)
+				applogger.Warn("Notes iteration: unexpected tool call", "tool", tc.Function.Name)
 				toolResults = append(toolResults, llm.Message{
 					Role:       "tool",
 					ToolCallID: toolCallID,
@@ -470,7 +470,7 @@ After writing notes, you will regain access to all tools.`
 			var args map[string]interface{}
 			json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
-			applogger.L.Info("Notes iteration: executing write_notes")
+			applogger.Info("Notes iteration: executing write_notes")
 			result, _ := tl.writeNotesTool.Execute(args)
 
 			toolResults = append(toolResults, llm.Message{
@@ -492,7 +492,7 @@ After writing notes, you will regain access to all tools.`
 		tl.contextManager.AddIteration(assistantMsg, toolResults)
 	}
 
-	applogger.L.Info("Notes iteration completed", "iteration", iteration)
+	applogger.Info("Notes iteration completed", "iteration", iteration)
 
 	if isFinal {
 		return &LoopResult{Status: "failure", Reason: "Task did not complete within max iterations. Notes have been saved for next execution."}
@@ -513,7 +513,7 @@ func (tl *TaskLoop) updateNotesOnSuccess(ctx context.Context, iteration int, fin
 		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, llm.TemperatureCreative)
 	}
 
-	applogger.L.Info("Updating notes after successful completion", "iteration", iteration)
+	applogger.Info("Updating notes after successful completion", "iteration", iteration)
 
 	successMsg := `[Task Completed - Update Your Notes]
 The task has been completed successfully.
@@ -537,7 +537,7 @@ This will help you continue work if changes are requested later.`
 	toolDefs := []llm.FunctionDefinition{tl.writeNotesTool.Schema()}
 	response, err := tl.checkpointClient.ChatWithTools(ctx, messagesWithUpdate, toolDefs)
 	if err != nil {
-		applogger.L.Error("Notes update on success failed", "error", err)
+		applogger.Error("Notes update on success failed", "error", err)
 		return
 	}
 
@@ -554,7 +554,7 @@ This will help you continue work if changes are requested later.`
 		tl.contextManager.RefreshNotes(tl.writeNotesTool.ReadNotes())
 	}
 
-	applogger.L.Info("Notes updated after successful completion")
+	applogger.Info("Notes updated after successful completion")
 }
 
 // invokeLLM calls the LLM with the current messages and all registered tools.
@@ -568,7 +568,7 @@ func (tl *TaskLoop) invokeLLM(ctx context.Context, messages []llm.Message) (llm.
 			"tool_calls":  len(m.ToolCalls),
 		})
 	}
-	applogger.L.Debug("TaskLoop invoking LLM",
+	applogger.Debug("TaskLoop invoking LLM",
 		"message_count", len(messages),
 		"detail", fmt.Sprintf("%v", msgSummary),
 	)
@@ -606,11 +606,11 @@ func (tl *TaskLoop) executeToolCall(tc llm.ToolCall) llm.Message {
 		}
 	}
 
-	applogger.L.Info("Executing tool", "tool", toolName)
+	applogger.Info("Executing tool", "tool", toolName)
 
 	result, err := tool.Execute(args)
 	if err != nil {
-		applogger.L.Error("Tool execution error", "tool", toolName, "error", err)
+		applogger.Error("Tool execution error", "tool", toolName, "error", err)
 		result = fmt.Sprintf("Error executing tool '%s': %s", toolName, err.Error())
 	}
 
@@ -621,11 +621,11 @@ func (tl *TaskLoop) executeToolCall(tc llm.ToolCall) llm.Message {
 	}
 }
 
-// writeInteraction writes an interaction record to the database.
+// weakWriteInteraction writes an interaction record to the database.
 // Silently skips if session is not configured.
 // Records are grouped by (session_id, work_id, iteration)
 // to support both frontend display and debugging.
-func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[string]interface{}) {
+func (tl *TaskLoop) weakWriteInteraction(iteration, interactionType int, data map[string]interface{}) {
 	if tl.sessionID == 0 {
 		return
 	}
@@ -639,7 +639,7 @@ func (tl *TaskLoop) writeInteraction(iteration, interactionType int, data map[st
 		Data:      string(dataJSON),
 	}
 	if err := database.DB.Create(&record).Error; err != nil {
-		applogger.L.Error("Failed to write interaction record", "error", err)
+		applogger.Error("Failed to write interaction record", "error", err)
 	}
 }
 

@@ -44,7 +44,7 @@ func runDailyCron(ctx context.Context) {
 //   - decayed: number of observations that had decay applied
 //   - errors: number of batch errors encountered
 func runDailyMaintenance() (decayed, errors int) {
-	applogger.L.Info("Starting daily memory maintenance (importance decay)")
+	applogger.Info("Starting daily memory maintenance (importance decay)")
 
 	// Apply decay in batches to all observations with importance above a
 	// practical floor. Observations at ≤ 1e-6 are effectively zero and
@@ -60,7 +60,7 @@ func runDailyMaintenance() (decayed, errors int) {
 			Limit(batchSize).
 			Offset(offset).
 			Pluck("id", &ids).Error; err != nil {
-			applogger.L.Error("Failed to load observation IDs for decay", "error", err)
+			applogger.Error("Failed to load observation IDs for decay", "error", err)
 			errors++
 			break
 		}
@@ -74,7 +74,7 @@ func runDailyMaintenance() (decayed, errors int) {
 			UpdateColumn("importance", gorm.Expr("importance * ?", decayFactor))
 
 		if result.Error != nil {
-			applogger.L.Error("Failed to apply decay batch",
+			applogger.Error("Failed to apply decay batch",
 				"offset", offset,
 				"error", result.Error,
 			)
@@ -86,7 +86,7 @@ func runDailyMaintenance() (decayed, errors int) {
 		offset += batchSize
 	}
 
-	applogger.L.Info("Daily memory maintenance completed",
+	applogger.Info("Daily memory maintenance completed",
 		"decayed", decayed,
 		"errors", errors,
 	)

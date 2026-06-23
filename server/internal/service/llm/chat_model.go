@@ -208,7 +208,7 @@ func fromOpenAIResponse(resp *openai.ChatCompletionResponse) ToolResponse {
 // logMessages logs input messages at debug level for traceability.
 func logMessages(messages []Message) {
 	for i, m := range messages {
-		applogger.L.Debug("llm input", "index", i, "role", m.Role, "content", m.Content, "tool_calls", len(m.ToolCalls), "tool_call_id", m.ToolCallID)
+		applogger.Debug("llm input", "index", i, "role", m.Role, "content", m.Content, "tool_calls", len(m.ToolCalls), "tool_call_id", m.ToolCallID)
 	}
 }
 
@@ -243,7 +243,7 @@ func (cm *ChatModel) Chat(ctx context.Context, messages []Message) (string, erro
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	if err != nil {
-		applogger.L.Error("llm call failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
+		applogger.Error("llm call failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
 		return "", fmt.Errorf("chat completion failed: %w", err)
 	}
 
@@ -252,7 +252,7 @@ func (cm *ChatModel) Chat(ctx context.Context, messages []Message) (string, erro
 	}
 
 	content := resp.Choices[0].Message.Content
-	applogger.L.Debug("llm output", "model", cm.modelID, "content", content)
+	applogger.Debug("llm output", "model", cm.modelID, "content", content)
 
 	logTokenUsage(latencyMs, resp.Usage, cm.modelID)
 
@@ -283,11 +283,11 @@ func (cm *ChatModel) ChatStream(ctx context.Context, messages []Message) (*strea
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	if err != nil {
-		applogger.L.Error("llm stream call failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
+		applogger.Error("llm stream call failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
 		return nil, fmt.Errorf("chat completion stream failed: %w", err)
 	}
 
-	applogger.L.Debug("llm stream started", "model", cm.modelID, "connect_latency_ms", latencyMs)
+	applogger.Debug("llm stream started", "model", cm.modelID, "connect_latency_ms", latencyMs)
 
 	return &stream{inner: inner}, nil
 }
@@ -314,15 +314,15 @@ func (cm *ChatModel) ChatWithTools(ctx context.Context, messages []Message, tool
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	if err != nil {
-		applogger.L.Error("llm call with tools failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
+		applogger.Error("llm call with tools failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
 		return ToolResponse{}, fmt.Errorf("chat completion with tools failed: %w", err)
 	}
 
 	result := fromOpenAIResponse(&resp)
 
-	applogger.L.Debug("llm output", "model", cm.modelID, "content", result.Content, "tool_calls", len(result.ToolCalls))
+	applogger.Debug("llm output", "model", cm.modelID, "content", result.Content, "tool_calls", len(result.ToolCalls))
 	for i, tc := range result.ToolCalls {
-		applogger.L.Debug("llm output tool_call", "index", i, "id", tc.ID, "name", tc.Function.Name, "arguments", tc.Function.Arguments)
+		applogger.Debug("llm output tool_call", "index", i, "id", tc.ID, "name", tc.Function.Name, "arguments", tc.Function.Arguments)
 	}
 
 	logTokenUsage(latencyMs, resp.Usage, cm.modelID)
@@ -355,7 +355,7 @@ func (cm *ChatModel) ChatWithJSONSchema(ctx context.Context, messages []Message,
 		if cap.SupportsJSONSchema == 1 {
 			return cm.tryJSONSchema(ctx, messages, schemaDef)
 		}
-		applogger.L.Debug("json_schema not supported by model, using function_call fallback",
+		applogger.Debug("json_schema not supported by model, using function_call fallback",
 			"model", cm.modelID, "base_url", cm.baseURL)
 		return cm.tryFunctionCallJSON(ctx, messages, schemaDef)
 	}
@@ -368,7 +368,7 @@ func (cm *ChatModel) ChatWithJSONSchema(ctx context.Context, messages []Message,
 	}
 
 	if isResponseFormatError(err) {
-		applogger.L.Warn("json_schema not supported, caching and falling back to function_call",
+		applogger.Warn("json_schema not supported, caching and falling back to function_call",
 			"model", cm.modelID, "base_url", cm.baseURL)
 		cm.saveCapability(0)
 		return cm.tryFunctionCallJSON(ctx, messages, schemaDef)
@@ -399,7 +399,7 @@ func (cm *ChatModel) tryJSONSchema(ctx context.Context, messages []Message, sche
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	if err != nil {
-		applogger.L.Error("llm call with json_schema failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
+		applogger.Error("llm call with json_schema failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
 		return "", fmt.Errorf("chat completion with json_schema failed: %w", err)
 	}
 
@@ -408,7 +408,7 @@ func (cm *ChatModel) tryJSONSchema(ctx context.Context, messages []Message, sche
 	}
 
 	content := resp.Choices[0].Message.Content
-	applogger.L.Debug("llm output", "model", cm.modelID, "schema", schemaDef.Name, "content", content)
+	applogger.Debug("llm output", "model", cm.modelID, "schema", schemaDef.Name, "content", content)
 
 	logTokenUsage(latencyMs, resp.Usage, cm.modelID)
 
@@ -443,7 +443,7 @@ func (cm *ChatModel) tryFunctionCallJSON(ctx context.Context, messages []Message
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	if err != nil {
-		applogger.L.Error("llm call with function_call emulation failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
+		applogger.Error("llm call with function_call emulation failed", "model", cm.modelID, "latency_ms", latencyMs, "error", err)
 		return "", fmt.Errorf("function_call emulation failed: %w", err)
 	}
 
@@ -452,7 +452,7 @@ func (cm *ChatModel) tryFunctionCallJSON(ctx context.Context, messages []Message
 	}
 
 	args := resp.Choices[0].Message.ToolCalls[0].Function.Arguments
-	applogger.L.Debug("llm output", "model", cm.modelID, "schema", schemaDef.Name, "function_call_arguments", args)
+	applogger.Debug("llm output", "model", cm.modelID, "schema", schemaDef.Name, "function_call_arguments", args)
 
 	logTokenUsage(latencyMs, resp.Usage, cm.modelID)
 
@@ -470,7 +470,7 @@ func rawMessageToParams(data json.RawMessage) map[string]interface{} {
 	}
 	var params map[string]interface{}
 	if err := json.Unmarshal(data, &params); err != nil {
-		applogger.L.Error("failed to unmarshal schema for function_call", "error", err)
+		applogger.Error("failed to unmarshal schema for function_call", "error", err)
 		return map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -494,7 +494,7 @@ func logTokenUsage(latencyMs float64, usage openai.Usage, model string) {
 	if model != "" {
 		args = append(args, "model", model)
 	}
-	applogger.L.Debug("llm usage", args...)
+	applogger.Debug("llm usage", args...)
 }
 
 // ConsumeStream reads all chunks from a streaming response, invoking the handler for each chunk.
@@ -536,12 +536,12 @@ func (cm *ChatModel) ConsumeStream(stream *stream, handler streamHandler) (strin
 	}
 
 	latencyMs := float64(time.Since(start).Milliseconds())
-	applogger.L.Debug("llm output", "model", cm.modelID, "stream", true, "content", fullContent)
+	applogger.Debug("llm output", "model", cm.modelID, "stream", true, "content", fullContent)
 
 	if hasUsage {
 		logTokenUsage(latencyMs, streamUsage, cm.modelID)
 	} else {
-		applogger.L.Debug("llm stream completed", "model", cm.modelID, "latency_ms", latencyMs)
+		applogger.Debug("llm stream completed", "model", cm.modelID, "latency_ms", latencyMs)
 	}
 
 	return fullContent, nil

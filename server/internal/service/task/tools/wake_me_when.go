@@ -1,9 +1,7 @@
 package tools
 
 import (
-	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"private-buddy-server/internal/database"
@@ -14,63 +12,6 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-// alarmRegistry manages all active alarm goroutines, allowing them to be
-// cancelled collectively (e.g., on server shutdown) or per-agent (e.g.,
-// when an agent is deleted).
-var alarmRegistry = &alarmRegistryType{}
-
-type alarmRegistryType struct {
-	mu     sync.Mutex
-	alarms map[int64]context.CancelFunc // scheduledEventID -> cancel
-}
-
-// register stores a cancel function for an alarm goroutine.
-func (r *alarmRegistryType) register(eventID int64, cancel context.CancelFunc) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.alarms == nil {
-		r.alarms = make(map[int64]context.CancelFunc)
-	}
-	r.alarms[eventID] = cancel
-}
-
-// unregister removes an alarm from the registry (after it fires or is cancelled).
-func (r *alarmRegistryType) unregister(eventID int64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.alarms, eventID)
-}
-
-// CancelAll cancels all registered alarm goroutines. Called on server shutdown.
-func (r *alarmRegistryType) CancelAll() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for id, cancel := range r.alarms {
-		cancel()
-		delete(r.alarms, id)
-	}
-}
-
-// CancelAlarmsForAgent cancels all alarm goroutines for a specific agent.
-// Called when an agent is deleted.
-func (r *alarmRegistryType) CancelAlarmsForAgent(agentID int64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, cancel := range r.alarms {
-		cancel()
-	}
-	// Note: we cancel all because the registry is keyed by eventID, not agentID.
-	// For a more targeted approach, we'd need an agentID->[]eventID index.
-	// Since the number of concurrent alarms is small, this is acceptable.
-	_ = agentID
-	r.alarms = make(map[int64]context.CancelFunc)
-}
-
-// CancelAlarms shuts down all alarm goroutines. Should be called during graceful shutdown.
-func CancelAlarms() {
-	alarmRegistry.CancelAll()
-}
-
 // triggerAtFormat is the only accepted time format for trigger_at.
 // Uses server local time without timezone — the agent and server share
 // the same timezone context.
@@ -80,15 +21,14 @@ const triggerAtFormat = "2006-01-02 15:04:05"
 // at a specified time. This is NOT an OS-level cron/scheduled task — it is
 // the agent's self-wake mechanism.
 //
-// When the agent calls this tool, a goroutine is spawned that blocks until
-// the trigger time. When the time arrives, the goroutine:
-//  1. Marks the ScheduledEvent record as triggered
-//  2. Sends an EventTypeScheduled event to the agent via eventqueue.Global
+// The tool's sole responsibility is:
+//  1. Create a ScheduledEvent DB record (status=Pending)
+//  2. Send an EventTypeAlarmCreated event through eventqueue
 //
-// The scheduled event is a transient trigger — it does NOT persist to the
-// messages table. Instead, TriggerMessageID preserves the causal chain
-// (the user message that caused the alarm), and the alarm context is
-// injected as supplementary context in the pipeline.
+// Goroutine management (waiting until trigger_at, firing) is handled by the
+// runtime package, which receives the EventTypeAlarmCreated event and registers
+// a goroutine. This separation keeps the tool layer thin and avoids circular
+// dependencies (runtime → task → tools).
 type WakeMeWhenTool struct {
 	agentID          int64
 	sessionID        int64
@@ -155,14 +95,9 @@ func (w *WakeMeWhenTool) Schema() llm.FunctionDefinition {
 	}
 }
 
-// Execute spawns a goroutine that waits until trigger_at, then sends an
-// EventTypeScheduled event to the agent via the event queue.
-// No message is persisted to the messages table — the alarm context is
-// carried in the event payload and injected into the pipeline as a trigger override.
-//
-// When action is "send_message" and action_content is provided, the runtime
-// will take the fast path: directly send action_content as a message to the
-// user without any LLM processing. Otherwise, the full pipeline is used.
+// Execute creates a ScheduledEvent DB record and sends an EventTypeAlarmCreated
+// event through eventqueue. The runtime receives the event and registers a
+// goroutine to wait until trigger_at.
 func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 	triggerAtStr, _ := args["trigger_at"].(string)
 	message, _ := args["message"].(string)
@@ -207,7 +142,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 		Status:           model.ScheduledEventPending,
 	}
 	if err := database.DB.Create(&event).Error; err != nil {
-		applogger.L.Error("Failed to create scheduled event record",
+		applogger.Error("Failed to create scheduled event record",
 			"agent_id", w.agentID,
 			"session_id", w.sessionID,
 			"error", err,
@@ -215,87 +150,16 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 		return "Error: failed to create alarm", nil
 	}
 
-	// Spawn goroutine: wait until trigger_at using a cancellable timer,
-	// then fire the alarm. The goroutine sends events directly through
-	// eventqueue, so it does NOT depend on the runtime package.
-	alarmCtx, alarmCancel := context.WithCancel(context.Background())
-	alarmRegistry.register(event.ID, alarmCancel)
-
-	go func() {
-		defer alarmRegistry.unregister(event.ID)
-
-		until := time.Until(triggerAt)
-		applogger.L.Info("Scheduled event goroutine waiting",
-			"event_id", event.ID,
-			"agent_id", w.agentID,
-			"session_id", w.sessionID,
-			"trigger_at", triggerAt,
-			"action", action,
-			"wait_duration", until.Round(time.Second),
-		)
-
-		// Use a timer instead of time.Sleep so we can respond to cancellation.
-		timer := time.NewTimer(until)
-		defer timer.Stop()
-
-		select {
-		case <-alarmCtx.Done():
-			applogger.L.Info("Scheduled event goroutine cancelled",
-				"event_id", event.ID,
-				"agent_id", w.agentID,
-			)
-			return
-		case <-timer.C:
-			// Timer fired, proceed to trigger the alarm
-		}
-
-		// Check if the event was cancelled in the database while we were waiting
-		var currentEvent model.ScheduledEvent
-		if err := database.DB.First(&currentEvent, event.ID).Error; err != nil {
-			applogger.L.Warn("Scheduled event not found, skipping",
-				"event_id", event.ID, "error", err)
-			return
-		}
-		if currentEvent.Status != model.ScheduledEventPending {
-			applogger.L.Info("Scheduled event no longer pending, skipping",
-				"event_id", event.ID, "status", currentEvent.Status)
-			return
-		}
-
-		// Mark the scheduled event as triggered
-		if err := database.DB.Model(&model.ScheduledEvent{}).
-			Where("id = ?", event.ID).
-			Update("status", model.ScheduledEventTriggered).Error; err != nil {
-			applogger.L.Error("failed to mark scheduled event as triggered", "event_id", event.ID, "error", err)
-		}
-
-		applogger.L.Info("Scheduled event fired, sending to eventqueue",
-			"event_id", event.ID,
-			"agent_id", w.agentID,
-			"session_id", w.sessionID,
-			"action", action,
-		)
-
-		// Send the scheduled event directly through the eventqueue.
-		// No dependency on runtime — the event queue routes it to the
-		// agent's subscribed channel automatically.
-		//
-		// TriggerMessageID preserves the causal chain (the user message
-		// that caused the alarm). The alarm context is the agent's note
-		// to its future self, injected as supplementary context.
-		// Action and ActionContent enable the fast path in the runtime.
-		eventqueue.SendEvent(w.agentID, eventqueue.AgentEvent{
-			Type:      eventqueue.EventTypeScheduled,
-			SessionID: w.sessionID,
-			Payload: &eventqueue.ScheduledEventPayload{
-				ScheduledEventID: event.ID,
-				TriggerMessageID: w.triggerMessageID,
-				Message:          message,
-				Action:           action,
-				ActionContent:    actionContent,
-			},
-		})
-	}()
+	// Notify runtime to register a goroutine for this alarm.
+	// The tool does NOT manage goroutines — it only creates the DB record
+	// and sends an event. The runtime is responsible for goroutine lifecycle.
+	eventqueue.SendEvent(w.agentID, &eventqueue.AgentEvent{
+		Type:      eventqueue.EventTypeAlarmCreated,
+		SessionID: w.sessionID,
+		Payload: &eventqueue.AlarmCreatedPayload{
+			ScheduledEventID: event.ID,
+		},
+	})
 
 	until := time.Until(triggerAt).Round(time.Minute)
 	if action == model.ScheduledEventActionSendMessage {

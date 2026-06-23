@@ -243,12 +243,12 @@ func (p *pipeline) loadMessages() error {
 
 	p.sessionID = p.session.ID
 	if err := database.DB.Model(&model.Message{}).Where("session_id = ?", p.sessionID).Count(&p.messageCount).Error; err != nil {
-		applogger.L.Warn("failed to count messages for chat pipeline", "session_id", p.sessionID, "error", err)
+		applogger.Warn("failed to count messages for chat pipeline", "session_id", p.sessionID, "error", err)
 	}
 	p.windowSize = config.Get().SummaryWindowSize
 	p.kbIDs = getKnowledgeBaseIDs(p.agent)
 
-	applogger.L.Info("Starting chat processing",
+	applogger.Info("Starting chat processing",
 		"session_id", p.sessionID,
 		"trigger_message_id", p.triggerMessageID,
 		"draft_id", p.draftID,
@@ -272,7 +272,7 @@ func (p *pipeline) assembleContext(ctx context.Context) ([]llm.Message, string, 
 // assembleSimpleContext handles the V < N branch: skip context engineering,
 // use all messages directly without summary or narrative.
 func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
-	applogger.L.Info("V < N, skipping context engineering",
+	applogger.Info("V < N, skipping context engineering",
 		"V", p.messageCount, "N", p.windowSize,
 	)
 
@@ -319,14 +319,14 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	// Handle clarification needed case — return clarification as content
 	// without writing to messages table (caller handles draft commit)
 	if p.preprocessingResult != nil && p.preprocessingResult.NeedsClarification {
-		applogger.L.Info("Query needed clarification", "session_id", p.sessionID)
+		applogger.Info("Query needed clarification", "session_id", p.sessionID)
 		return []llm.Message{}, p.preprocessingResult.Clarification, true
 	}
 
 	processedQuery := p.triggerMessage.Content
 	if p.preprocessingResult != nil {
 		processedQuery = p.preprocessingResult.ProcessedQuery
-		applogger.L.Info("Query type and processed",
+		applogger.Info("Query type and processed",
 			"type", p.preprocessingResult.QueryType,
 			"processed", processedQuery[:min(50, len(processedQuery))],
 		)
@@ -424,14 +424,14 @@ func (p *pipeline) streamResponse(ctx context.Context, messages []llm.Message) (
 	if err != nil {
 		return "", fmt.Errorf("failed to start stream: %w", err)
 	}
-	applogger.L.Info("Starting LLM stream", "session_id", p.sessionID)
+	applogger.Info("Starting LLM stream", "session_id", p.sessionID)
 
 	fullContent, err := chatModel.ConsumeStream(stream, nil)
 	if err != nil {
 		return fullContent, err
 	}
 
-	applogger.L.Info("Chat processing completed",
+	applogger.Info("Chat processing completed",
 		"session_id", p.sessionID,
 		"response_length", len(fullContent),
 	)
@@ -455,13 +455,13 @@ func (p *pipeline) postProcess(ctx context.Context) {
 // getKnowledgeBaseIDs returns the knowledge base IDs associated with the agent.
 func getKnowledgeBaseIDs(agent *model.Agent) []int64 {
 	if agent.KnowledgeBaseIDs == "" || agent.KnowledgeBaseIDs == "[]" {
-		applogger.L.Info("Agent has no KBs configured", "agent_id", agent.ID, "knowledge_base_ids", agent.KnowledgeBaseIDs)
+		applogger.Info("Agent has no KBs configured", "agent_id", agent.ID, "knowledge_base_ids", agent.KnowledgeBaseIDs)
 		return nil
 	}
 
 	var ids []int64
 	if err := json.Unmarshal([]byte(agent.KnowledgeBaseIDs), &ids); err != nil {
-		applogger.L.Error("Failed to parse agent knowledge_base_ids", "agent_id", agent.ID, "raw", agent.KnowledgeBaseIDs, "error", err)
+		applogger.Error("Failed to parse agent knowledge_base_ids", "agent_id", agent.ID, "raw", agent.KnowledgeBaseIDs, "error", err)
 		return nil
 	}
 
@@ -471,10 +471,10 @@ func getKnowledgeBaseIDs(agent *model.Agent) []int64 {
 		if err := database.DB.First(&kb, id).Error; err == nil {
 			validIDs = append(validIDs, id)
 		} else {
-			applogger.L.Warn("KB ID not found in database", "agent_id", agent.ID, "kb_id", id, "error", err)
+			applogger.Warn("KB ID not found in database", "agent_id", agent.ID, "kb_id", id, "error", err)
 		}
 	}
 
-	applogger.L.Info("Agent KB IDs resolved", "agent_id", agent.ID, "raw_ids", ids, "valid_ids", validIDs)
+	applogger.Info("Agent KB IDs resolved", "agent_id", agent.ID, "raw_ids", ids, "valid_ids", validIDs)
 	return validIDs
 }

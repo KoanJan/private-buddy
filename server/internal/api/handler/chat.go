@@ -84,7 +84,7 @@ func (cm *connectionManager) PushToSession(sessionID int64, data string) {
 			// TODO: Notify the client to refresh and reset the SSE connection when messages
 			// are dropped. Without this, the client will have an incomplete message list,
 			// causing a cognitive gap for the user who sees stale/partial data.
-			applogger.L.Warn("SSE channel full, dropping message", "session_id", sessionID)
+			applogger.Warn("SSE channel full, dropping message", "session_id", sessionID)
 		}
 	}
 }
@@ -120,7 +120,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 	if agentIDStr != "" {
 		agentID, _ = strconv.ParseInt(agentIDStr, 10, 64)
 	}
-	applogger.L.Info("CreateAndSend received agent_id param", "raw", agentIDStr, "parsed", agentID)
+	applogger.Info("CreateAndSend received agent_id param", "raw", agentIDStr, "parsed", agentID)
 	if agentID == 0 {
 		var defaultAgent model.Agent
 		if err := database.DB.First(&defaultAgent).Error; err != nil {
@@ -157,7 +157,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		Role:            model.ParticipantRoleOwner,
 		Status:          model.ParticipantStatusIdle,
 	}).Error; err != nil {
-		applogger.L.Error("failed to create user participant for session", "session_id", session.ID, "error", err)
+		applogger.Error("failed to create user participant for session", "session_id", session.ID, "error", err)
 	}
 	if err := database.DB.Create(&model.ParticipantSession{
 		SessionID:       session.ID,
@@ -166,7 +166,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		Role:            model.ParticipantRoleMember,
 		Status:          model.ParticipantStatusIdle,
 	}).Error; err != nil {
-		applogger.L.Error("failed to create agent participant for session", "session_id", session.ID, "error", err)
+		applogger.Error("failed to create agent participant for session", "session_id", session.ID, "error", err)
 	}
 
 	userMsg := model.Message{
@@ -193,7 +193,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
 			session.ID, model.ParticipantTypeUser, 1).
 		Update("last_read_message_id", userMsg.ID).Error; err != nil {
-		applogger.L.Warn("failed to update last_read_message_id on session create", "session_id", session.ID, "error", err)
+		applogger.Warn("failed to update last_read_message_id on session create", "session_id", session.ID, "error", err)
 	}
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
@@ -256,7 +256,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
 			sessionID, model.ParticipantTypeUser, 1).
 		Update("last_read_message_id", userMsg.ID).Error; err != nil {
-		applogger.L.Warn("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
+		applogger.Warn("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
 	}
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
@@ -324,7 +324,7 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 // message event to the agent via the global event queue.
 // This is the only path for user messages to reach the agent.
 func (h *Handler) sendEventToRuntime(agentID, sessionID, messageID int64, messageContent string) {
-	event := eventqueue.AgentEvent{
+	event := &eventqueue.AgentEvent{
 		Type:      eventqueue.EventTypeNewMessage,
 		SessionID: sessionID,
 		Payload: &eventqueue.NewMessagePayload{

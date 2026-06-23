@@ -124,16 +124,16 @@ func routeQuery(
 	})
 
 	if err != nil {
-		applogger.L.Error("Query routing failed", "error", err)
+		applogger.Error("Query routing failed", "error", err)
 		return &QueryRoutingResult{Type: queryTypeClear}
 	}
 
 	if result != "" {
 		var routing QueryRoutingResult
 		if err := json.Unmarshal([]byte(result), &routing); err == nil {
-			applogger.L.Info("Query routing result", "type", routing.Type)
+			applogger.Info("Query routing result", "type", routing.Type)
 			if routing.Type == queryTypeAmbiguous && routing.RewrittenQuery != "" {
-				applogger.L.Info("Query rewritten", "original", query[:min(50, len(query))], "rewritten", routing.RewrittenQuery[:min(50, len(routing.RewrittenQuery))])
+				applogger.Info("Query rewritten", "original", query[:min(50, len(query))], "rewritten", routing.RewrittenQuery[:min(50, len(routing.RewrittenQuery))])
 			}
 			return &routing
 		}
@@ -169,11 +169,11 @@ func generateClarification(
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
-		applogger.L.Error("Clarification generation failed", "error", err)
+		applogger.Error("Clarification generation failed", "error", err)
 		return "Your question is a bit vague. Could you please provide more details about your needs?"
 	}
 
-	applogger.L.Info("Generated clarification for query", "query", query[:min(50, len(query))])
+	applogger.Info("Generated clarification for query", "query", query[:min(50, len(query))])
 	return result
 }
 
@@ -229,7 +229,7 @@ func PreprocessQuery(
 		result.Clarification = clarification
 	}
 
-	applogger.L.Info("Query preprocessing complete",
+	applogger.Info("Query preprocessing complete",
 		"type", queryType,
 		"processed", result.ProcessedQuery[:min(50, len(result.ProcessedQuery))],
 	)
