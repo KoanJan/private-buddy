@@ -28,24 +28,42 @@ func getEmbeddingConfig() *model.EmbeddingConfig {
 	return service.GetEmbeddingConfig()
 }
 
-// buildSummaryAndNarrative extracts summary version and cached narrative from a HistoricalSummary.
-// Returns (nil, nil) if latestSummary is nil.
-func buildSummaryAndNarrative(latestSummary *model.HistoricalSummary) (int, string) {
+// buildSummaryAndNarrative extracts summary version and cached narrative
+// from the new split models (Summary + AgentNarrative).
+// Returns (summaryVersion, narrative). summaryVersion is -1 if no summary exists.
+func buildSummaryAndNarrative(sessionID, agentID int64) (int, string) {
+	latestSummary := getLatestSummaryBySessionID(sessionID)
 	if latestSummary == nil {
 		return -1, ""
 	}
 
-	return latestSummary.Version, latestSummary.Narrative
+	latestNarrative := getLatestNarrativeByIDs(sessionID, agentID)
+	if latestNarrative == nil {
+		return latestSummary.Version, ""
+	}
+
+	return latestSummary.Version, latestNarrative.Content
 }
 
-// getLatestSummaryByID returns the latest summary for a (session, agent).
-func getLatestSummaryByID(sessionID, agentID int64) *model.HistoricalSummary {
-	var summary model.HistoricalSummary
-	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).Order("version DESC").First(&summary).Error
+// getLatestSummaryBySessionID returns the latest summary for a session.
+func getLatestSummaryBySessionID(sessionID int64) *model.Summary {
+	var s model.Summary
+	err := database.DB.Where("session_id = ?", sessionID).Order("version DESC").First(&s).Error
 	if err != nil {
 		return nil
 	}
-	return &summary
+	return &s
+}
+
+// getLatestNarrativeByIDs returns the latest narrative for a (session, agent).
+func getLatestNarrativeByIDs(sessionID, agentID int64) *model.AgentNarrative {
+	var n model.AgentNarrative
+	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).
+		Order("summary_version DESC").First(&n).Error
+	if err != nil {
+		return nil
+	}
+	return &n
 }
 
 // GetContextWithoutRAG retrieves context without RAG retrieval.
@@ -59,8 +77,7 @@ func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalR
 
 	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
-	latestSummary := getLatestSummaryByID(sessionID, agentID)
-	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
+	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(sessionID, agentID)
 
 	return result
 }
@@ -70,7 +87,7 @@ func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalR
 //  1. Recent messages from the session
 //  2. RAG segments relevant to the query (if embedding configured)
 //  3. Latest summary (if available)
-//  4. Cached narrative from summary record (if available)
+//  4. Cached narrative from agent_narratives (if available)
 func GetContextForChat(ctx context.Context, sessionID, agentID int64, query string, recentCount int, ragCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
@@ -106,8 +123,14 @@ func GetContextForChat(ctx context.Context, sessionID, agentID int64, query stri
 		}
 	}
 
-	latestSummary := getLatestSummaryByID(sessionID, agentID)
-	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(latestSummary)
+	latestSummary := getLatestSummaryBySessionID(sessionID)
+	if latestSummary != nil {
+		result.SummaryVersion = latestSummary.Version
+	}
+	latestNarrative := getLatestNarrativeByIDs(sessionID, agentID)
+	if latestNarrative != nil {
+		result.Narrative = latestNarrative.Content
+	}
 
 	return result
 }

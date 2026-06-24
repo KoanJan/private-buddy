@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.20] - 2026-06-25
+
+### Added
+- **Group Chat Foundation**: renamed event types for semantic clarity with private/group distinction; split event type definitions from event bus implementation into separate files; speaker identity carried in message payloads for natural language event context
+- **Graceful Shutdown**: two-level WaitGroup tracking ensures agent event loops complete before server exit — active works and draft handlers drain cleanly; SSE connections actively closed before HTTP shutdown; send-to-closed-channel panics caught via recover
+
+### Changed
+- **Conversation Summary Model**: split the single summary table into session-level factual summaries and agent-level character-perspective narratives, eliminating redundant LLM calls and preparing the data model for multi-agent group chat
+- **LLM Prompt Character Agency**: systematic cleanup removing "user" / "agent" / "the user" from all prompt templates; execution guidance rewritten from second-person task delegation to first-person internal intention; the `[Your Intention]` section is now a pure self-thought without imperative instruction
+- **Event Natural Language**: message events described as natural conversation ("{name} talks to you: ...") instead of mechanical system labels, enabling persona-based cognitive framing
+- **Comprehension Pipeline**: preprocessing and person state inference run concurrently, reducing per-event latency
+- **Logging**: DEBUG level auto-enables source file location; package-level log functions use variable-style declarations
+- **Shutdown Scripts**: SIGTERM grace period extended from fixed 2s to polling loop with configurable timeout
+
+### Fixed
+- **Agent Status Freeze**: status update used the global DB handle while a transaction held the single connection, causing the query to block until 30-second timeout — status change moved to after transaction commit
+
 ## [0.0.19] - 2026-06-24
 
 ### Changed

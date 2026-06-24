@@ -1,0 +1,118 @@
+package eventqueue
+
+import "fmt"
+
+// ---------------------------------------------------------------------------
+// Event types
+// ---------------------------------------------------------------------------
+
+// AgentEventType represents the type of an agent event.
+type AgentEventType int
+
+const (
+	EventTypeNewPrivateChatMessage AgentEventType = iota // User or agent message in a private chat
+	EventTypeGroupChatJoined                             // Agent was added to a private chat
+	EventTypeGroupChatLeft                               // Agent was removed from a group chat
+	EventTypeSystemNotification                          // System-level notification
+	EventTypeScheduled                                   // Scheduled event (self-wake alarm) fired
+	EventTypeWorkCompleted                               // A Work (task/chat) completed execution
+	EventTypeAlarmCreated                                // A new scheduled alarm was created (by tool or recovery)
+)
+
+// AgentEvent represents an event that should be processed by an agent.
+type AgentEvent struct {
+	Payload   any // Type depends on the event type
+	Type      AgentEventType
+	SessionID int64
+}
+
+// FormatDescription formats the event as natural language for LLM consumption.
+// Different event sources carry different semantics — the LLM needs to
+// distinguish between someone speaking to you and a self-triggered alarm.
+//
+// The payload carries all necessary context (e.g., SpeakerName for messages),
+// so this method needs no external parameters.
+func (e AgentEvent) FormatDescription() string {
+	switch e.Type {
+	case EventTypeNewPrivateChatMessage:
+		p, ok := e.Payload.(*NewMessagePayload)
+		if !ok || p == nil {
+			return ""
+		}
+		return fmt.Sprintf("[Private chat] \"%s\" talks to you: \"%s\"", p.SpeakerName, p.MessageContent)
+	case EventTypeScheduled:
+		p, ok := e.Payload.(*ScheduledEventPayload)
+		if !ok || p == nil {
+			return "[Scheduled alarm]"
+		}
+		return fmt.Sprintf("[Scheduled alarm] %s", p.Message)
+	case EventTypeWorkCompleted:
+		p, ok := e.Payload.(*WorkCompletedPayload)
+		if !ok || p == nil {
+			return "[Work completed]"
+		}
+		return fmt.Sprintf("[Work completed] %s (status: %s)", p.Guidance, p.Status)
+	default:
+		return ""
+	}
+}
+
+// NewMessagePayload is the payload type for EventTypeNewMessage events.
+//
+// SpeakerName is the display name of whoever sent the message.
+// In 1v1 sessions this is the person's name; in future group chat,
+// it may be a person's name or another agent's name.
+type NewMessagePayload struct {
+	MessageID      int64
+	MessageContent string
+	SpeakerName    string // Display name of the message sender
+}
+
+// ScheduledEventPayload is the payload type for EventTypeScheduled events.
+// When a scheduled alarm fires, the agent receives this payload so it can
+// recall why it set the alarm and what to do.
+//
+// Scheduled events are transient triggers — they carry business context but
+// do NOT persist records in the messages table. Instead:
+//   - TriggerMessageID points to the original user message that caused the
+//     alarm, preserving the causal chain
+//   - Message carries the agent's note to its future self, injected as
+//     supplementary context in the pipeline
+//   - Action determines whether the runtime takes the fast path (direct
+//     message) or the full pipeline path
+//   - ActionContent carries the pre-computed message for the fast path
+type ScheduledEventPayload struct {
+	ScheduledEventID int64  // ID of the ScheduledEvent record
+	TriggerMessageID int64  // The user message that caused this alarm (causal chain)
+	Message          string // Agent's note to its future self when the alarm fires
+	Action           int    // model.ScheduledEventAction* constant
+	ActionContent    string // Pre-computed message content for fast path (ActionSendMessage)
+}
+
+// WorkCompletedPayload is the payload type for EventTypeWorkCompleted events.
+// When a Work finishes execution (success or failure), the agent receives this
+// event so it can decide whether to inform the user or take other action.
+//
+// This represents the agent's self-perception: "I just finished doing X."
+// The agent processes it through the same Comprehend→Decide pipeline as
+// external events, ensuring consistent cognitive handling.
+type WorkCompletedPayload struct {
+	WorkID           int64  // ID of the completed work
+	WorkType         int    // model.WorkTypeChat or model.WorkTypeTask
+	Guidance         string // The original guidance (execution intent) of the work
+	Status           string // "success" or "failure"
+	TaskOutput       string // Task execution output (for TaskWork success)
+	TaskError        string // Task execution error (for TaskWork failure)
+	TriggerMessageID int64  // The user message that originally triggered this work
+}
+
+// AlarmCreatedPayload is the payload type for EventTypeAlarmCreated events.
+// When a tool (or recovery logic) creates a new scheduled alarm, this event
+// notifies the runtime so it can register a goroutine to wait for the trigger time.
+//
+// The runtime is the sole manager of alarm goroutines — tools only create DB
+// records and send this event. This avoids circular dependencies and keeps
+// goroutine lifecycle management centralized.
+type AlarmCreatedPayload struct {
+	ScheduledEventID int64 // ID of the newly created ScheduledEvent record
+}

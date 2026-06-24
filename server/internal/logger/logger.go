@@ -35,10 +35,14 @@ func Init() {
 		return
 	}
 
-	var level slog.Level
+	var (
+		level     slog.Level
+		addSource bool
+	)
 	switch settings.LogLevel {
 	case "DEBUG":
 		level = slog.LevelDebug
+		addSource = true
 	case "WARN":
 		level = slog.LevelWarn
 	case "ERROR":
@@ -49,16 +53,29 @@ func Init() {
 
 	handler := slog.NewJSONHandler(
 		os.Stdout,
-		&slog.HandlerOptions{Level: level},
+		&slog.HandlerOptions{
+			AddSource: addSource,
+			Level:     level,
+		},
 	)
 
 	fileHandler := slog.NewJSONHandler(
 		f,
-		&slog.HandlerOptions{Level: level},
+		&slog.HandlerOptions{
+			AddSource: addSource,
+			Level:     level,
+		},
 	)
 
 	mh := newMultiHandler(handler, fileHandler)
 	globalInstance = slog.New(mh)
+
+	// init functions
+	Debug = globalInstance.Debug
+	Info = globalInstance.Info
+	Warn = globalInstance.Warn
+	Error = globalInstance.Error
+
 	slog.SetDefault(globalInstance)
 }
 

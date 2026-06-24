@@ -42,6 +42,7 @@ type work struct {
 	comprehension  *comprehend.ComprehensionResult // Results from the Comprehend phase
 	taskResult     *task.TaskResult                // Task execution result (only set for TaskWork)
 	guidanceCh     chan task.GuidanceDirective     // Channel for sending guidance/cancel directives to TaskLoop
+	done           chan struct{}                   // Closed when work finishes (normal or abandoned)
 }
 
 // Run executes the work. After the cognitive order refactoring, the execution
@@ -56,6 +57,8 @@ type work struct {
 // On completion, commits the draft and signals the event loop to remove this work.
 // Respects context cancellation: exits early if the work is cancelled.
 func (w *work) Run(ctx context.Context) {
+	defer close(w.done) // Signal completion regardless of how work exits
+
 	defer func() {
 		// Only transition to Completed if still Running.
 		// If abandon() already set Abandoned, this update is a no-op.

@@ -1,6 +1,7 @@
 # IDE
 .trae
 .codebuddy
+.lingma
 
 # Node.js
 node_modules/

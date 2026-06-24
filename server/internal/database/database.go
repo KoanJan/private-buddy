@@ -86,7 +86,8 @@ func AutoMigrate() {
 		&model.Session{},
 		&model.Message{},
 		&model.Interaction{},
-		&model.HistoricalSummary{},
+		&model.Summary{},
+		&model.AgentNarrative{},
 		&model.SearchConfig{},
 		&model.DBVersion{},
 		&model.KnowledgeBase{},
@@ -108,7 +109,6 @@ func AutoMigrate() {
 	// migrations rebuild tables (e.g., changing NOT NULL columns) which
 	// cannot be done via ALTER TABLE ADD COLUMN.
 	migrateInteractionsTable()
-	migrateHistoricalSummariesTable()
 
 	for _, m := range models {
 		if DB.Migrator().HasTable(m) {
@@ -525,52 +525,6 @@ func migrateInteractionsTable() {
 	DB.Exec(`CREATE INDEX idx_interactions_work_id ON interactions(work_id)`)
 
 	applogger.Info("Successfully migrated interactions table to work_id schema")
-}
-
-// migrateHistoricalSummariesTable adds the agent_id column to historical_summaries.
-// Summaries are now scoped by (session_id, agent_id) so that different agents
-// in the same session maintain independent summaries and narratives.
-//
-// Since agent_id is NOT NULL and SQLite cannot add NOT NULL columns without
-// defaults via ALTER TABLE, we use the standard table rebuild procedure:
-//  1. Create new table with agent_id column
-//  2. Copy data, backfilling agent_id from sessions.agent_id
-//  3. Drop old table
-//  4. Rename new table
-func migrateHistoricalSummariesTable() {
-	if !DB.Migrator().HasTable(&model.HistoricalSummary{}) {
-		return
-	}
-	// If agent_id column already exists, migration is done
-	if DB.Migrator().HasColumn(&model.HistoricalSummary{}, "agent_id") {
-		return
-	}
-
-	applogger.Info("Migrating historical_summaries table: adding agent_id column")
-
-	// Rebuild with agent_id, backfilling from sessions.agent_id
-	DB.Exec(`
-		CREATE TABLE historical_summaries_new (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id INTEGER NOT NULL,
-			agent_id   INTEGER NOT NULL,
-			version    INTEGER NOT NULL,
-			content    TEXT NOT NULL,
-			narrative  TEXT NOT NULL DEFAULT '',
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
-		)
-	`)
-	DB.Exec(`INSERT INTO historical_summaries_new (id, session_id, agent_id, version, content, narrative, created_at, updated_at)
-		SELECT hs.id, hs.session_id, COALESCE(s.agent_id, 0), hs.version, hs.content, hs.narrative, hs.created_at, hs.created_at
-		FROM historical_summaries hs
-		LEFT JOIN sessions s ON hs.session_id = s.id`)
-	DB.Exec(`DROP TABLE historical_summaries`)
-	DB.Exec(`ALTER TABLE historical_summaries_new RENAME TO historical_summaries`)
-	DB.Exec(`CREATE INDEX idx_historical_summaries_session_id ON historical_summaries(session_id)`)
-	DB.Exec(`CREATE INDEX idx_historical_summaries_agent_id ON historical_summaries(agent_id)`)
-
-	applogger.Info("Successfully migrated historical_summaries table with agent_id column")
 }
 
 // ensureSearchConfig creates the default search config record if it doesn't exist.

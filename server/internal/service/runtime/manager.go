@@ -10,6 +10,7 @@ package runtime
 import (
 	"context"
 	"sync"
+	"time"
 
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
@@ -28,6 +29,10 @@ type runtimeManager struct {
 	// Cancelling it propagates to every runtime, stopping all goroutines at once.
 	rootCtx   context.Context
 	cancelAll context.CancelFunc
+
+	// wg tracks all agent event loop goroutines.
+	// Shutdown() waits on this to ensure all internal goroutines finish.
+	wg sync.WaitGroup
 }
 
 // newRuntimeManager creates a new runtime manager.
@@ -52,18 +57,24 @@ func (rm *runtimeManager) StartRuntime(agentID int64) {
 	}
 
 	rt := createAgentRuntime(agentID, rm.onStatusChange)
-	go rt.Run(rm.rootCtx)
+	rm.wg.Add(1)
+	go func() {
+		defer rm.wg.Done()
+		rt.Run(rm.rootCtx)
+	}()
 	rm.runtimes[agentID] = rt
 }
 
-// StopAll stops all agent runtimes. Called during graceful shutdown.
-// Cancelling the root context propagates to every runtime in the tree,
-// stopping the event loop, commit handler, and all active works at once.
+// StopAll signals all agent runtimes to stop but does NOT wait for them to finish.
+// Use Shutdown() for graceful shutdown that waits for goroutine completion.
+//
+// Cancelling the root context propagates to every runtime, stopping the
+// event loop, commit handler, and causing all active works to abandon.
 func (rm *runtimeManager) StopAll() {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	applogger.Info("Stopping all agent runtimes", "count", len(rm.runtimes))
+	applogger.Info("Signalling all agent runtimes to stop", "count", len(rm.runtimes))
 
 	// Cancel the root context — all derived runtime contexts cancel automatically
 	if rm.cancelAll != nil {
@@ -73,23 +84,51 @@ func (rm *runtimeManager) StopAll() {
 	// Cancel all alarm goroutines — they are not tied to the root context
 	// because they need to survive across runtime restarts (via DB recovery).
 	CancelAlarms()
+}
 
-	for agentID := range rm.runtimes {
-		// Unsubscribe from the event queue to prevent sending to closed channels
-		eventqueue.Unsubscribe(agentID)
+// Shutdown gracefully shuts down all agent runtimes, waiting for all
+// internal goroutines (event loops, works, draft handlers) to finish.
+//
+// After Shutdown returns, it is safe to Unsubscribe from the event queue
+// and close channels without risk of panic from pending work goroutines.
+func (rm *runtimeManager) Shutdown(timeout time.Duration) {
+	// Phase 1: Signal all runtimes to stop
+	rm.StopAll()
+
+	// Phase 2: Wait for all event loop goroutines to return.
+	// Each event loop waits for its active works and draft handler
+	// before returning, so when wg.Wait() completes, everything is done.
+	done := make(chan struct{})
+	go func() {
+		rm.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		applogger.Info("All agent runtimes exited cleanly")
+	case <-time.After(timeout):
+		applogger.Warn("Agent runtimes shutdown timed out", "timeout", timeout)
 	}
 
+	// Phase 3: Safe to clean up channels.
+	// All work goroutines have finished — none will try to send events.
+	rm.mu.Lock()
+	for agentID := range rm.runtimes {
+		eventqueue.Unsubscribe(agentID)
+	}
 	rm.runtimes = make(map[int64]*agentRuntime)
+	rm.mu.Unlock()
 }
 
 // globalRuntimeManager is the singleton runtime manager for the application.
 // Initialized during application startup via Start.
 var globalRuntimeManager *runtimeManager
 
-// StopAll stops all agent runtimes. Called during graceful shutdown.
-func StopAll() {
+// Shutdown gracefully shuts down all agent runtimes.
+func Shutdown(timeout time.Duration) {
 	if globalRuntimeManager != nil {
-		globalRuntimeManager.StopAll()
+		globalRuntimeManager.Shutdown(timeout)
 	}
 }
 

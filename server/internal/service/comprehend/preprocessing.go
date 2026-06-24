@@ -118,7 +118,7 @@ func routeQuery(
 		{Role: "user", Content: prompt},
 	}, llm.JSONSchemaDefinition{
 		Name:        "QueryRoutingResult",
-		Description: "Classify and process the user query",
+		Description: "Classify and process the incoming query",
 		Strict:      true,
 		Schema:      llm.GenerateSchema[QueryRoutingResult](),
 	})

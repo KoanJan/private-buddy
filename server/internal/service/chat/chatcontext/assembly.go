@@ -113,15 +113,14 @@ func formatPersonStateInstruction(personStateDescription string) string {
 
 // formatGuidanceSection formats the Decide phase's execution intent as a
 // self-instruction section. Placed after person state and before the response
-// directive, representing the agent's understanding of what it should do.
-// This is the agent's internal intention — not an external command, but a
-// self-directed plan formed after comprehending the situation.
-// Returns "[Your Intention]\n{guidance}\nCarry out the above intention in your response.\n\n" or empty string.
+// directive. The guidance is written in first-person as the character's own
+// internal intention — a self-directed thought, not an external command.
+// Returns "[Your Intention]\n{guidance}\n\n" or empty string.
 func formatGuidanceSection(guidance string) string {
 	if guidance == "" {
 		return ""
 	}
-	return fmt.Sprintf("[Your Intention]\n%s\nCarry out the above intention in your response.\n\n", guidance)
+	return fmt.Sprintf("[Your Intention]\n%s\n\n", guidance)
 }
 
 // formatTaskResultSection formats agent delivery section for the prompt.
@@ -138,7 +137,7 @@ func formatTaskResultSection(taskResult *TaskResultForAssembly) string {
 		if taskResult.Result != "" {
 			result = taskResult.Result
 		}
-		return fmt.Sprintf("[Task Execution Result]\nThe following task was completed successfully:\n\n%s\n\n[Delivery Instructions]\nYou must now inform the user about the completed task. The user should be able to reach the deliverable directly from your response:\n- If files were created, include the full file paths so the user can click to open them\n- For HTML/web pages, tell the user they can open the file in a browser\n- If the result is information, present it directly\n- Never make the user guess where things are or manually type paths\n- Use your character's tone and style, but keep file paths exact and complete\n\n---\n\n", result)
+		return fmt.Sprintf("[Task Execution Result]\nThe following task was completed successfully:\n\n%s\n\n[Delivery Instructions]\nYou must now let the person you are talking to know about the completed task. They should be able to reach the deliverable directly from your response:\n- If files were created, include the full file paths so they can click to open them\n- For HTML/web pages, tell them they can open the file in a browser\n- If the result is information, present it directly\n- Never make them guess where things are or manually type paths\n- Use your character's tone and style, but keep file paths exact and complete\n\n---\n\n", result)
 	}
 
 	notesSection := ""

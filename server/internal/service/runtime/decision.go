@@ -22,7 +22,7 @@ import (
 // Comprehend (understand) → Decide (judge + plan) → Work (execute the plan).
 type WorkPlan struct {
 	Type     model.WorkType `json:"type" jsonschema:"description=Work type: 1=chat for direct reply, 2=task for multi-step execution using tools,enum=1,enum=2,required"`
-	Guidance string         `json:"guidance" jsonschema:"description=What the agent should do: what to say (chat) or what to execute (task),required"`
+	Guidance string         `json:"guidance" jsonschema:"description=Your internal intention, written in first-person as your own thought: what you plan to say (chat) or what you plan to execute (task). Write as if you are thinking to yourself.,required"`
 }
 
 // WorkGuidance describes a directive to be sent to an existing active work.
@@ -31,7 +31,7 @@ type WorkPlan struct {
 //
 //   - Guidance: the executable directive (what the target work should do)
 //   - Reason: the cognitive context (why this decision was made, including
-//     the user's original message and inferred intent)
+//     the original message and inferred intent)
 //
 // Both fields are passed to the TaskLoop's LLM so it can understand the
 // full picture, not just the bare directive. This enables "appealable"
@@ -39,8 +39,8 @@ type WorkPlan struct {
 // event in its ReAct cycle, not as a forceful command.
 type WorkGuidance struct {
 	TargetWorkID int64  `json:"target_work_id" jsonschema:"description=The ID of the active work this directive targets"`
-	Guidance     string `json:"guidance" jsonschema:"description=What the target work should do: the new input means (route) or how to wrap up (cancel, e.g., save progress and stop),required"`
-	Reason       string `json:"reason" jsonschema:"description=WHY this decision was made. Must include the user's original message and inferred intent. This provides cognitive context to the target work.,required"`
+	Guidance     string `json:"guidance" jsonschema:"description=What I want the target work to do now. Written in first-person as my own intention.,required"`
+	Reason       string `json:"reason" jsonschema:"description=WHY I made this decision. Must include the original message and inferred intent. This provides cognitive context to the target work.,required"`
 }
 
 // ActionType represents the type of action the Decide phase concludes.
@@ -97,26 +97,26 @@ Event: %s
 Action types (use the integer value for the "type" field):
 1. 0 (create) — Create new work plan(s). Use when the event is a new request or topic.
    - MUST include a "work_plan" object with "type" and "guidance" fields.
-   - Work type 1 (chat): the agent replies directly. Use for simple Q&A, greetings, casual chat.
-   - Work type 2 (task): the agent executes a multi-step task using tools, web searches, or file operations.
+   - Work type 1 (chat): reply to the person directly. Use for simple Q&A, greetings, casual chat.
+   - Work type 2 (task): execute a multi-step task using tools, web searches, or file operations.
    - Both type 1 + type 2: acknowledge (chat) then execute (task). These run in parallel with no ordering guarantee.
-   - When cancelling an existing work AND creating a new one in the same decision, the new work's guidance should naturally acknowledge the transition (e.g., "The user stopped the previous task of X and now wants Y...").
+   - When cancelling an existing work AND creating a new one in the same decision, the new work's guidance should naturally acknowledge the transition (e.g., "I stopped doing X and now I should help them with Y instead...").
 
 2. 1 (route) — Route the event to an existing active work listed above. Use when the event modifies, corrects, or continues an ONGOING work (e.g., "change the approach", "try again", "use a different method"). Only works currently listed in "Active works" can be routed to.
-   - MUST include "guidance" (what the new input means for the target work) and "reason" (WHY this decision was made, including the user's original message and inferred intent).
-   - The target work's agent will see both guidance and reason, enabling it to understand the full context of the change.
+   - MUST include "guidance" (what I now want the target work to focus on, written in first-person as my own intention) and "reason" (WHY I made this decision, including the original message and inferred intent).
+   - The target work will see both guidance and reason, enabling it to understand the full context of the change.
 
 3. 2 (cancel) — Request an existing active work to stop. Use when the event explicitly requests stopping an ONGOING work. Only works currently listed in "Active works" can be cancelled.
-   - MUST include "guidance" (what the target work should do, e.g., "Save your current progress to notes and stop") and "reason" (WHY, including the user's original message).
-   - Cancel is a request, not a forceful kill — the target work's agent receives the directive and decides how to wrap up (save notes, record reasons) before exiting.
+   - MUST include "guidance" (how I want the target work to wrap up, written in first-person, e.g., "I should save my progress to notes and stop") and "reason" (WHY, including the original message).
+   - Cancel is a request, not a forceful kill — the target work receives the directive and decides how to wrap up (save notes, record reasons) before exiting.
 
 Important: "Active works" only includes works currently running. If the event refers to something that was done previously (e.g., "stop the service you started", "check the thing you did earlier"), that previous work has already finished — treat it as a NEW request (type=0 create), not a route or cancel.
 
 If no action is needed, return an empty actions list.
 
 You can return multiple actions. Examples:
-- Cancel an old task and create a new one: [{"type":2, "target_work_id":1, "guidance":"Save progress and stop", "reason":"User said 'stop searching' — they want a direct answer instead"}, {"type":0, "work_plan":{"type":1, "guidance":"The user cancelled the search task and wants a direct answer about X..."}}]
-- Route a follow-up to an existing work: [{"type":1, "target_work_id":2, "guidance":"Switch from Python to Go", "reason":"User said 'use Go instead' — they want the same task done in a different language"}]
+- Cancel an old task and create a new one: [{"type":2, "target_work_id":1, "guidance":"I should save my progress and stop", "reason":"They said 'stop searching' — they want a direct answer instead"}, {"type":0, "work_plan":{"type":1, "guidance":"I stopped searching and now I should give them a direct answer about X..."}}]
+- Route a follow-up to an existing work: [{"type":1, "target_work_id":2, "guidance":"I should switch from Python to Go", "reason":"They said 'use Go instead' — they want the same task done in a different language"}]
 
 Decision rules (apply in order):
 1. If the comprehension says "needs world interaction: true", the event requires tool usage or multi-step execution. Create a task work (type=0 with work_plan.type=2). If a direct response is also expected, create both chat + task in parallel.
@@ -135,19 +135,19 @@ Write guidance, reason, and plan in the same language as the event content.`
 //   - Produce no actions (implicit ignore)
 //
 // For EventTypeWorkCompleted, the decision is rule-based: if the work was a
-// TaskWork that succeeded, create a ChatWork to inform the user. The ChatWork's
+// TaskWork that succeeded, create a ChatWork to inform the person. The ChatWork's
 // context assembly reads the latest DB messages, so the agent will see if the
-// user has already moved on (e.g., "never mind") and respond accordingly.
+// person has already moved on (e.g., "never mind") and respond accordingly.
 //
 // For other event types, simple rule-based decisions are used.
 // The LLM call uses TemperatureDeterministic for consistent decision making.
 func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, activeWorks []*work) DecisionResult {
 	// Non-message events use simple rule-based decisions
 	switch event.Type {
-	case eventqueue.EventTypeSessionJoined:
+	case eventqueue.EventTypeGroupChatJoined:
 		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "session_joined event")
 		return DecisionResult{}
-	case eventqueue.EventTypeSessionLeft, eventqueue.EventTypeSystemNotification:
+	case eventqueue.EventTypeGroupChatLeft, eventqueue.EventTypeSystemNotification:
 		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "non-message event")
 		return DecisionResult{}
 	case eventqueue.EventTypeWorkCompleted:
@@ -157,10 +157,10 @@ func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agen
 		return DecisionResult{
 			Actions: []Action{{
 				Type:     ActionCreate,
-				WorkPlan: &WorkPlan{Type: model.WorkTypeChat, Guidance: "Respond to the scheduled alarm as a self-reminder"},
+				WorkPlan: &WorkPlan{Type: model.WorkTypeChat, Guidance: "I should respond to my alarm — this is a self-reminder I set earlier"},
 			}},
 		}
-	case eventqueue.EventTypeNewMessage:
+	case eventqueue.EventTypeNewPrivateChatMessage:
 		// Proceed to LLM-based decision below
 	default:
 		applogger.Error("Unknown event type in Decide",
@@ -178,14 +178,14 @@ func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agen
 
 // decideWorkCompleted handles EventTypeWorkCompleted with a rule-based decision.
 //
-// When a TaskWork completes successfully, the agent should inform the user.
+// When a TaskWork completes successfully, the agent should let the person know.
 // This creates a ChatWork whose ExecuteChat reads the latest DB messages —
-// if the user has already said "never mind" or moved on, the agent sees that
+// if they have already said "never mind" or moved on, the agent sees that
 // context and responds naturally (e.g., "I already finished it!").
 //
 // ChatWork completion produces no action — chat works are one-shot replies
 // that don't need follow-up.
-// Task work failure also creates a ChatWork to inform the user of the failure.
+// Task work failure also creates a ChatWork to let them know what happened.
 func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) DecisionResult {
 	payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload)
 	if !ok || payload == nil {
@@ -203,9 +203,9 @@ func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) Decis
 
 	var guidance string
 	if payload.Status == "success" {
-		guidance = fmt.Sprintf("The task has been completed. Original task: %s. Inform the user of the result.", payload.Guidance)
+		guidance = fmt.Sprintf("I finished the task: %s. I should let them know the result.", payload.Guidance)
 	} else {
-		guidance = fmt.Sprintf("The task failed. Original task: %s. Inform the user of the failure and reason.", payload.Guidance)
+		guidance = fmt.Sprintf("I couldn't finish the task: %s. I should let them know what happened and why.", payload.Guidance)
 	}
 
 	applogger.Info("Decision made (rule-based, work completed)",

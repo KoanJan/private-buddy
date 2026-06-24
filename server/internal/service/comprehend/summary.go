@@ -31,30 +31,26 @@ IMPORTANT: The summary MUST preserve the original language of the conversation.
 - If the conversation contains multiple languages, the summary may also contain multiple languages.
 - Do NOT translate between languages. Maintain information fidelity.`
 
-// generateSummary generates a summary for the specified (session, agent, version).
+// generateSummary generates a session-level factual summary for the specified version.
 //
-// Summaries are scoped by (session_id, agent_id) so that different agents
-// maintain independent summaries and narratives for the same session.
+// Summaries are scoped by session_id only — all agents in the same session
+// share the same factual summary. Agent-specific perspective is handled by
+// AgentNarrative, which is generated separately after the summary.
 //
 // Summary Generation Rules:
 //   - V < N: No summary generated (not enough messages)
 //   - N <= V < 2N: Full summary using all messages (1 to V) with empty baseline
 //   - V >= 2N: Incremental summary using baseline (V-N) + recent messages (V-N+1 to V)
-//
-// After summary content is generated, a narrative is immediately generated from
-// the summary content. Both are written to the database in a single atomic
-// operation, ensuring no intermediate state exists where summary exists but
-// narrative is empty.
-func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *model.LLMConfig, agentName string, version int, windowSize int) error {
-	existing := getSummary(sessionID, agentID, version)
+func generateSummary(ctx context.Context, sessionID int64, llmConfig *model.LLMConfig, version int, windowSize int) error {
+	existing := getSessionSummary(sessionID, version)
 	if existing != nil {
-		applogger.Info("Summary already exists", "session_id", sessionID, "agent_id", agentID, "version", version)
+		applogger.Info("Summary already exists", "session_id", sessionID, "version", version)
 		return nil
 	}
 
 	if version < windowSize {
 		applogger.Info("Version < window_size, skipping summary generation",
-			"session_id", sessionID, "agent_id", agentID, "version", version, "window_size", windowSize)
+			"session_id", sessionID, "version", version, "window_size", windowSize)
 		return nil
 	}
 
@@ -67,20 +63,20 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 			return nil
 		}
 
-		messagesText := formatMessagesForSummary(messages, service.GetUserName(), agentName)
+		messagesText := formatMessagesForSummaryGeneric(messages)
 		prompt = fmt.Sprintf(summaryPrompt, "(No baseline summary, this is the first summary)", messagesText)
 	} else {
 		baselineVersion := version - windowSize
 
-		baselineSummary := getSummary(sessionID, agentID, baselineVersion)
+		baselineSummary := getSessionSummary(sessionID, baselineVersion)
 		if baselineSummary == nil {
 			applogger.Info("Baseline summary not found, generating recursively",
-				"session_id", sessionID, "agent_id", agentID, "baseline_version", baselineVersion)
-			if err := generateSummary(ctx, sessionID, agentID, llmConfig, agentName, baselineVersion, windowSize); err != nil {
+				"session_id", sessionID, "baseline_version", baselineVersion)
+			if err := generateSummary(ctx, sessionID, llmConfig, baselineVersion, windowSize); err != nil {
 				applogger.Error("Failed to generate baseline summary recursively",
-					"session_id", sessionID, "agent_id", agentID, "baseline_version", baselineVersion, "error", err)
+					"session_id", sessionID, "baseline_version", baselineVersion, "error", err)
 			}
-			baselineSummary = getSummary(sessionID, agentID, baselineVersion)
+			baselineSummary = getSessionSummary(sessionID, baselineVersion)
 		}
 
 		baselineText := "(No baseline summary)"
@@ -95,7 +91,7 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 			return nil
 		}
 
-		messagesText := formatMessagesForSummary(messages, service.GetUserName(), agentName)
+		messagesText := formatMessagesForSummaryGeneric(messages)
 		prompt = fmt.Sprintf(summaryPrompt, baselineText, messagesText)
 	}
 
@@ -104,41 +100,65 @@ func generateSummary(ctx context.Context, sessionID, agentID int64, llmConfig *m
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
-		applogger.Error("Summary generation LLM call failed", "session_id", sessionID, "agent_id", agentID, "error", err)
+		applogger.Error("Summary generation LLM call failed", "session_id", sessionID, "error", err)
 		return fmt.Errorf("summary generation failed: %w", err)
 	}
 
-	applogger.Info("Generated summary content", "session_id", sessionID, "agent_id", agentID, "version", version)
+	applogger.Info("Generated summary content", "session_id", sessionID, "version", version)
 
-	narrativeResult := generateNarrativeFromSummary(ctx, llmConfig, summaryContent)
-	if narrativeResult == "" {
-		applogger.Error("Narrative generation failed, aborting atomic write", "session_id", sessionID, "agent_id", agentID, "version", version)
-		return fmt.Errorf("narrative generation failed")
-	}
-
-	newSummary := model.HistoricalSummary{
+	newSummary := model.Summary{
 		SessionID: sessionID,
-		AgentID:   agentID,
 		Version:   version,
 		Content:   summaryContent,
-		Narrative: narrativeResult,
 	}
 	if err := database.DB.Create(&newSummary).Error; err != nil {
 		return err
 	}
 
-	applogger.Info("Atomically created summary+record", "session_id", sessionID, "agent_id", agentID, "version", version)
+	applogger.Info("Created session summary", "session_id", sessionID, "version", version)
 	return nil
 }
 
-// getSummary retrieves a specific summary by (session_id, agent_id, version).
-func getSummary(sessionID, agentID int64, version int) *model.HistoricalSummary {
-	var summary model.HistoricalSummary
-	err := database.DB.Where("session_id = ? AND agent_id = ? AND version = ?", sessionID, agentID, version).First(&summary).Error
+// getSessionSummary retrieves a specific session-level summary by (session_id, version).
+func getSessionSummary(sessionID int64, version int) *model.Summary {
+	var s model.Summary
+	err := database.DB.Where("session_id = ? AND version = ?", sessionID, version).First(&s).Error
 	if err != nil {
 		return nil
 	}
-	return &summary
+	return &s
+}
+
+// getLatestSummaryByID returns the latest summary for a session.
+func getLatestSummaryByID(sessionID int64) *model.Summary {
+	var s model.Summary
+	err := database.DB.Where("session_id = ?", sessionID).Order("version DESC").First(&s).Error
+	if err != nil {
+		return nil
+	}
+	return &s
+}
+
+// getLatestNarrativeByIDs returns the latest narrative for a (session, agent).
+func getLatestNarrativeByIDs(sessionID, agentID int64) *model.AgentNarrative {
+	var n model.AgentNarrative
+	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).
+		Order("summary_version DESC").First(&n).Error
+	if err != nil {
+		return nil
+	}
+	return &n
+}
+
+// getAgentNarrative retrieves a specific narrative by (session_id, agent_id, summary_version).
+func getAgentNarrative(sessionID, agentID int64, summaryVersion int) *model.AgentNarrative {
+	var n model.AgentNarrative
+	err := database.DB.Where("session_id = ? AND agent_id = ? AND summary_version = ?",
+		sessionID, agentID, summaryVersion).First(&n).Error
+	if err != nil {
+		return nil
+	}
+	return &n
 }
 
 // getMessagesByRange returns messages by session-internal sequence numbers (1-based, inclusive).
@@ -159,11 +179,12 @@ func getMessagesByRange(sessionID int64, startSeq, endSeq int) []model.Message {
 // formatMessagesForSummary formats messages for the summary prompt.
 // Converts message objects into a human-readable format suitable for LLM summarization.
 // userName is the actual name of the other party, agentName is the agent's own name.
-func formatMessagesForSummary(messages []model.Message, userName, agentName string) string {
-	userRole := userName
+// Kept for backward compatibility with narrative generation which needs named roles.
+func formatMessagesForSummary(messages []model.Message, personName, agentName string) string {
+	personRole := personName
 	var formatted []string
 	for _, msg := range messages {
-		role := userRole
+		role := personRole
 		if msg.Role != model.MessageRoleUser {
 			role = agentName
 		}
@@ -179,18 +200,31 @@ func formatMessagesForSummary(messages []model.Message, userName, agentName stri
 	return result
 }
 
-// getLatestSummaryByID returns the latest summary for a (session, agent).
-func getLatestSummaryByID(sessionID, agentID int64) *model.HistoricalSummary {
-	var summary model.HistoricalSummary
-	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).Order("version DESC").First(&summary).Error
-	if err != nil {
-		return nil
+// formatMessagesForSummaryGeneric formats messages using role-based labels
+// (User/Assistant) suitable for a session-level factual summary.
+func formatMessagesForSummaryGeneric(messages []model.Message) string {
+	userName := service.GetUserName()
+	var formatted []string
+	for _, msg := range messages {
+		role := userName
+		if msg.Role != model.MessageRoleUser {
+			role = "Assistant"
+		}
+		formatted = append(formatted, fmt.Sprintf("%s: %s", role, msg.Content))
 	}
-	return &summary
+	result := ""
+	for i, s := range formatted {
+		if i > 0 {
+			result += "\n\n"
+		}
+		result += s
+	}
+	return result
 }
 
-// generateSummaryForSession is a shared function for triggering summary generation.
-// It loads the session, agent, and LLM config before delegating to generateSummary.
+// generateSummaryForSession generates a session-level summary, then generates
+// an agent-specific narrative from the summary. This is the entry point for
+// background summary+narrative generation triggered after message commits.
 func generateSummaryForSession(ctx context.Context, sessionID, agentID int64, version int, windowSize int) {
 	var llmConfig model.LLMConfig
 	var agent model.Agent
@@ -203,8 +237,15 @@ func generateSummaryForSession(ctx context.Context, sessionID, agentID int64, ve
 		return
 	}
 
-	if err := generateSummary(ctx, sessionID, agentID, &llmConfig, agent.Name, version, windowSize); err != nil {
-		applogger.Error("Summary generation failed", "session_id", sessionID, "agent_id", agentID, "error", err)
+	// Step 1: Generate session-level summary (idempotent — skips if exists)
+	if err := generateSummary(ctx, sessionID, &llmConfig, version, windowSize); err != nil {
+		applogger.Error("Summary generation failed", "session_id", sessionID, "error", err)
+		return
+	}
+
+	// Step 2: Generate agent-specific narrative from the summary (idempotent — skips if exists)
+	if err := generateNarrativeForAgent(ctx, sessionID, agentID, &llmConfig, version); err != nil {
+		applogger.Error("Narrative generation failed", "session_id", sessionID, "agent_id", agentID, "error", err)
 	}
 }
 
@@ -213,6 +254,10 @@ func generateSummaryForSession(ctx context.Context, sessionID, agentID int64, ve
 // it triggers when the total message count in the session is a multiple of the
 // configured window size. This is sender-agnostic — user and agent messages are
 // treated equally.
+//
+// After the summary is generated, an agent-specific narrative is also generated
+// for the given agent. In future multi-agent scenarios, this would iterate over
+// all agents in the session.
 //
 // This function should be called after ANY message is created (user or agent).
 func MaybeTriggerSummary(ctx context.Context, sessionID, agentID int64) {

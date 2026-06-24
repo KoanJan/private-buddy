@@ -390,7 +390,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		// 1. Works (may reference drafts)
 		// 2. Message drafts
 		// 3. Interactions
-		// 4. Historical summaries
+		// 4. Agent narratives + session summaries
 		// 5. Participant sessions
 		// 6. Messages
 		// 7. Sessions
@@ -403,8 +403,11 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Interaction{}).Error; err != nil {
 			applogger.Error("DeleteAgent: failed to delete interactions", "agent_id", id, "error", err)
 		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.HistoricalSummary{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete historical summaries", "agent_id", id, "error", err)
+		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.AgentNarrative{}).Error; err != nil {
+			applogger.Error("DeleteAgent: failed to delete agent narratives", "agent_id", id, "error", err)
+		}
+		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Summary{}).Error; err != nil {
+			applogger.Error("DeleteAgent: failed to delete session summaries", "agent_id", id, "error", err)
 		}
 		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.ParticipantSession{}).Error; err != nil {
 			applogger.Error("DeleteAgent: failed to delete participant sessions", "agent_id", id, "error", err)
@@ -511,7 +514,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	// 1. Works (may reference drafts)
 	// 2. Message drafts
 	// 3. Interactions
-	// 4. Historical summaries
+	// 4. Agent narratives + session summaries
 	// 5. Participant sessions
 	// 6. Messages
 	// 7. Session itself
@@ -524,8 +527,11 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.Interaction{}).Error; err != nil {
 		applogger.Error("DeleteSession: failed to delete interactions", "session_id", id, "error", err)
 	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.HistoricalSummary{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete historical summaries", "session_id", id, "error", err)
+	if err := database.DB.Where("session_id = ?", id).Delete(&model.AgentNarrative{}).Error; err != nil {
+		applogger.Error("DeleteSession: failed to delete agent narratives", "session_id", id, "error", err)
+	}
+	if err := database.DB.Where("session_id = ?", id).Delete(&model.Summary{}).Error; err != nil {
+		applogger.Error("DeleteSession: failed to delete session summaries", "session_id", id, "error", err)
 	}
 	if err := database.DB.Where("session_id = ?", id).Delete(&model.ParticipantSession{}).Error; err != nil {
 		applogger.Error("DeleteSession: failed to delete participant sessions", "session_id", id, "error", err)

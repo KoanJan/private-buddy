@@ -249,7 +249,7 @@ func buildSystemPrompt(sessionID int64, guidance string) string {
 	hasWS := hasWebSearch()
 
 	parts := []string{
-		"You are a helpful AI agent that can execute tasks using tools.",
+		"You can execute tasks using tools.",
 		"",
 		"Available tools:",
 		"- bash: Execute shell commands in your working directory",
@@ -280,15 +280,15 @@ func buildSystemPrompt(sessionID int64, guidance string) string {
 		"- This keeps your workspace organized but is not enforced — use your judgment",
 		"",
 		"DELIVERY GUIDANCE:",
-		"When the task is complete, your final output will be shown to the user.",
+		"When the task is complete, your final output will be shown to the person you are working for.",
 		"First, determine what kind of deliverable the task requires:",
-		"- File deliverables (code, documents, etc.) → provide the full ABSOLUTE file path so the user can click to open it",
+		"- File deliverables (code, documents, etc.) → provide the full ABSOLUTE file path so they can click to open it",
 		"- Information deliverables (answers, analysis, etc.) → present the information directly in your response",
 		"- Mixed deliverables → provide both the information summary and the file paths",
 		"",
-		"The user should be able to reach the deliverable directly from your response — zero friction:",
+		"They should be able to reach the deliverable directly from your response — zero friction:",
 		"- ALWAYS provide ABSOLUTE file paths, not relative paths. Use `pwd` if unsure of the full path",
-		"- Never make the user guess where things are or manually type paths",
+		"- Never make them guess where things are or manually type paths",
 		"- Never fabricate or guess file paths — verify with `pwd` or `ls` if needed",
 		"- If something was partially completed, clearly state what's done and what's remaining",
 	)

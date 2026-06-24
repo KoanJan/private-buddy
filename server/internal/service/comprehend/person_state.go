@@ -39,9 +39,9 @@ IMPORTANT: You are the person named above(%s). Questions directed at you (e.g., 
 // PersonState represents the inferred person state from conversation context.
 //
 // Three-dimensional model:
-//   - Emotion: user's current emotional state (affects response tone)
-//   - Purpose: user's current conversational goal (affects response content direction)
-//   - Situation: user's physical context (affects response constraints)
+//   - Emotion: person's current emotional state (affects response tone)
+//   - Purpose: person's current conversational goal (affects response content direction)
+//   - Situation: person's physical context (affects response constraints)
 //
 // Intent type is implicitly derived from purpose + situation, not modeled separately.
 //
@@ -103,12 +103,12 @@ func (ps *PersonState) ToNaturalLanguage(personName string) string {
 }
 
 // formatRecentMessages formats recent messages into text for the inference prompt.
-// userName is the actual name of the other party, agentName is the agent's own name.
-func formatRecentMessages(recentMessages []model.Message, userName, agentName string) string {
-	userRole := userName
+// personName is the actual name of the other party, agentName is the agent's own name.
+func formatRecentMessages(recentMessages []model.Message, personName, agentName string) string {
+	personRole := personName
 	var lines []string
 	for _, msg := range recentMessages {
-		role := userRole
+		role := personRole
 		if msg.Role != model.MessageRoleUser {
 			role = agentName
 		}
@@ -117,7 +117,7 @@ func formatRecentMessages(recentMessages []model.Message, userName, agentName st
 	return strings.Join(lines, "\n")
 }
 
-// InferPersonState infers the user's current state from recent conversation messages.
+// InferPersonState infers the pserson's current state from recent conversation messages.
 // Uses TemperatureDeterministic for consistent, deterministic outputs.
 // userName is the actual name of the person being talked to, agentName is the agent's own name.
 // characterSettings provides the agent's role context to prevent misinterpretation of casual questions.
@@ -128,7 +128,7 @@ func InferPersonState(
 	ctx context.Context,
 	llmConfig *model.LLMConfig,
 	recentMessages []model.Message,
-	userName string,
+	personName string,
 	agentName string,
 	characterSettings string,
 	activeWorksSummary string,
@@ -139,7 +139,7 @@ func InferPersonState(
 
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
-	dialogText := formatRecentMessages(recentMessages, userName, agentName)
+	dialogText := formatRecentMessages(recentMessages, personName, agentName)
 	prompt := fmt.Sprintf(personStateInferencePrompt, agentName, characterSettings, dialogText, agentName)
 
 	// Inject active works context for self-awareness.

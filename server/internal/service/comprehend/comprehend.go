@@ -3,6 +3,7 @@ package comprehend
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
@@ -101,12 +102,12 @@ func Comprehend(
 ) *ComprehensionResult {
 	sessionInfo := buildSessionInfo(event.SessionID, agent)
 
-	result := &ComprehensionResult{}
-
-	// Build active works summary for self-awareness.
-	// This allows the agent to understand references like "change the approach"
-	// or "stop" by knowing what it is currently doing.
-	result.ActiveWorksSummary = activeWorksSummary
+	result := &ComprehensionResult{
+		// Active works summary for self-awareness.
+		// This allows the agent to understand references like "change the approach"
+		// or "stop" by knowing what it is currently doing.
+		ActiveWorksSummary: activeWorksSummary,
+	}
 
 	eventDescription := event.FormatDescription()
 	if eventDescription == "" {
@@ -117,13 +118,15 @@ func Comprehend(
 		return result
 	}
 
+	// default set
+	result.ProcessedQuery = eventDescription
+	result.QueryType = "clear"
+
 	// For non-message events (work completed, scheduled, session joined/left),
 	// skip the full comprehension pipeline — there is no "other party" to
 	// understand, no query to preprocess, no KB to retrieve from.
 	// The event description carries all the context the Decide phase needs.
-	if event.Type != eventqueue.EventTypeNewMessage {
-		result.ProcessedQuery = eventDescription
-		result.QueryType = "clear"
+	if event.Type != eventqueue.EventTypeNewPrivateChatMessage {
 		applogger.Info("Comprehend completed (non-message event, skipped pipeline)",
 			"agent_id", agent.ID,
 			"session_id", sessionInfo.SessionID,
@@ -132,85 +135,88 @@ func Comprehend(
 		return result
 	}
 
-	// Step 1: Query preprocessing (conditional — same conditions as before)
-	// Runs when V >= N (for context engineering) or when knowledge bases
-	// are configured (for KB retrieval optimization).
-	var preprocessingResult *PreprocessingResult
-	if sessionInfo.MessageCount >= int64(sessionInfo.WindowSize) || len(sessionInfo.KBIDs) > 0 {
-		preprocessingHistory := getPreprocessingHistory(sessionInfo.SessionID, sessionInfo.WindowSize)
-		preprocessingResult = PreprocessQuery(
-			ctx,
-			llmConfig,
-			eventDescription,
-			preprocessingHistory,
-			agent.CharacterSettings,
-			sessionInfo.WindowSize,
-			sessionInfo.UserName,
-			agent.Name,
-		)
-	}
+	// concurrent work
+	wg := sync.WaitGroup{}
 
-	// Extract preprocessing results
-	if preprocessingResult != nil {
-		result.ProcessedQuery = preprocessingResult.ProcessedQuery
-		result.QueryType = preprocessingResult.QueryType
-		result.NeedsClarification = preprocessingResult.NeedsClarification
-		result.Clarification = preprocessingResult.Clarification
-		result.SkipRetrieval = preprocessingResult.SkipRetrieval
-		result.PreprocessingResult = preprocessingResult
-	} else {
-		result.ProcessedQuery = eventDescription
-		result.QueryType = "clear"
+	if sessionInfo.MessageCount >= int64(sessionInfo.WindowSize) || len(sessionInfo.KBIDs) > 0 {
+		wg.Go(func() {
+			// Step 1: Query preprocessing (conditional — same conditions as before)
+			// Runs when V >= N (for context engineering) or when knowledge bases
+			// are configured (for KB retrieval optimization).
+			preprocessingHistory := getPreprocessingHistory(sessionInfo.SessionID, sessionInfo.WindowSize)
+			preprocessingResult := PreprocessQuery(
+				ctx,
+				llmConfig,
+				eventDescription,
+				preprocessingHistory,
+				agent.CharacterSettings,
+				sessionInfo.WindowSize,
+				sessionInfo.UserName,
+				agent.Name,
+			)
+			// Extract preprocessing results
+			result.ProcessedQuery = preprocessingResult.ProcessedQuery
+			result.QueryType = preprocessingResult.QueryType
+			result.NeedsClarification = preprocessingResult.NeedsClarification
+			result.Clarification = preprocessingResult.Clarification
+			result.SkipRetrieval = preprocessingResult.SkipRetrieval
+			result.PreprocessingResult = preprocessingResult
+
+			// Step 3: Knowledge base retrieval (conditional — same as before)
+			if len(sessionInfo.KBIDs) > 0 {
+				// Wait for preprocessing to complete before using the processed query
+				query := eventDescription
+				if result.ProcessedQuery != "" {
+					query = result.ProcessedQuery
+				}
+
+				kbResults, err := kb.SearchMultiKB(ctx, sessionInfo.KBIDs, query, 5)
+				if err != nil {
+					applogger.Error("Comprehend: KB retrieval failed",
+						"session_id", sessionInfo.SessionID,
+						"error", err,
+					)
+				} else {
+					for _, kr := range kbResults {
+						result.KBSegments = append(result.KBSegments, Segment{
+							Content: kr.Content,
+							Source:  SourceKnowledgeBase,
+						})
+					}
+					applogger.Info("Comprehend: KB retrieved segments",
+						"session_id", sessionInfo.SessionID,
+						"count", len(kbResults),
+					)
+				}
+			}
+		})
 	}
 
 	// Step 2: Person state inference (always runs — same as before)
-	recentMessagesForState := GetRecentMessages(
-		sessionInfo.SessionID,
-		min(int(sessionInfo.MessageCount), sessionInfo.WindowSize),
-		model.MessageStatusCompleted,
-	)
-
-	result.PersonState = InferPersonState(
-		ctx,
-		llmConfig,
-		recentMessagesForState,
-		sessionInfo.UserName,
-		agent.Name,
-		agent.CharacterSettings,
-		result.ActiveWorksSummary,
-	)
-
-	if result.PersonState != nil {
-		result.NeedsWorldInteraction = result.PersonState.NeedsWorldInteraction
-	}
-
-	// Step 3: Knowledge base retrieval (conditional — same as before)
-	if len(sessionInfo.KBIDs) > 0 {
-		// Wait for preprocessing to complete before using the processed query
-		query := eventDescription
-		if result.ProcessedQuery != "" {
-			query = result.ProcessedQuery
+	wg.Go(func() {
+		recentMessagesForState := GetRecentMessages(
+			sessionInfo.SessionID,
+			min(int(sessionInfo.MessageCount), sessionInfo.WindowSize),
+			model.MessageStatusCompleted,
+		)
+		result.PersonState = InferPersonState(
+			ctx,
+			llmConfig,
+			recentMessagesForState,
+			sessionInfo.UserName,
+			agent.Name,
+			agent.CharacterSettings,
+			result.ActiveWorksSummary,
+		)
+		// Extract PersonState results
+		if result.PersonState != nil {
+			result.NeedsWorldInteraction = result.PersonState.NeedsWorldInteraction
 		}
 
-		kbResults, err := kb.SearchMultiKB(ctx, sessionInfo.KBIDs, query, 5)
-		if err != nil {
-			applogger.Error("Comprehend: KB retrieval failed",
-				"session_id", sessionInfo.SessionID,
-				"error", err,
-			)
-		} else {
-			for _, kr := range kbResults {
-				result.KBSegments = append(result.KBSegments, Segment{
-					Content: kr.Content,
-					Source:  SourceKnowledgeBase,
-				})
-			}
-			applogger.Info("Comprehend: KB retrieved segments",
-				"session_id", sessionInfo.SessionID,
-				"count", len(kbResults),
-			)
-		}
-	}
+	})
+
+	// waiting for 3 steps finish
+	wg.Wait()
 
 	applogger.Info("Comprehend completed",
 		"agent_id", agent.ID,

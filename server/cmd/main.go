@@ -128,19 +128,22 @@ func main() {
 	sig := <-quit
 	applogger.Info("Received shutdown signal", "signal", sig.String())
 
-	// Stop all agent runtimes and event queue before shutting down
+	// Stop all agent runtimes and wait for graceful completion.
 	applogger.Info("Stopping agent runtimes...")
-	runtime.StopAll()
+	runtime.Shutdown(10 * time.Second)
 
 	// Shut down the memory system (vectorization + daily cron)
 	memCancel()
 
-	// Graceful shutdown with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Close all SSE connections so HTTP shutdown doesn't wait for keep-alive
+	handler.ShutdownSSE()
+
+	// Graceful HTTP shutdown — returns immediately since SSE connections are closed
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		applogger.Error("Server forced to shutdown", "error", err)
+		applogger.Warn("HTTP server shutdown", "error", err)
 	}
 
 	applogger.Info("Server stopped gracefully")

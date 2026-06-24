@@ -94,8 +94,16 @@ func newAgentRuntime(
 func (r *agentRuntime) Run(ctx context.Context) {
 	heartbeatTimer := time.NewTimer(r.heartbeatInterval)
 
+	// Track internal goroutines (draft handler + work goroutines)
+	// so that graceful shutdown can wait for them to finish.
+	var internalWg sync.WaitGroup
+
 	// Start draft-commit handler goroutine
-	go r.handleDraftCommits(ctx)
+	internalWg.Add(1)
+	go func() {
+		defer internalWg.Done()
+		r.handleDraftCommits(ctx)
+	}()
 
 	for {
 		select {
@@ -106,6 +114,20 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			case <-heartbeatTimer.C:
 			default:
 			}
+
+			// Wait for all active works to finish.
+			// Each work checks ctx.Err() and abandons quickly.
+			r.mu.Lock()
+			pending := make([]*work, len(r.activeWorks))
+			copy(pending, r.activeWorks)
+			r.mu.Unlock()
+			for _, w := range pending {
+				<-w.done
+			}
+
+			// Wait for draft handler to drain its channel
+			internalWg.Wait()
+
 			applogger.Info("agentRuntime stopped", "agent_id", r.agentID)
 			return
 
@@ -142,7 +164,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// - For EventTypeNewMessage: the actual user message.
 			// - For EventTypeScheduled: the original user message that caused
 			//   the alarm (TriggerMessageID), preserving the causal chain.
-			case eventqueue.EventTypeNewMessage:
+			case eventqueue.EventTypeNewPrivateChatMessage:
 				if payload, ok := event.Payload.(*eventqueue.NewMessagePayload); ok && payload.MessageID > 0 {
 					if err := database.DB.Model(&model.ParticipantSession{}).
 						Where("session_id = ? AND participant_type = ? AND participant_id = ?",
@@ -406,6 +428,7 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 		initialPayload: event.Payload,
 		comprehension:  comprehension,
 		guidanceCh:     make(chan task.GuidanceDirective, 8), // Buffered channel for guidance/cancel directives
+		done:           make(chan struct{}),
 	}
 	switch plan.Type {
 	case model.WorkTypeChat:
@@ -414,12 +437,12 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 		w.maxIterations = 90
 	}
 
-	r.weakUpdateAgentStatusInSession(event.SessionID, model.ParticipantStatusWorking)
-
 	if err := tx.Commit().Error; err != nil {
 		applogger.Error("Failed to create work", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
 		return nil, false
 	}
+
+	r.weakUpdateAgentStatusInSession(event.SessionID, model.ParticipantStatusWorking)
 	return w, true
 }
 

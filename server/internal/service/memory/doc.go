@@ -1,7 +1,7 @@
 // Package memory implements the agent-level long-term memory system.
 //
-// This is NOT the session-level conversation summary (HistoricalSummary).
-// HistoricalSummary provides per-session compressed text — non-retrievable,
+// This is NOT the session-level conversation summary (Summary).
+// Summary provides per-session compressed text — non-retrievable,
 // non-updatable per fact, non-reusable across sessions. The memory system
 // provides cross-session, retrievable, score-driven persistent memory at
 // the agent level: an agent in session B can recall what happened in session A.

@@ -24,6 +24,7 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/memory"
 
@@ -84,8 +85,19 @@ func (cm *connectionManager) PushToSession(sessionID int64, data string) {
 			// TODO: Notify the client to refresh and reset the SSE connection when messages
 			// are dropped. Without this, the client will have an incomplete message list,
 			// causing a cognitive gap for the user who sees stale/partial data.
-			applogger.Warn("SSE channel full, dropping message", "session_id", sessionID)
+			applogger.Error("SSE channel full, dropping message", "session_id", sessionID)
 		}
+	}
+}
+
+// CloseAll closes all SSE channels and clears the connection map.
+// Causes all StreamMessages handlers to exit cleanly.
+func (cm *connectionManager) CloseAll() {
+	for sessionID, conns := range cm.connections {
+		for _, ch := range conns {
+			close(ch)
+		}
+		delete(cm.connections, sessionID)
 	}
 }
 
@@ -93,6 +105,13 @@ func (cm *connectionManager) PushToSession(sessionID int64, data string) {
 // Used by the runtime package to push agent_status and message events.
 func PushSSEToSession(sessionID int64, data string) {
 	connManager.PushToSession(sessionID, data)
+}
+
+// ShutdownSSE closes all SSE connections gracefully.
+// Should be called before HTTP server shutdown to avoid
+// waiting for long-lived keep-alive connections to close.
+func ShutdownSSE() {
+	connManager.CloseAll()
 }
 
 // CreateAndSend creates a new session and sends the first message.
@@ -325,11 +344,12 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 // This is the only path for user messages to reach the agent.
 func (h *Handler) sendEventToRuntime(agentID, sessionID, messageID int64, messageContent string) {
 	event := &eventqueue.AgentEvent{
-		Type:      eventqueue.EventTypeNewMessage,
+		Type:      eventqueue.EventTypeNewPrivateChatMessage,
 		SessionID: sessionID,
 		Payload: &eventqueue.NewMessagePayload{
 			MessageID:      messageID,
 			MessageContent: messageContent,
+			SpeakerName:    service.GetUserName(),
 		},
 	}
 	eventqueue.SendEvent(agentID, event)
