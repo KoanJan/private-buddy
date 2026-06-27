@@ -3,6 +3,8 @@ package comprehend
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
@@ -11,14 +13,155 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// narrativeManager coordinates per-(session, agent) narrative generation goroutines.
+// The key is "sessionID-agentID", so each agent in a session gets its own
+// independent narrative generation path, decoupled from summary generation.
+//
+// Goroutines are tracked with cancellable contexts so they can be aborted
+// when a session or agent is deleted.
+type narrativeManager struct {
+	mu      sync.Mutex
+	running map[string]context.CancelFunc // "sessionID-agentID" → cancel func
+}
+
+var nm = &narrativeManager{
+	running: make(map[string]context.CancelFunc),
+}
+
+// narrativeKey builds the unique key for the narrative manager map.
+func narrativeKey(sessionID, agentID int64) string {
+	return fmt.Sprintf("%d-%d", sessionID, agentID)
+}
+
+// SignalNarrative signals that the session-agent pair may need narrative generation.
+// If a goroutine is already running for this (session, agent), the call is a no-op.
+func SignalNarrative(sessionID, agentID int64) {
+	key := narrativeKey(sessionID, agentID)
+	nm.mu.Lock()
+	if _, ok := nm.running[key]; ok {
+		nm.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	nm.running[key] = cancel
+	nm.mu.Unlock()
+
+	go nm.run(ctx, sessionID, agentID)
+}
+
+// CancelNarrativesForSession cancels all running narrative goroutines for a
+// session. Called when a session is deleted to prevent orphaned DB writes.
+func CancelNarrativesForSession(sessionID int64) {
+	prefix := fmt.Sprintf("%d-", sessionID)
+	nm.mu.Lock()
+	for key, cancel := range nm.running {
+		if strings.HasPrefix(key, prefix) {
+			cancel()
+		}
+	}
+	nm.mu.Unlock()
+}
+
+func (nm *narrativeManager) clearRunning(sessionID, agentID int64) {
+	key := narrativeKey(sessionID, agentID)
+	nm.mu.Lock()
+	if cancel, ok := nm.running[key]; ok {
+		cancel() // release context resources
+		delete(nm.running, key)
+	}
+	nm.mu.Unlock()
+}
+
+// run decides whether to generate a narrative for the agent.
+func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
+	defer nm.clearRunning(sessionID, agentID)
+
+	// Check cancellation before any work
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Step 1: compute the target version
+	latestNarrative := getLatestNarrativeByIDs(sessionID, agentID)
+	startSeq := 1
+	if latestNarrative != nil {
+		startSeq = latestNarrative.SummaryVersion + 1
+	}
+
+	targetVersion, _, _ := computeTargetVersion(sessionID, startSeq)
+	if targetVersion == 0 {
+		return
+	}
+
+	// Step 2: check summary at target version
+	targetSummary := getSessionSummary(sessionID, targetVersion)
+	if targetSummary == nil {
+		SignalSummary(sessionID, agentID)
+		return
+	}
+
+	// Step 3: generate narrative
+
+	// Check cancellation before loading agent and making the LLM call
+	if ctx.Err() != nil {
+		return
+	}
+
+	var agent model.Agent
+	if err := database.DB.First(&agent, agentID).Error; err != nil {
+		applogger.Error("SignalNarrative: agent not found", "agent_id", agentID, "error", err)
+		return
+	}
+	var llmConfig model.LLMConfig
+	if err := database.DB.First(&llmConfig, agent.LLMConfigID).Error; err != nil {
+		applogger.Error("SignalNarrative: LLM config not found", "config_id", agent.LLMConfigID, "error", err)
+		return
+	}
+
+	// Check cancellation before the expensive LLM call
+	if ctx.Err() != nil {
+		return
+	}
+
+	narrativeContent := generateNarrativeFromSummary(ctx, &llmConfig, &agent, targetSummary.Content)
+	if narrativeContent == "" {
+		applogger.Error("SignalNarrative: narrative generation returned empty content",
+			"session_id", sessionID, "agent_id", agentID)
+		return
+	}
+
+	// Check cancellation before DB write
+	if ctx.Err() != nil {
+		return
+	}
+
+	narrative := model.AgentNarrative{
+		SessionID:      sessionID,
+		AgentID:        agentID,
+		SummaryVersion: targetSummary.Version,
+		Content:        narrativeContent,
+	}
+	if err := database.DB.Create(&narrative).Error; err != nil {
+		applogger.Error("SignalNarrative: failed to save narrative",
+			"session_id", sessionID, "agent_id", agentID, "error", err)
+		return
+	}
+
+	applogger.Info("Created agent narrative",
+		"session_id", sessionID, "agent_id", agentID, "summary_version", targetSummary.Version,
+		"length", len(narrativeContent))
+}
+
 // cachedNarrativePrompt generates a first-person experiential narrative from summary content.
 // Used for cached narrative generation after summary creation.
 //
-// The narrative will be injected as "Background context from earlier" in the
-// context assembly, positioned between character settings and recent conversation.
-// It tells you what you have experienced and discussed — your own memory of the
-// conversation, written from your perspective.
-const cachedNarrativePrompt = `Rewrite the following conversation summary as a coherent first-hand background narrative — as if you are recalling your own experience.
+// The agent's name and character settings are injected so the LLM generates the
+// narrative from that specific agent's perspective — not a generic rephrasing.
+const cachedNarrativePrompt = `You are %s.
+
+%s
+
+Rewrite the following conversation summary as a first-hand background narrative from YOUR perspective — as if you are recalling your own lived experience.
 
 Conversation summary:
 %s
@@ -38,17 +181,21 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 
 Output only the narrative content.`
 
-// generateNarrativeFromSummary generates a cached narrative from summary content only.
+// generateNarrativeFromSummary generates a cached narrative from summary content,
+// written from the perspective of the given agent.
 //
-// This is the cached narrative generation method, called after summary generation.
-// The narrative is stored in agent_narratives alongside the summary version.
-// Uses TemperatureControlled for creative but controlled output.
-func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfig, summaryContent string) string {
+// The agent's name and character settings are injected into the prompt so the
+// resulting narrative reflects that specific agent's voice and identity.
+func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfig, agent *model.Agent, summaryContent string) string {
 	if summaryContent == "" {
 		return ""
 	}
 
-	prompt := fmt.Sprintf(cachedNarrativePrompt, summaryContent)
+	identityLine := fmt.Sprintf("Character settings: %s", agent.CharacterSettings)
+	if agent.CharacterSettings == "" {
+		identityLine = ""
+	}
+	prompt := fmt.Sprintf(cachedNarrativePrompt, agent.Name, identityLine, summaryContent)
 
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 
@@ -62,44 +209,4 @@ func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfi
 
 	applogger.Info("Generated cached narrative from summary", "length", len(result))
 	return result
-}
-
-// generateNarrativeForAgent generates an agent-specific narrative from the
-// session-level summary at the given version. Idempotent — skips if a narrative
-// already exists for this (session, agent, summary_version) combination.
-func generateNarrativeForAgent(ctx context.Context, sessionID, agentID int64, llmConfig *model.LLMConfig, summaryVersion int) error {
-	existing := getAgentNarrative(sessionID, agentID, summaryVersion)
-	if existing != nil {
-		applogger.Info("Agent narrative already exists",
-			"session_id", sessionID, "agent_id", agentID, "summary_version", summaryVersion)
-		return nil
-	}
-
-	// Load the session-level summary content
-	summary := getSessionSummary(sessionID, summaryVersion)
-	if summary == nil {
-		applogger.Error("Summary not found for narrative generation",
-			"session_id", sessionID, "summary_version", summaryVersion)
-		return fmt.Errorf("summary not found for session %d version %d", sessionID, summaryVersion)
-	}
-
-	narrativeContent := generateNarrativeFromSummary(ctx, llmConfig, summary.Content)
-	if narrativeContent == "" {
-		return fmt.Errorf("narrative generation returned empty content")
-	}
-
-	narrative := model.AgentNarrative{
-		SessionID:      sessionID,
-		AgentID:        agentID,
-		SummaryVersion: summaryVersion,
-		Content:        narrativeContent,
-	}
-	if err := database.DB.Create(&narrative).Error; err != nil {
-		return fmt.Errorf("failed to save agent narrative: %w", err)
-	}
-
-	applogger.Info("Created agent narrative",
-		"session_id", sessionID, "agent_id", agentID, "summary_version", summaryVersion,
-		"length", len(narrativeContent))
-	return nil
 }

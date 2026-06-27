@@ -280,6 +280,12 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 		p.sessionID, int(p.messageCount), model.MessageStatusCompleted,
 	)
 
+	// Signal narrative generation if recent messages have accumulated enough.
+	// The narrative goroutine internally triggers summary generation if needed.
+	if len(recentMessages) >= p.windowSize {
+		comprehend.SignalNarrative(p.sessionID, p.agent.ID)
+	}
+
 	characterSettings := p.agent.CharacterSettings
 
 	entityProfileSection := chatcontext.FormatEntityProfileSection(
@@ -359,6 +365,12 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	var personStateDescription string
 	if p.personStateResult != nil {
 		personStateDescription = p.personStateResult.ToNaturalLanguage(p.userName)
+	}
+
+	// Signal narrative generation if recent messages have accumulated enough.
+	// The narrative goroutine internally triggers summary generation if needed.
+	if len(contextResult.RecentMessages) >= p.windowSize {
+		comprehend.SignalNarrative(p.sessionID, p.agent.ID)
 	}
 
 	// Calculate message sequence numbers for metadata

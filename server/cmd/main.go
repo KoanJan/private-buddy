@@ -52,6 +52,7 @@ func main() {
 
 	config.Init()
 	logger.Init()
+	applogger.Info("Private Buddy Server config initialized", "config", config.Get())
 
 	applogger.Info("Starting Private Buddy Server")
 

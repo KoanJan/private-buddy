@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.21] - 2026-06-27
+
+### Changed
+- **Context Compression Architecture**: replaced scattered `MaybeTriggerSummary` trigger points with a decoupled signal-goroutine system — chat emits `SignalNarrative` only, while dedicated per-session summary and per-agent narrative managers independently decide when to generate via dual thresholds (message count + token estimate); summary generation simplified to zero-recursion range-based function; narrative prompt now injects agent name and character settings for authentic first-person voice
+- **Summary Window Default**: raised from 5 to 50 messages to reduce unnecessary compression on short conversations
+
+### Added
+- **Cancellable Background Tasks**: summary and narrative goroutines tracked with cancellable contexts, enabling safe abort on session/agent deletion without orphaned database writes
+- **Identifier Preservation Protocol**: agent guided via `write_notes` tool description and system prompt to record non-filesystem-recoverable identifiers (API IDs, UUIDs, tokens) in notes, preventing permanent loss across iteration window slides
+
+### Removed
+- **Recursive Summary Generation**: eliminated the recursive baseline-chasing logic that created misaligned version chains; baseline now uses the latest existing summary directly
+
+
 ## [0.0.20] - 2026-06-25
 
 ### Added

@@ -172,10 +172,6 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						Update("last_read_message_id", payload.MessageID).Error; err != nil {
 						applogger.Warn("failed to advance last_read_message_id on new message event", "error", err)
 					}
-					// Trigger summary generation for new user messages.
-					// Only the runtime layer — not the API handler — initiates
-					// background tasks to keep layer boundaries clean.
-					comprehend.MaybeTriggerSummary(ctx, event.SessionID, r.agentID)
 				}
 
 			case eventqueue.EventTypeScheduled:

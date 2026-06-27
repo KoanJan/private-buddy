@@ -7,7 +7,6 @@ import (
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/memory"
 )
 
@@ -19,14 +18,14 @@ func (r *agentRuntime) handleDraftCommits(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case req := <-r.draftCommitCh:
-			r.commitDraft(ctx, req)
+			r.commitDraft(req)
 		}
 	}
 }
 
 // commitDraft atomically commits a draft to the messages table.
 // This is the only path through which agent messages enter the messages table.
-func (r *agentRuntime) commitDraft(ctx context.Context, req *draftCommitRequest) {
+func (r *agentRuntime) commitDraft(req *draftCommitRequest) {
 	if req == nil {
 		applogger.Error("commitDraft called with nil commitRequest")
 		return
@@ -103,7 +102,4 @@ func (r *agentRuntime) commitDraft(ctx context.Context, req *draftCommitRequest)
 
 	// Push message event to SSE clients
 	pushMessageEvent(draft.SessionID, msg.ID, msg.Content, msg.HasInteractions)
-
-	// Trigger summary generation if needed (sender-agnostic, based on message count)
-	comprehend.MaybeTriggerSummary(ctx, draft.SessionID, r.agentID)
 }

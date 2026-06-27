@@ -12,6 +12,7 @@
 //   - DATA_ROOT: Root directory for all data storage (default: ../data, relative to executable)
 //   - PORT: Server listen port (default: 8000)
 //   - SUMMARY_WINDOW_SIZE: Number of messages before triggering summary generation (default: 5)
+//   - SUMMARY_TOKEN_THRESHOLD: Token budget threshold for fallback summary trigger (default: 32000)
 //   - LOG_LEVEL: Logging level (default: INFO)
 //   - TASK_MAX_ITERATIONS: Maximum iterations for task loop (default: 50)
 //   - WORKSPACE_ROOT: Root directory for task workspace files (default: DATA_ROOT/workspace)
@@ -32,6 +33,7 @@ var globalSettings *Settings
 type Settings struct {
 	DataRoot                string // Root directory for all data storage
 	SummaryWindowSize       int    // Number of messages before triggering summary generation
+	SummaryTokenThreshold   int    // Token budget threshold for fallback summary trigger
 	LogLevel                string // Logging level (DEBUG, INFO, WARN, ERROR)
 	TaskMaxIterations       int    // Maximum iterations for task loop
 	WorkspaceRoot           string // Root directory for task workspace files
@@ -45,7 +47,8 @@ func Init() {
 
 	globalSettings = &Settings{
 		DataRoot:                dataRoot,
-		SummaryWindowSize:       getEnvInt("SUMMARY_WINDOW_SIZE", 5),
+		SummaryWindowSize:       getEnvInt("SUMMARY_WINDOW_SIZE", 50),
+		SummaryTokenThreshold:   getEnvInt("SUMMARY_TOKEN_THRESHOLD", 16000),
 		LogLevel:                getEnv("LOG_LEVEL", "INFO"),
 		TaskMaxIterations:       getEnvInt("TASK_MAX_ITERATIONS", 50),
 		WorkspaceRoot:           expandHome(getEnv("WORKSPACE_ROOT", "")),

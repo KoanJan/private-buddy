@@ -160,6 +160,15 @@ func (cm *ContextManager) buildFullSystemPrompt(visibleIterations, invisibleIter
 		"- Include file references when relevant",
 		"- Use conflicts_with when correcting earlier decisions",
 		"- Write self-contained entries (future LLM calls have no memory)",
+		// Critical Identifiers: guide the agent to preserve identifiers that
+		// cannot be recovered through filesystem inspection. This is an agent
+		// behavior protocol — the system does not extract or enforce identifiers.
+		// File paths and git commit hashes are recoverable and need no recording.
+		"",
+		"[Critical Identifiers]",
+		"- If you encounter an identifier that cannot be recovered through filesystem inspection (ls, find, git log, etc.), record it explicitly in your notes.",
+		"- File paths are recoverable — you don't need to record them.",
+		"- External API response IDs, user-provided tokens, and unique session identifiers should be preserved.",
 	)
 
 	return cm.systemPrompt + strings.Join(contextParts, "\n")

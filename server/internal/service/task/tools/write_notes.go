@@ -72,7 +72,15 @@ func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
 			"Always include:\n" +
 			"- Concise, self-contained content\n" +
 			"- File references when relevant (paths relative to your working directory)\n" +
-			"- Conflict markers when correcting earlier decisions",
+			"- Conflict markers when correcting earlier decisions" +
+			"\n\n" +
+			"CRITICAL — Identifier Preservation:\n" +
+			"If you have introduced, discovered, or referenced any externally-assigned " +
+			"identifiers that cannot be recovered from the filesystem (API response IDs, " +
+			"UUIDs, tokens, hostnames, IP addresses, URLs that are not reachable from " +
+			"your workspace), you MUST record them in your notes. File paths and git " +
+			"commit hashes are recoverable through filesystem inspection and do NOT need " +
+			"explicit recording. Record identifiers concisely under a references entry.",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
