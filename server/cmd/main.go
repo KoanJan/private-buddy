@@ -18,6 +18,7 @@ import (
 	"private-buddy-server/internal/logger"
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/eventqueue"
+	"private-buddy-server/internal/service/experience"
 	"private-buddy-server/internal/service/kb"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/memory"
@@ -60,9 +61,11 @@ func main() {
 	database.AutoMigrate()
 	llm.LoadCapabilityCache()
 
-	// Initialize memory system with embedding service for event vector storage.
-	// Load the first agent's embedding config to create the service.
-	memory.Init(getEmbeddingService())
+	// Initialize the embedding service once — shared by memory and experience systems.
+	embSvc := getEmbeddingService()
+
+	// Memory system: event vectorization + daily cron
+	memory.Init(embSvc)
 	memCtx, memCancel := context.WithCancel(context.Background())
 	go memory.Start(memCtx)
 
@@ -89,6 +92,9 @@ func main() {
 			handler.PushSSEToSession(sessionID, data)
 		}
 	}
+
+	// Experience system: semantic retrieval for tasks + heartbeat-triggered reflection.
+	experience.Init(embSvc)
 
 	// Initialize the global event queue first, before runtimes subscribe to it
 	eventqueue.Init()

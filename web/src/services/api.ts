@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { logger } from '../logger';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile, SystemLLMConfig, PublicExperience, UploadedSkill } from '../types';
 
 declare global {
   interface Window {
@@ -48,27 +48,22 @@ function resolvePort(): Promise<number> {
   return portPromise;
 }
 
-function getApiBaseUrl(): string {
-  const port = resolvedPort ?? DEFAULT_PORT;
-  return `http://${SERVER_HOST}:${port}/api`;
-}
-
-function getServerBaseUrl(): string {
+// Build base URL from resolved port (or default if not yet resolved).
+function buildBaseUrl(): string {
   const port = resolvedPort ?? DEFAULT_PORT;
   return `http://${SERVER_HOST}:${port}`;
 }
 
-export const API_BASE_URL = getApiBaseUrl();
-export const SERVER_BASE_URL = getServerBaseUrl();
+// Static base URL for axios instance creation (before port resolution).
+const API_BASE_URL = `${buildBaseUrl()}/api`;
 
+// Dynamic base URLs that reflect the resolved port after IPC.
 export function getDynamicApiBaseUrl(): string {
-  const port = resolvedPort ?? DEFAULT_PORT;
-  return `http://${SERVER_HOST}:${port}/api`;
+  return `${buildBaseUrl()}/api`;
 }
 
 export function getDynamicServerBaseUrl(): string {
-  const port = resolvedPort ?? DEFAULT_PORT;
-  return `http://${SERVER_HOST}:${port}`;
+  return buildBaseUrl();
 }
 
 const api = axios.create({
@@ -217,4 +212,22 @@ export const kbApi = {
     api.post<SearchResult[]>(`/kb/${kbId}/search`, { query, top_k: topK }),
   searchMulti: (kbIds: number[], query: string, topK?: number) =>
     api.post<SearchResult[]>('/kb/search', { kb_ids: kbIds, query, top_k: topK }),
+};
+
+export const systemLLMConfigApi = {
+  get: () => api.get<SystemLLMConfig>('/public-experiences/system-llm-config'),
+  update: (data: { llm_config_id: number }) =>
+    api.put<SystemLLMConfig>('/public-experiences/system-llm-config', data),
+};
+
+export const publicExperienceApi = {
+  list: () => api.get<PublicExperience[]>('/public-experiences'),
+  get: (id: number) => api.get<PublicExperience>(`/public-experiences/${id}`),
+  delete: (id: number) => api.delete(`/public-experiences/${id}`),
+  ingest: (data: { source_name: string; raw_content: string }) =>
+    api.post<UploadedSkill>('/public-experiences/ingest', data),
+};
+
+export const uploadedSkillApi = {
+  get: (id: number) => api.get<UploadedSkill>(`/uploaded-skills/${id}`),
 };

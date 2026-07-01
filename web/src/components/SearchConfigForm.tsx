@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Switch, Button, message, Spin } from 'antd';
-import { SaveOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SaveOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { SearchConfig } from '../types';
 import { searchConfigApi } from '../services/api';
+import { logger } from '../logger';
 
 const { TextArea } = Input;
 
@@ -13,6 +14,7 @@ const SearchConfigForm: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<SearchConfig | null>(null);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -24,7 +26,9 @@ const SearchConfigForm: React.FC = () => {
       const response = await searchConfigApi.get();
       setConfig(response.data);
       form.setFieldsValue(response.data);
+      setDirty(false);
     } catch (error) {
+      logger.error('Failed to load search config:', error);
       message.error(t('searchConfig.loadError'));
     } finally {
       setLoading(false);
@@ -41,17 +45,13 @@ const SearchConfigForm: React.FC = () => {
     try {
       const response = await searchConfigApi.update(values);
       setConfig(response.data);
+      setDirty(false);
       message.success(t('searchConfig.saveSuccess'));
     } catch (error) {
+      logger.error('Failed to save search config:', error);
       message.error(t('searchConfig.saveError'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleReset = () => {
-    if (config) {
-      form.setFieldsValue(config);
     }
   };
 
@@ -70,6 +70,7 @@ const SearchConfigForm: React.FC = () => {
         layout="vertical"
         onFinish={handleSave}
         initialValues={config || undefined}
+        onValuesChange={() => setDirty(true)}
       >
         <Form.Item
           name="provider"
@@ -103,21 +104,15 @@ const SearchConfigForm: React.FC = () => {
           <Switch />
         </Form.Item>
 
-        <Form.Item>
+        <Form.Item style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 0 }}>
           <Button
             type="primary"
             htmlType="submit"
             icon={<SaveOutlined />}
             loading={saving}
-            style={{ marginRight: 8 }}
+            disabled={!dirty}
           >
             {t('common.save')}
-          </Button>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={handleReset}
-          >
-            {t('common.reset')}
           </Button>
         </Form.Item>
       </Form>

@@ -77,11 +77,9 @@ export interface SessionWithAgent extends SessionBrief {
   agent_avatar: string;
 }
 
-export const SESSION_STATUS_STREAMING = 0;
-export const SESSION_STATUS_IDLE = 1;
-
-export const MESSAGE_STATUS_STREAMING = 0;
 export const MESSAGE_STATUS_COMPLETED = 1;
+
+export const TEMP_SESSION_ID = -1;
 
 export const INTERACTION_TYPE_REQUEST = 1;
 export const INTERACTION_TYPE_RESPONSE = 2;
@@ -161,4 +159,39 @@ export interface UserProfile {
   bio: string;
   created_at: string;
   updated_at: string;
+}
+
+// SystemLLMConfig represents the singleton system-level LLM configuration
+// used for host-level operations like skill ingestion.
+export interface SystemLLMConfig {
+  llm_config_id: number;
+  name: string;
+  model_id: string;
+}
+
+// PublicExperience source type constants (must match backend model.PublicExperienceSource*)
+export const PUBLIC_EXPERIENCE_SOURCE_INGESTION = 1;
+export const PUBLIC_EXPERIENCE_SOURCE_SHARE = 2;
+
+export interface PublicExperience {
+  id: number;
+  title: string;
+  description: string;
+  when_to_use: string;
+  guidelines: string;
+  pitfalls: string;
+  procedure: string;
+  source_type: number; // 1=ingestion, 2=share
+  source_id: number;    // uploaded_skills.id for ingestion, agent_experiences.id for share
+  source_fingerprint: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UploadedSkill {
+  id: number;
+  source_name: string;
+  raw_content: string;
+  status: number; // 0=pending, 1=processing, 2=completed
+  created_at: string;
 }

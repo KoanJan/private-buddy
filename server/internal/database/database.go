@@ -103,6 +103,12 @@ func AutoMigrate() {
 		&model.EntityProfile{},
 		&model.User{},
 		&model.ModelCapability{},
+		&model.AgentExperience{},
+		&model.AgentExperienceVector{},
+		&model.PublicExperience{},
+		&model.PublicExperienceVector{},
+		&model.SystemLLMConfig{},
+		&model.UploadedSkill{},
 	}
 
 	// Run structural migrations BEFORE addMissingColumns, because some
@@ -130,6 +136,9 @@ func AutoMigrate() {
 	// Drop agent_observations.survival_count column (removed — importance-based
 	// staleness gating supersedes the binary survival_count gate)
 	dropSurvivalCountColumn()
+
+	// Drop experience content column (replaced by when_to_use/guidelines/pitfalls/procedure)
+	dropExperienceContentColumn()
 
 	// Migrate enum columns from TEXT to INTEGER across all tables
 	migrateEnumColumnsToInt()
@@ -238,15 +247,55 @@ func dropSurvivalCountColumn() {
 	applogger.Info("Successfully dropped agent_observations.survival_count column")
 }
 
-// migrateEnumColumnsToInt migrates all enum columns from TEXT to INTEGER
-// across all affected tables. This enforces the project convention that
-// all enum types must use int, not string.
+// dropExperienceContentColumn removes the `content` column from the
+// agent_experiences table. This column has been replaced by four
+// dedicated fields: when_to_use, guidelines, pitfalls, procedure.
 //
-// Affected tables and columns:
-//   - participant_sessions: participant_type, role, status
-//   - messages: role
-//   - documents: status
-//   - knowledge_bases: index_type
+// Uses the standard SQLite table rebuild procedure:
+//  1. Create new table without content
+//  2. Copy data
+//  3. Drop old table
+//  4. Rename new table
+func dropExperienceContentColumn() {
+	if !DB.Migrator().HasTable(&model.AgentExperience{}) {
+		return
+	}
+	if !DB.Migrator().HasColumn(&model.AgentExperience{}, "content") {
+		return
+	}
+
+	applogger.Info("Dropping agent_experiences.content column (replaced by structured fields)")
+
+	DB.Exec(`
+		CREATE TABLE agent_experiences_new (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_id           INTEGER NOT NULL,
+			title              VARCHAR(500) NOT NULL,
+			description        TEXT NOT NULL,
+			when_to_use        TEXT NOT NULL DEFAULT '',
+			guidelines         TEXT NOT NULL DEFAULT '',
+			pitfalls           TEXT NOT NULL DEFAULT '',
+			procedure         TEXT NOT NULL DEFAULT '',
+			source             INTEGER NOT NULL DEFAULT 1,
+			source_fingerprint VARCHAR(64) NOT NULL,
+			created_at         DATETIME NOT NULL,
+			updated_at         DATETIME NOT NULL
+		)
+	`)
+	DB.Exec(`INSERT INTO agent_experiences_new (id, agent_id, title, description, when_to_use, guidelines, pitfalls, procedure, source, source_fingerprint, created_at, updated_at)
+		SELECT id, agent_id, title, description, when_to_use, guidelines, pitfalls, procedure, source, source_fingerprint, created_at, updated_at FROM agent_experiences`)
+	DB.Exec(`DROP TABLE agent_experiences`)
+	DB.Exec(`ALTER TABLE agent_experiences_new RENAME TO agent_experiences`)
+
+	DB.Exec(`CREATE INDEX idx_agent_experiences_agent_id ON agent_experiences(agent_id)`)
+	DB.Exec(`CREATE INDEX idx_agent_experiences_source_fingerprint ON agent_experiences(source_fingerprint)`)
+
+	applogger.Info("Successfully dropped agent_experiences.content column")
+}
+
+// migrateEnumColumnsToInt converts all enum columns in the database from
+// TEXT storage (deprecated) to INTEGER storage. After this migration,
+// all enum comparisons use integer constants.
 //
 // SQLite does not support ALTER COLUMN, so each table is rebuilt using
 // the standard procedure: create new → copy data → drop old → rename.

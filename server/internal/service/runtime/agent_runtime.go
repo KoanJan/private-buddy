@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"private-buddy-server/internal/database"
@@ -47,15 +48,16 @@ const (
 // The runtime runs a single goroutine event loop (for-select + eventCh + heartbeatTimer).
 // Work execution runs in separate goroutines, allowing the event loop to remain responsive.
 type agentRuntime struct {
-	activeWorks       []*work
-	agentID           int64
-	eventCh           <-chan *eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
-	draftCommitCh     chan *draftCommitRequest
-	heartbeatInterval time.Duration                              // Base heartbeat interval (adaptive)
-	idleTicks         int                                        // Consecutive idle heartbeats (for tickless backoff)
-	heartbeatTick     int                                        // Total heartbeat ticks (for check scheduling)
-	mu                sync.Mutex                                 // Protects activeWrites for external queries
-	onStatusChange    func(agentID, sessionID int64, status int) // Callback for SSE push
+	activeWorks        []*work
+	agentID            int64
+	eventCh            <-chan *eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
+	draftCommitCh      chan *draftCommitRequest
+	heartbeatInterval  time.Duration                              // Base heartbeat interval (adaptive)
+	idleTicks          int                                        // Consecutive idle heartbeats (for tickless backoff)
+	heartbeatTick      int                                        // Total heartbeat ticks (for check scheduling)
+	mu                 sync.Mutex                                 // Protects activeWrites for external queries
+	learningInProgress atomic.Bool                                // Guards against concurrent learning checks
+	onStatusChange     func(agentID, sessionID int64, status int) // Callback for SSE push
 }
 
 // ==========================================================================
@@ -213,8 +215,16 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// Decision: how should the agent respond to this event?
 			// After the cognitive order refactoring, we Comprehend first,
 			// then Decide based on the comprehension results.
-			agent := service.GetAgent(r.agentID)
-			llmConfig := service.GetLLMConfig(agent.LLMConfigID)
+			agent, err := service.GetAgent(r.agentID)
+			if err != nil {
+				applogger.Error("Failed to load agent in handleEvent", "agent_id", r.agentID, "error", err)
+				continue
+			}
+			llmConfig, err := service.GetLLMConfig(agent.LLMConfigID)
+			if err != nil {
+				applogger.Error("Failed to load LLM config in handleEvent", "agent_id", r.agentID, "llm_config_id", agent.LLMConfigID, "error", err)
+				continue
+			}
 
 			// ── Phase 1: Comprehend ──
 			// Understand the event in context: who is speaking, what do they mean,

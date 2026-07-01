@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 
@@ -17,24 +18,22 @@ func GetSession(sessionID int64) *model.Session {
 	return &session
 }
 
-// GetAgent retrieves an agent by ID. Returns nil if not found.
-func GetAgent(agentID int64) *model.Agent {
+// GetAgent retrieves an agent by ID.
+func GetAgent(agentID int64) (*model.Agent, error) {
 	var agent model.Agent
 	if err := database.DB.First(&agent, agentID).Error; err != nil {
-		applogger.Error("Agent not found", "agent_id", agentID, "error", err)
-		return nil
+		return nil, fmt.Errorf("agent %d: %w", agentID, err)
 	}
-	return &agent
+	return &agent, nil
 }
 
-// GetLLMConfig retrieves an LLM config by ID. Returns nil if not found.
-func GetLLMConfig(llmConfigID int64) *model.LLMConfig {
+// GetLLMConfig retrieves an LLM config by ID.
+func GetLLMConfig(llmConfigID int64) (*model.LLMConfig, error) {
 	var config model.LLMConfig
 	if err := database.DB.First(&config, llmConfigID).Error; err != nil {
-		applogger.Error("LLM config not found", "llm_config_id", llmConfigID, "error", err)
-		return nil
+		return nil, fmt.Errorf("llm_config %d: %w", llmConfigID, err)
 	}
-	return &config
+	return &config, nil
 }
 
 // GetSearchConfig retrieves the search configuration. Creates a default if not found.
@@ -154,6 +153,55 @@ func CreateUser(name, bio string) (*model.User, error) {
 	}
 	applogger.Info("User profile created", "name", name)
 	return &user, nil
+}
+
+// GetSystemLLMConfig returns the system-level LLM config (id=1 row).
+// Returns nil if no system LLM config has been configured.
+func GetSystemLLMConfig() *model.LLMConfig {
+	var sysCfg model.SystemLLMConfig
+	if err := database.DB.Where("id = ?", 1).First(&sysCfg).Error; err != nil {
+		applogger.Warn("System LLM config not configured, system-level LLM operations unavailable")
+		return nil
+	}
+
+	cfg, err := GetLLMConfig(sysCfg.LLMConfigID)
+	if err != nil {
+		applogger.Error("System LLM config references invalid llm_config_id",
+			"llm_config_id", sysCfg.LLMConfigID,
+			"error", err,
+		)
+		return nil
+	}
+	return cfg
+}
+
+// IsSystemLLMConfigured returns true if a system-level LLM config has been set
+// and its referenced LLM config is still valid.
+func IsSystemLLMConfigured() bool {
+	return GetSystemLLMConfig() != nil
+}
+
+// UpdateSystemLLMConfig upserts the system-level LLM config (single row, id=1).
+// llmConfigID is the ID of an existing LLM config in the llm_configs table.
+func UpdateSystemLLMConfig(llmConfigID int64) error {
+	var sysCfg model.SystemLLMConfig
+	err := database.DB.Where("id = ?", 1).First(&sysCfg).Error
+	if err != nil {
+		// Create the row if it doesn't exist
+		sysCfg = model.SystemLLMConfig{
+			LLMConfigID: llmConfigID,
+		}
+		if createErr := database.DB.Create(&sysCfg).Error; createErr != nil {
+			return createErr
+		}
+	} else {
+		sysCfg.LLMConfigID = llmConfigID
+		if updateErr := database.DB.Save(&sysCfg).Error; updateErr != nil {
+			return updateErr
+		}
+	}
+	applogger.Info("System LLM config updated", "llm_config_id", llmConfigID)
+	return nil
 }
 
 // GetUserName returns the primary user's name (id=1).

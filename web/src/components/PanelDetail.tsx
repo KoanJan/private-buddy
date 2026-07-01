@@ -3,8 +3,8 @@ import { Button } from 'antd';
 import { ArrowLeftOutlined, PlusOutlined } from '@ant-design/icons';
 
 interface PanelDetailProps {
-  title: string;
-  onBack: () => void;
+  title?: string;
+  onBack?: () => void;
   onAdd?: () => void;
   children: ReactNode;
 }
@@ -12,27 +12,31 @@ interface PanelDetailProps {
 export default function PanelDetail({ title, onBack, onAdd, children }: PanelDetailProps) {
   return (
     <div className="panel-detail">
-      <div className="panel-detail-header">
-        <div className="panel-detail-header-left">
-          <Button
-            type="text"
-            icon={<ArrowLeftOutlined />}
-            onClick={onBack}
-            style={{ color: 'var(--color-text-secondary)' }}
-          />
+      {(title || onBack) && (
+        <div className="panel-detail-header">
+          <div className="panel-detail-header-left">
+            {onBack && (
+              <Button
+                type="text"
+                icon={<ArrowLeftOutlined />}
+                onClick={onBack}
+                style={{ color: 'var(--color-text-secondary)' }}
+              />
+            )}
+          </div>
+          <span className="panel-detail-title">{title}</span>
+          <div className="panel-detail-header-right">
+            {onAdd && (
+              <Button
+                type="text"
+                icon={<PlusOutlined />}
+                onClick={onAdd}
+                style={{ color: 'var(--color-text-secondary)' }}
+              />
+            )}
+          </div>
         </div>
-        <span className="panel-detail-title">{title}</span>
-        <div className="panel-detail-header-right">
-          {onAdd && (
-            <Button
-              type="text"
-              icon={<PlusOutlined />}
-              onClick={onAdd}
-              style={{ color: 'var(--color-text-secondary)' }}
-            />
-          )}
-        </div>
-      </div>
+      )}
       <div className="panel-detail-body">
         {children}
       </div>

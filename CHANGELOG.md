@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.22] - 2026-07-01
+
+### Added
+- **Private Experience System**: heartbeat-triggered reflection automatically distills transferable lessons from task execution notes into structured agent-owned experiences (title, description, when-to-use, guidelines, pitfalls, procedure); experiences are semantically retrieved and injected into task system prompts to guide future execution
+- **Public Experience Library**: external Skill files (SKILL.md) are refined into host-agnostic experiences via LLM extraction — method skills preserve actionable advice while reference skills extract structural patterns only; agents learn from the public library through a heartbeat-triggered mechanism that evaluates long-term interaction patterns and mechanically copies relevant experiences into private storage
+- **System LLM Configuration**: singleton config table for host-level LLM operations (e.g., skill ingestion) that are not tied to any agent
+
+### Changed
+- **Big View Ring Architecture**: settings no longer squeezes the chat view — each is a full-screen view with a sliding track transition; a single animated toggle button cycles through the ring
+- **Settings Two-Pane Layout**: replaced the overview card grid with a persistent left navigation sidebar + right content panel, eliminating the overview navigation step
+- **Library Sub-view**: merged knowledge base and public experience into a unified Library entry with tab-card switching; both resources share the same navigation slot
+
+### Removed
+- **Reset Buttons**: removed meaningless reset buttons from embedding and search config forms
+
+
 ## [0.0.21] - 2026-06-27
 
 ### Changed

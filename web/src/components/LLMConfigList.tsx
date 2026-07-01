@@ -19,11 +19,12 @@ interface LLMConfigListProps {
 export default function LLMConfigList({ onSelectConfig, showCreate, onCreateClose }: LLMConfigListProps) {
   return (
     <ConfigList<LLMConfig>
-      iconType="llm"
       api={llmConfigApi}
       formFields={FORM_FIELDS}
       i18nPrefix="llmConfig"
-      displayField="model_id"
+      primaryField="model_id"
+      secondaryField="name"
+      gridClassName="list-grid-3"
       onSelectConfig={onSelectConfig}
       showCreate={showCreate}
       onCreateClose={onCreateClose}

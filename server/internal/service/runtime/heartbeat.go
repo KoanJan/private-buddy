@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 
+	"private-buddy-server/internal/service/experience"
 	"private-buddy-server/internal/service/memory"
 
 	applogger "private-buddy-server/internal/logger"
@@ -11,6 +12,8 @@ import (
 // Heartbeat check frequency constants.
 const (
 	memoryDensityCheckInterval = 6 // Every 6 heartbeat ticks
+	reflectionCheckInterval    = 1 // Every 1 heartbeat ticks
+	learningCheckInterval      = 1 // Every 30 heartbeat ticks (low frequency — learning is a long-term decision)
 )
 
 // handleHeartbeat processes a heartbeat tick for periodic maintenance.
@@ -32,6 +35,16 @@ func (r *agentRuntime) handleHeartbeat(ctx context.Context) {
 	if r.heartbeatTick%memoryDensityCheckInterval == 0 {
 		r.checkMemoryDensity(ctx)
 	}
+
+	// Reflection check (every tick)
+	if r.heartbeatTick%reflectionCheckInterval == 0 {
+		r.checkReflection(ctx)
+	}
+
+	// Learning check (every 30 ticks — low frequency, long-term decision)
+	if r.heartbeatTick%learningCheckInterval == 0 {
+		r.checkLearning(ctx)
+	}
 }
 
 // checkMemoryDensity runs memory density check: detects when enough long-term
@@ -49,4 +62,36 @@ func (r *agentRuntime) checkMemoryDensity(ctx context.Context) {
 			"agent_id", r.agentID,
 		)
 	}
+}
+
+// checkReflection scans all sessions for the agent and triggers experience
+// extraction via LLM reflection for sessions whose notes have changed since
+// the last reflection.
+func (r *agentRuntime) checkReflection(ctx context.Context) {
+	experience.CheckReflection(ctx, r.agentID)
+	applogger.Debug("reflection check completed",
+		"agent_id", r.agentID,
+	)
+}
+
+// checkLearning evaluates whether the agent should learn any public experiences
+// based on its long-term interaction patterns captured in session entity_profiles.
+//
+// Runs asynchronously — the LLM call and copy work execute in a separate goroutine
+// to avoid blocking the event loop. A learningInProgress flag prevents duplicate
+// triggers while a learning cycle is still running.
+// Triggers at low frequency (every 30 ticks) since learning is a long-term decision.
+func (r *agentRuntime) checkLearning(ctx context.Context) {
+	if !r.learningInProgress.CompareAndSwap(false, true) {
+		applogger.Debug("learning check skipped: already in progress",
+			"agent_id", r.agentID)
+		return
+	}
+	go func() {
+		defer r.learningInProgress.Store(false)
+		experience.CheckLearning(ctx, r.agentID)
+	}()
+	applogger.Debug("learning check dispatched",
+		"agent_id", r.agentID,
+	)
 }

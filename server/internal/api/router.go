@@ -111,6 +111,22 @@ func SetupRouter() *gin.Engine {
 			uploads.POST("/avatar", h.UploadAvatar)
 		}
 
+		publicExperiences := api.Group("/public-experiences")
+		{
+			publicExperiences.GET("", h.ListPublicExperiences)
+			publicExperiences.GET("/:id", h.GetPublicExperience)
+			publicExperiences.DELETE("/:id", h.DeletePublicExperience)
+			publicExperiences.POST("/ingest", middleware.RequireSystemLLM, h.IngestPublicExperience)
+			publicExperiences.POST("/search", h.SearchPublicExperiences)
+			publicExperiences.GET("/system-llm-config", h.GetSystemLLMConfigHandler)
+			publicExperiences.PUT("/system-llm-config", h.UpdateSystemLLMConfigHandler)
+		}
+
+		uploadedSkills := api.Group("/uploaded-skills")
+		{
+			uploadedSkills.GET("/:id", h.GetUploadedSkill)
+		}
+
 		kbGroup := api.Group("/kb")
 		{
 			kbGroup.POST("", middleware.RequireEmbedding, kbHandler.CreateKnowledgeBase)

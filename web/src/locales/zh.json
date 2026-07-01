@@ -114,9 +114,14 @@
     "llmConfig": "大语言模型",
     "embeddingConfig": "向量化模型",
     "agentConfig": "智能体",
-    "kbConfig": "知识库",
+    "kbConfig": "知识",
     "searchConfig": "搜索引擎",
-    "language": "语言"
+    "language": "语言",
+    "systemLLMConfig": "系统模型",
+    "publicExperience": "经验"
+  },
+  "library": {
+    "title": "Library"
   },
   "searchConfig": {
     "title": "搜索引擎",
@@ -217,5 +222,43 @@
     "message_1": "Agent 和知识库的运行需要向量化模型来处理和理解信息。",
     "message_2": "请先在设置中配置好向量化模型，然后再来。",
     "goSettings": "前往设置"
+  },
+  "systemLLMRequired": {
+    "message_1": "Skill 摄入需要系统模型来提炼内容，请先在设置中配置。"
+  },
+  "systemLLMConfig": {
+    "title": "系统模型",
+    "description": "系统模型用于执行系统级任务（如 Skill 摄入提炼），不绑定任何 Agent。若未配置，相关功能无法使用。",
+    "llmConfigId": "大语言模型",
+    "llmConfigIdPlaceholder": "请选择LLM配置",
+    "loadError": "加载配置失败",
+    "saveSuccess": "保存成功",
+    "saveError": "保存失败"
+  },
+  "publicExperience": {
+    "title": "经验库",
+    "ingest": "摄入 Skill",
+    "skillFile": "Skill 文件",
+    "skillFileRequired": "请选择 Skill 文件",
+    "uploadHint": "点击或拖拽 SKILL.md 文件到此处",
+    "preview": "预览",
+    "noData": "暂无经验库数据",
+    "loadError": "加载经验库失败",
+    "ingestSuccess": "Skill 提交成功，正在提炼中...",
+    "ingestFailed": "摄入失败",
+    "readFileError": "文件读取失败",
+    "duplicateSkill": "该 Skill 已摄入过，请勿重复操作",
+    "deleteSuccess": "删除成功",
+    "deleteFailed": "删除失败",
+    "confirmDelete": "确定要删除这条经验吗？",
+    "confirmDeleteTitle": "确认删除",
+    "sourceIngestion": "Skill 摄入",
+    "sourceShare": "Agent 分享",
+    "fieldWhenToUse": "适用场景",
+    "fieldGuidelines": "执行指引",
+    "fieldPitfalls": "常见陷阱",
+    "fieldProcedure": "操作步骤",
+    "sourceContent": "源文件内容",
+    "sourceContentUnavailable": "无法加载源文件"
   }
 }

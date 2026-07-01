@@ -447,8 +447,13 @@ func buildComprehensionContext(comprehension *comprehend.ComprehensionResult) st
 		parts = append(parts, fmt.Sprintf("Query type: %s", comprehension.QueryType))
 	}
 
-	if comprehension.PersonState != nil && comprehension.PersonState.Purpose != "" {
-		parts = append(parts, fmt.Sprintf("Inferred intent: %s", comprehension.PersonState.Purpose))
+	if comprehension.PersonState != nil {
+		if comprehension.PersonState.Purpose != "" {
+			parts = append(parts, fmt.Sprintf("Inferred intent: %s", comprehension.PersonState.Purpose))
+		}
+		if comprehension.PersonState.Situation != "" {
+			parts = append(parts, fmt.Sprintf("Situation context: %s", comprehension.PersonState.Situation))
+		}
 	}
 
 	if comprehension.NeedsWorldInteraction {

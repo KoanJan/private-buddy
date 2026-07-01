@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Button, message, Spin } from 'antd';
-import { SaveOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SaveOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { EmbeddingConfig } from '../types';
 import { embeddingConfigApi } from '../services/api';
+import { logger } from '../logger';
 
 const EmbeddingConfigForm: React.FC<{ onCreated?: () => void }> = ({ onCreated }) => {
   const { t } = useTranslation();
@@ -11,6 +12,7 @@ const EmbeddingConfigForm: React.FC<{ onCreated?: () => void }> = ({ onCreated }
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<EmbeddingConfig | null>(null);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -22,7 +24,9 @@ const EmbeddingConfigForm: React.FC<{ onCreated?: () => void }> = ({ onCreated }
       const response = await embeddingConfigApi.get();
       setConfig(response.data);
       form.setFieldsValue(response.data);
+      setDirty(false);
     } catch (error) {
+      logger.error('Failed to load embedding config:', error);
       message.error(t('embeddingConfig.loadError'));
     } finally {
       setLoading(false);
@@ -34,18 +38,14 @@ const EmbeddingConfigForm: React.FC<{ onCreated?: () => void }> = ({ onCreated }
     try {
       const response = await embeddingConfigApi.update(values);
       setConfig(response.data);
+      setDirty(false);
       message.success(t('embeddingConfig.saveSuccess'));
       onCreated?.();
     } catch (error) {
+      logger.error('Failed to save embedding config:', error);
       message.error(t('embeddingConfig.saveError'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleReset = () => {
-    if (config) {
-      form.setFieldsValue(config);
     }
   };
 
@@ -64,6 +64,7 @@ const EmbeddingConfigForm: React.FC<{ onCreated?: () => void }> = ({ onCreated }
         layout="vertical"
         onFinish={handleSave}
         initialValues={config || undefined}
+        onValuesChange={() => setDirty(true)}
       >
         <Form.Item
           name="name"
@@ -104,21 +105,15 @@ const EmbeddingConfigForm: React.FC<{ onCreated?: () => void }> = ({ onCreated }
           <Input.TextArea rows={3} placeholder={t('embeddingConfig.descriptionPlaceholder')} />
         </Form.Item>
 
-        <Form.Item>
+        <Form.Item style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 0 }}>
           <Button
             type="primary"
             htmlType="submit"
             icon={<SaveOutlined />}
             loading={saving}
-            style={{ marginRight: 8 }}
+            disabled={!dirty}
           >
             {t('common.save')}
-          </Button>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={handleReset}
-          >
-            {t('common.reset')}
           </Button>
         </Form.Item>
       </Form>

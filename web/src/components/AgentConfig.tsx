@@ -233,7 +233,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
 
   return (
     <>
-      <div className="agent-card-grid">
+      <div className="item-card-grid">
         {loading ? (
           <div className="empty-state-text">
             {t('sidebar.loading')}
@@ -246,12 +246,12 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
           agents.map((agent) => (
             <div
               key={agent.id}
-              className="agent-card agent-card-block"
+              className="item-card item-card-block"
             >
               <AgentAvatar avatar={agent.avatar} size={44} iconSize={20} borderRadius="10px" />
-              <div className="agent-card-block-name">{agent.name}</div>
-              <div className="agent-card-block-desc">{agent.description || t('agent.noDescription')}</div>
-              <div className="item-actions agent-card-block-actions">
+              <div className="item-card-block-name">{agent.name}</div>
+              <div className="item-card-block-desc">{agent.description || t('agent.noDescription')}</div>
+              <div className="item-actions item-card-block-actions">
                 <Button
                   type="text"
                   size="small"

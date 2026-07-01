@@ -6,7 +6,7 @@ import type { KnowledgeBase } from '../types';
 import { kbApi } from '../services/api';
 import { logger } from '../logger';
 import { confirmDelete } from '../utils/confirm';
-import { ConfigIcon } from './AgentAvatar';
+import ConfigIcon from './ConfigIcon';
 
 interface KnowledgeBaseListProps {
   onSelectKB?: (kb: KnowledgeBase) => void;
@@ -163,15 +163,15 @@ const KnowledgeBaseList: React.FC<KnowledgeBaseListProps> = ({ onSelectKB, showC
           kbs.map(kb => (
             <div
               key={kb.id}
-              className="agent-card"
+              className="item-card"
               style={{ cursor: onSelectKB ? 'pointer' : 'default' }}
               onClick={() => onSelectKB?.(kb)}
             >
-              <div className="agent-card-header">
+              <div className="item-card-header">
                 <ConfigIcon type="kb" />
-                <div className="agent-card-info">
-                  <div className="agent-card-name">{kb.name}</div>
-                  <div className="agent-card-desc">
+                <div className="item-card-info">
+                  <div className="item-card-name">{kb.name}</div>
+                  <div className="item-card-desc">
                     {kb.description || t('kb.noDescription')}
                     <span style={{ marginLeft: 8 }}>
                       <Tag color={STATUS_MAP[kb.index_type]?.color || 'default'} style={{ fontSize: 11 }}>

@@ -19,9 +19,12 @@
 
     --color-primary: #4f46e5;
     --color-primary-bg: #f0f5ff;
+    --color-agent: #7f00ff;
+    --color-agent-bg: #f3f0ff;
     --color-text-primary: #111827;
     --color-text-secondary: #6b7280;
     --color-text-placeholder: #9ca3af;
+    --color-text-tertiary: #d1d5db;
     --color-llm: #16a34a;
     --color-llm-bg: #f0fdf4;
     --color-embedding: #ea580c;
@@ -82,33 +85,6 @@
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.animate-fadeIn {
-  animation: fadeIn 0.25s ease-out;
-}
-
-@keyframes slideUp {
-  0% {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-  100% {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.animate-slideUp {
-  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
 }
 
 .app-container {
@@ -199,64 +175,150 @@
   gap: 0;
 }
 
+/* Big view slide layout: a fixed viewport clips a wider track that holds
+   all big views side by side. The track slides left on each switch; after
+   the slide, panel order is silently reset so the next switch also slides
+   left (one-directional). Both views stay mounted to preserve state. */
+.app-bigview-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.app-bigview-track {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+.app-bigview-chat,
+.app-bigview-settings {
+  flex: 0 0 100%;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Settings big view: two-pane layout. .app-bigview-settings is already a flex
+   row (flex 0 0 100%, display:flex); the sidebar and content are its two
+   children. The old max-width:880px centering is dropped — the left nav fills
+   the height and the right pane uses the full remaining width (forms inside
+   can self-limit width as needed). */
+
 .app-chat-area-wrapper .resizable-card {
   border-radius: 12px;
 }
 
-.panel-overview {
-  padding: 24px 20px;
+/* Left navigation content: lives inside the sidebar ResizableCard's white
+   card (the card provides the white background, radius, and shadow; the gap
+   between the two cards comes from the card wrapper's own padding). Takes
+   the card's full height and scrolls if the nav overflows. */
+.settings-sidebar {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  overflow-y: auto;
 }
 
-.panel-overview-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: 16px;
-}
-
-.panel-card-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.panel-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 20px 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  background-color: #fafafa;
-}
-
-.panel-card:hover {
-  border-color: #d1d5db;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  background-color: white;
-}
-
-.panel-card-label {
+.settings-sidebar-title {
+  padding: 20px 20px 12px;
   font-size: 13px;
-  font-weight: 500;
-  color: #374151;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.panel-card-disabled {
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px 8px;
+  gap: 2px;
+}
+
+/* Each nav item is a button reset to a row: small icon + label. Active item
+   gets a subtle background; disabled items (embedding not ready) are dimmed. */
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.settings-nav-item:hover:not(.active):not(:disabled) {
+  background-color: #f5f5f5;
+}
+
+.settings-nav-item.active {
+  background-color: #ececec;
+  font-weight: 600;
+}
+
+.settings-nav-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.panel-card-disabled:hover {
-  border-color: #e5e7eb;
-  box-shadow: none;
-  background-color: #fafafa;
+/* Library sub-view tab selector: small card-style buttons in a 6-column
+   grid so each tab reads as a self-contained choice rather than a row of
+   inline nav items. Each card carries a compact ConfigIcon above a label,
+   similar to .item-card-block but smaller. */
+.library-tab-cards {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.library-tab-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 12px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: white;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.library-tab-card:hover {
+  border-color: #d1d5db;
+  background: #f9fafb;
+}
+
+.library-tab-card.active {
+  border-color: #b0b0b0;
+  background: #f5f5f5;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.settings-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lang-options {
@@ -301,8 +363,9 @@
 .panel-detail-header {
   display: flex;
   align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 16px 20px 12px;
+  margin: 0 16px 16px;
+  border-bottom: 1px solid #f0f0f0;
   flex-shrink: 0;
 }
 
@@ -329,30 +392,6 @@
   flex: 1;
   overflow-y: scroll;
   padding: 16px 20px;
-}
-
-.chat-container {
-  max-width: 800px;
-  margin: 0 auto;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.chat-header {
-  background-color: white;
-  border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  padding: 20px;
-  margin-bottom: 16px;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-}
-
-.chat-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--color-text-primary);
 }
 
 .agent-status-bar {
@@ -665,7 +704,7 @@
   visibility: visible;
 }
 
-.agent-card {
+.item-card {
   background-color: white;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -674,13 +713,92 @@
   transition: all 0.2s;
 }
 
-.agent-card-grid {
+.item-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+/* Two-column grid for row-style .item-card lists (LLM configs, public
+   experiences). Overrides .item-card's default margin-bottom since the
+   grid's gap handles spacing. */
+.list-grid-2 {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 
-.agent-card-block {
+.list-grid-2 .item-card {
+  margin-bottom: 0;
+  /* Grid items default to min-width: auto, which means they can't shrink below
+     the width of their widest non-wrappable content. That blows the 1fr track
+     out and the card overflows the container. Force min-width: 0 so the item
+     honors the track width and lets inner text wrap/clamp. */
+  min-width: 0;
+}
+
+/* Three-column grid for compact row-style cards (LLM configs). Each card is
+   fixed-height with two single-line fields (primary on top, secondary below);
+   both lines nowrap with ellipsis, and the secondary line carries a native
+   title so hovering reveals its full content. The action buttons occupy their
+   own full-width row at the bottom — mirroring .item-card-block's treatment
+   — instead of sitting to the right of the text, so the card reads symmetric
+   left/right rather than text-left + buttons-right. */
+.list-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.list-grid-3 .item-card {
+  margin-bottom: 0;
+  min-width: 0;
+  height: 84px;
+  padding: 10px 16px;
+}
+
+/* Stack the text block above the actions row (column instead of row) so the
+   actions get their own line at the bottom. */
+.list-grid-3 .item-card-header {
+  height: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+/* Text block takes the remaining height, pushing the actions row to the
+   bottom. */
+.list-grid-3 .item-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-grid-3 .item-card-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  margin-bottom: 2px;
+}
+
+/* Override .item-card-desc's default 2-line line-clamp to a single
+   ellipsis line so the card stays exactly two text lines tall. */
+.list-grid-3 .item-card-desc {
+  display: block;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Action buttons occupy their own row at the card bottom, right-aligned so
+   they line up with the card's right edge. */
+.list-grid-3 .item-actions {
+  justify-content: flex-end;
+}
+
+.item-card-block {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -689,7 +807,7 @@
   margin-bottom: 0;
 }
 
-.agent-card-block-name {
+.item-card-block-name {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-primary);
@@ -700,7 +818,7 @@
   max-width: 100%;
 }
 
-.agent-card-block-desc {
+.item-card-block-desc {
   font-size: 12px;
   color: var(--color-text-placeholder);
   overflow: hidden;
@@ -711,50 +829,50 @@
   margin-bottom: 8px;
 }
 
-.agent-card-block-actions {
+.item-card-block-actions {
   display: flex;
   gap: 4px;
   visibility: hidden;
 }
 
-.agent-card-block:hover .agent-card-block-actions {
+.item-card-block:hover .item-card-block-actions {
   visibility: visible;
 }
 
-.agent-card:hover {
+.item-card:hover {
   border-color: #d1d5db;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.agent-card:hover .item-actions {
+.item-card:hover .item-actions {
   visibility: visible;
 }
 
-.agent-card .item-actions {
+.item-card .item-actions {
   display: flex;
   gap: 4px;
   visibility: hidden;
 }
 
-.agent-card-header {
+.item-card-header {
   display: flex;
   align-items: flex-start;
   gap: 12px;
 }
 
-.agent-card-info {
+.item-card-info {
   flex: 1;
   min-width: 0;
 }
 
-.agent-card-name {
+.item-card-name {
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text-primary);
   margin-bottom: 4px;
 }
 
-.agent-card-desc {
+.item-card-desc {
   font-size: 13px;
   color: var(--color-text-secondary);
   overflow: hidden;
@@ -768,20 +886,6 @@
   background-color: rgba(17, 24, 39, 0.05);
   color: var(--color-text-primary);
   font-weight: 500;
-}
-
-.session-title {
-  font-size: 14px;
-  color: #374151;
-  margin-bottom: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-time {
-  font-size: 12px;
-  color: #9ca3af;
 }
 
 .empty-state {
@@ -810,50 +914,9 @@
   color: var(--color-text-placeholder);
 }
 
-.typing-indicator {
-  display: flex;
-  gap: 4px;
-  padding: 8px 12px;
-}
-
-.typing-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: var(--color-text-placeholder);
-  animation: typing 1.4s infinite ease-in-out;
-}
-
-.typing-dot:nth-child(1) {
-  animation-delay: 0s;
-}
-
-.typing-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.typing-dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes typing {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    opacity: 0.5;
-  }
-  30% {
-    transform: translateY(-10px);
-    opacity: 1;
-  }
-}
-
 @media (max-width: 768px) {
   .app-sidebar-wrapper {
     --resizable-default-width: 240px;
-  }
-  
-  .message-bubble {
-    max-width: 85%;
   }
 }
 
@@ -924,18 +987,6 @@
   text-align: center;
   padding: 40px;
   color: var(--color-text-placeholder);
-}
-
-.text-secondary {
-  color: var(--color-text-secondary);
-}
-
-.text-placeholder {
-  color: var(--color-text-placeholder);
-}
-
-.text-active {
-  color: var(--color-active);
 }
 
 .kb-detail {

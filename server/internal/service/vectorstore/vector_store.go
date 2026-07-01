@@ -17,6 +17,7 @@ import (
 	applogger "private-buddy-server/internal/logger"
 
 	_ "github.com/glebarez/go-sqlite/compat"
+	"github.com/viterin/vek/vek32"
 )
 
 // VectorStoreService manages vector storage operations for chat sessions.
@@ -218,7 +219,7 @@ func (vss *VectorStoreService) Search(ctx context.Context, sessionID int64, quer
 		}
 
 		storedEmbedding := BlobToFloat32Slice(blob)
-		score := cosineSimilarity(queryEmbedding, storedEmbedding)
+		score := CosineSimilarity(queryEmbedding, storedEmbedding)
 		candidates = append(candidates, candidate{
 			MessageID: msgID,
 			Role:      role,
@@ -264,32 +265,9 @@ func (vss *VectorStoreService) DeleteSession(sessionID int64) error {
 	return err
 }
 
-// cosineSimilarity computes the cosine similarity between two vectors.
-// Cosine similarity measures the angle between two vectors, with values
-// ranging from -1 (opposite) to 1 (identical direction).
-//
-// Formula: cos(a, b) = (a · b) / (||a|| * ||b||)
-// where a · b is the dot product and ||a|| is the Euclidean norm.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-
-	var dotProduct, normA, normB float64
-
-	// Compute dot product and norms in a single pass
-	for i := range a {
-		dotProduct += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-
-	// Handle zero vectors to avoid division by zero
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
+// CosineSimilarity computes cosine similarity between two float32 vectors.
+func CosineSimilarity(a, b []float32) float64 {
+	return float64(vek32.CosineSimilarity(a, b))
 }
 
 // Float32SliceToBlob converts a float32 slice to a binary blob for SQLite storage.

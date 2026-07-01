@@ -325,15 +325,15 @@ func (w *work) loadChatDependencies() (*model.Session, *model.Agent, *model.LLMC
 		return nil, nil, nil
 	}
 
-	agent := service.GetAgent(session.AgentID)
-	if agent == nil {
-		applogger.Error("Agent not found", "agent_id", session.AgentID)
+	agent, err := service.GetAgent(session.AgentID)
+	if err != nil {
+		applogger.Error("Failed to load agent", "agent_id", session.AgentID, "error", err)
 		return session, nil, nil
 	}
 
-	llmConfig := service.GetLLMConfig(agent.LLMConfigID)
-	if llmConfig == nil {
-		applogger.Error("LLM config not found", "config_id", agent.LLMConfigID)
+	llmConfig, err := service.GetLLMConfig(agent.LLMConfigID)
+	if err != nil {
+		applogger.Error("Failed to load LLM config", "config_id", agent.LLMConfigID, "error", err)
 		return session, agent, nil
 	}
 

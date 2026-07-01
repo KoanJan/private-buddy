@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Upload, Tag, message, Empty } from 'antd';
-import { UploadOutlined, DeleteOutlined, FileTextOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { UploadOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { KnowledgeBase, Document } from '../types';
 import { DOC_STATUS_FAILED, DOC_STATUS_DELETED } from '../types';
@@ -15,7 +15,6 @@ import { isAllowedFileExtension } from '../constants/fileTypes';
  */
 interface KnowledgeBaseDetailProps {
   kb: KnowledgeBase;
-  onBack: () => void;
 }
 
 /**
@@ -45,7 +44,7 @@ function formatFileSize(bytes: number): string {
  * KnowledgeBaseDetail component displays the detail view of a knowledge base.
  * Shows document list, upload functionality, and document management actions.
  */
-const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ kb, onBack }) => {
+const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ kb }) => {
   const { t } = useTranslation();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
@@ -123,12 +122,6 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ kb, onBack })
   return (
     <div className="kb-detail">
       <div className="kb-detail-header">
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={onBack}
-          style={{ color: 'var(--color-text-secondary)' }}
-        />
         <div className="kb-detail-title">{kb.name}</div>
       </div>
 

@@ -288,7 +288,7 @@ func Search(ctx context.Context, agentID int64, query string, k int) ([]memoryRe
 		}
 
 		// Cosine similarity
-		similarity := cosineSimilarity64(queryEmbedding, storedEmbedding)
+		similarity := vectorstore.CosineSimilarity(queryEmbedding, storedEmbedding)
 
 		// Recency: 1 / (1 + days_since_last_access)
 		daysSince := time.Since(obs.LastAccessedAt).Hours() / 24

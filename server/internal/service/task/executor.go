@@ -20,13 +20,18 @@ package task
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service/experience"
 	"private-buddy-server/internal/service/llm"
 	taskcontext "private-buddy-server/internal/service/task/context"
 	"private-buddy-server/internal/service/task/tools"
@@ -98,7 +103,7 @@ func RunTask(params RunTaskParams) *TaskResult {
 
 	applogger.Info("RunTask: starting with Guidance",
 		"session_id", params.SessionID,
-		"guidance", truncateString(params.Guidance, 100),
+		"guidance", params.Guidance,
 	)
 
 	// Load search config for web search tool
@@ -122,12 +127,10 @@ func RunTask(params RunTaskParams) *TaskResult {
 	})
 }
 
-// truncateString truncates a string to maxLen for logging.
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen]
+// sha256Hex returns the hex-encoded SHA-256 hash of s.
+func sha256Hex(s string) string {
+	hash := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(hash[:])
 }
 
 // TaskParams contains all parameters needed for task execution.
@@ -171,7 +174,16 @@ func Execute(params TaskParams) *TaskResult {
 	writeNotesTool := tools.NewWriteNotesTool(params.SessionID, workspaceRoot, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	systemPrompt := buildSystemPrompt(params.SessionID, params.Guidance)
+	// Semantic retrieval of relevant private experiences for this task
+	expResults, err := experience.SearchExperiences(params.Ctx, params.AgentID, params.TaskRequirement, experienceRetrievalTopN, experienceRetrievalMinScore)
+	if err != nil {
+		applogger.Warn("Experience retrieval failed, proceeding without experiences",
+			"agent_id", params.AgentID,
+			"error", err,
+		)
+	}
+
+	systemPrompt := buildSystemPrompt(params.SessionID, params.Guidance, expResults)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
@@ -206,6 +218,15 @@ func Execute(params TaskParams) *TaskResult {
 	loopResult := taskLoop.Run(params.Ctx)
 
 	finalNotes := writeNotesTool.ReadNotes()
+
+	// Write notes fingerprint for reflection dedup
+	if finalNotes != "" {
+		fp := sha256Hex(finalNotes)
+		fpFile := filepath.Join(workspace, ".meta", "fingerprint.txt")
+		if err := os.WriteFile(fpFile, []byte(fp), 0644); err != nil {
+			applogger.Warn("failed to write notes fingerprint", "workspace", workspace, "error", err)
+		}
+	}
 
 	result := &TaskResult{
 		Workspace: workspace,
@@ -242,8 +263,8 @@ func Execute(params TaskParams) *TaskResult {
 
 // buildSystemPrompt constructs the system prompt for the task loop.
 // Includes basic rules, available tools, working directory, delivery guidance,
-// and the execution directive (Guidance) from the Decide phase.
-func buildSystemPrompt(sessionID int64, guidance string) string {
+// relevant past experiences, and the execution directive (Guidance) from the Decide phase.
+func buildSystemPrompt(sessionID int64, guidance string, experiences []experience.SearchResult) string {
 	sessionDir := getSessionWorkspace(sessionID)
 	outputDir := getSessionOutputDir(sessionID)
 	hasWS := hasWebSearch()
@@ -292,6 +313,11 @@ func buildSystemPrompt(sessionID int64, guidance string) string {
 		"- Never fabricate or guess file paths — verify with `pwd` or `ls` if needed",
 		"- If something was partially completed, clearly state what's done and what's remaining",
 	)
+
+	// Inject past experiences before the execution directive
+	if expSection := experience.FormatForSystemPrompt(experiences); expSection != "" {
+		parts = append(parts, "", expSection)
+	}
 
 	// Inject Guidance as a self-directive in the system prompt.
 	// This is the execution intent from the Decide phase — the agent's

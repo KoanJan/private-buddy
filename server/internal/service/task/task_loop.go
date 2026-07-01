@@ -21,6 +21,14 @@ import (
 // defaultMaxIterations is the default maximum number of ReAct loop iterations.
 const defaultMaxIterations = 90
 
+// experienceRetrievalTopN and experienceRetrievalMinScore configure
+// how many past experiences are retrieved and the minimum cosine similarity
+// threshold. Analogous to knowledge-base retrieval parameters.
+const (
+	experienceRetrievalTopN     = 3
+	experienceRetrievalMinScore = 0.4
+)
+
 // TaskLoop implements the ReAct-style task loop for autonomous task execution.
 //
 // The loop iterates:
@@ -313,8 +321,8 @@ func (tl *TaskLoop) observeNewGuidance(iteration int) {
 				"session_id", tl.sessionID,
 				"work_id", tl.workID,
 				"iteration", iteration,
-				"guidance", truncateString(directive.Guidance, 100),
-				"reason", truncateString(directive.Reason, 100),
+				"guidance", directive.Guidance,
+				"reason", directive.Reason,
 			)
 
 			// 1. Write to interactions: this is a cognitive event that changes
@@ -560,17 +568,8 @@ This will help you continue work if changes are requested later.`
 // invokeLLM calls the LLM with the current messages and all registered tools.
 // Converts internal message format and binds tool schemas.
 func (tl *TaskLoop) invokeLLM(ctx context.Context, messages []llm.Message) (llm.ToolResponse, error) {
-	msgSummary := make([]map[string]interface{}, 0, len(messages))
-	for _, m := range messages {
-		msgSummary = append(msgSummary, map[string]interface{}{
-			"role":        m.Role,
-			"content_len": len(m.Content),
-			"tool_calls":  len(m.ToolCalls),
-		})
-	}
 	applogger.Debug("TaskLoop invoking LLM",
 		"message_count", len(messages),
-		"detail", fmt.Sprintf("%v", msgSummary),
 	)
 
 	toolDefs := make([]llm.FunctionDefinition, 0, len(tl.toolRegistry))

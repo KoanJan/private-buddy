@@ -96,7 +96,7 @@ func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
 	// Step 2: check summary at target version
 	targetSummary := getSessionSummary(sessionID, targetVersion)
 	if targetSummary == nil {
-		SignalSummary(sessionID, agentID)
+		SignalSummary(sessionID)
 		return
 	}
 

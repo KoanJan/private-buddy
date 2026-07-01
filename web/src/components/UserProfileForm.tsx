@@ -4,6 +4,7 @@ import { SaveOutlined, ArrowRightOutlined, ArrowLeftOutlined } from '@ant-design
 import { useTranslation } from 'react-i18next';
 import type { UserProfile } from '../types';
 import { userProfileApi } from '../services/api';
+import { logger } from '../logger';
 
 const UserProfileForm: React.FC<{ onCreated?: () => void; welcome?: boolean }> = ({ onCreated, welcome }) => {
   const { t } = useTranslation();
@@ -14,6 +15,7 @@ const UserProfileForm: React.FC<{ onCreated?: () => void; welcome?: boolean }> =
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [step, setStep] = useState(1);
   const [enteredName, setEnteredName] = useState('');
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     // In welcome mode, App.tsx already confirmed no profile exists — skip redundant fetch.
@@ -32,10 +34,12 @@ const UserProfileForm: React.FC<{ onCreated?: () => void; welcome?: boolean }> =
       if (response.data.id) {
         setProfile(response.data);
         form.setFieldsValue(response.data);
+        setDirty(false);
       } else {
         setProfile(null);
       }
-    } catch (error: any) {
+    } catch (error) {
+      logger.error('Failed to load user profile:', error);
       message.error(t('userProfile.loadError'));
     } finally {
       setLoading(false);
@@ -46,16 +50,18 @@ const UserProfileForm: React.FC<{ onCreated?: () => void; welcome?: boolean }> =
     setSaving(true);
     try {
       const response = await userProfileApi.upsert({ name, bio: bio || '' });
-      const data = response.data as any;
+      const data = response.data;
       if (data.id) {
         setProfile(data);
+        setDirty(false);
         onCreated?.();
         message.success(t('userProfile.saveSuccess'));
       } else {
-        message.error(data.detail || t('userProfile.saveError'));
+        message.error((data as { detail?: string }).detail || t('userProfile.saveError'));
       }
-    } catch (error: any) {
-      const detail = error?.response?.data?.detail;
+    } catch (error) {
+      logger.error('Failed to save user profile:', error);
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       if (detail) {
         message.error(detail);
       } else {
@@ -226,6 +232,7 @@ const UserProfileForm: React.FC<{ onCreated?: () => void; welcome?: boolean }> =
         layout="vertical"
         onFinish={(values) => handleSave(profile?.name || values.name, values.bio)}
         initialValues={profile ? profile : { name: '', bio: '' }}
+        onValuesChange={() => setDirty(true)}
       >
         {isCreated ? (
           <div style={{ marginBottom: 24 }}>
@@ -256,12 +263,13 @@ const UserProfileForm: React.FC<{ onCreated?: () => void; welcome?: boolean }> =
           />
         </Form.Item>
 
-        <Form.Item>
+        <Form.Item style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 0 }}>
           <Button
             type="primary"
             htmlType="submit"
             icon={<SaveOutlined />}
             loading={saving}
+            disabled={!dirty}
           >
             {t('common.save')}
           </Button>

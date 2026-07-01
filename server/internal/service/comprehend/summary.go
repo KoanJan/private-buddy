@@ -30,7 +30,7 @@ var sm = &summaryManager{
 
 // SignalSummary signals that the session may need summary generation.
 // If a goroutine is already running for this session, the call is a no-op.
-func SignalSummary(sessionID, agentID int64) {
+func SignalSummary(sessionID int64) {
 	sm.mu.Lock()
 	if _, ok := sm.running[sessionID]; ok {
 		sm.mu.Unlock()
@@ -40,7 +40,7 @@ func SignalSummary(sessionID, agentID int64) {
 	sm.running[sessionID] = cancel
 	sm.mu.Unlock()
 
-	go sm.run(ctx, sessionID, agentID)
+	go sm.run(ctx, sessionID)
 }
 
 // CancelSummary cancels any running summary goroutine for the session.
@@ -63,7 +63,7 @@ func (sm *summaryManager) clearRunning(sessionID int64) {
 }
 
 // run performs a single summary generation cycle for the session.
-func (sm *summaryManager) run(ctx context.Context, sessionID, agentID int64) {
+func (sm *summaryManager) run(ctx context.Context, sessionID int64) {
 	defer sm.clearRunning(sessionID)
 
 	// Check cancellation before any work
@@ -71,15 +71,9 @@ func (sm *summaryManager) run(ctx context.Context, sessionID, agentID int64) {
 		return
 	}
 
-	// Load agent and LLM configuration
-	var agent model.Agent
-	if err := database.DB.First(&agent, agentID).Error; err != nil {
-		applogger.Error("SignalSummary: agent not found", "agent_id", agentID, "error", err)
-		return
-	}
-	var llmConfig model.LLMConfig
-	if err := database.DB.First(&llmConfig, agent.LLMConfigID).Error; err != nil {
-		applogger.Error("SignalSummary: LLM config not found", "config_id", agent.LLMConfigID, "error", err)
+	llmConfig := service.GetSystemLLMConfig()
+	if llmConfig == nil {
+		applogger.Error("SignalSummary: system LLM not configured")
 		return
 	}
 
@@ -105,7 +99,7 @@ func (sm *summaryManager) run(ctx context.Context, sessionID, agentID int64) {
 		"msg_count", msgCount, "token_count", tokenCount,
 	)
 
-	if err := generateSummaryRange(ctx, sessionID, &llmConfig, startSeq, endSeq); err != nil {
+	if err := generateSummaryRange(ctx, sessionID, llmConfig, startSeq, endSeq); err != nil {
 		applogger.Error("SignalSummary: summary generation failed",
 			"session_id", sessionID, "error", err)
 	}

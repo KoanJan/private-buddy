@@ -9,7 +9,7 @@ import AgentStatusBar from './AgentStatusBar';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message, Session, Agent, SessionAgentStatus } from '../types';
-import { HAS_INTERACTIONS_NONE, MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING } from '../types';
+import { HAS_INTERACTIONS_NONE, MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING, TEMP_SESSION_ID } from '../types';
 import { messageApi, agentApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
 import { logger } from '../logger';
 
@@ -60,7 +60,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const skipLoadRef = useRef<boolean>(false);
   const loadMessagesRef = useRef<() => void>(() => {});
 
-  const isTempSession = session?.id === -1;
+  const isTempSession = session?.id === TEMP_SESSION_ID;
 
   // Load session agents with their runtime status
   useEffect(() => {
@@ -348,7 +348,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           session_id: newSessionId,
           role: MESSAGE_ROLE_USER,
           content: inputValue,
-          status: 1,
+          status: MESSAGE_STATUS_COMPLETED,
           has_interactions: HAS_INTERACTIONS_NONE,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -390,7 +390,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           connectToStream(session.id);
         }
       }
-    } catch (error: any) {
+    } catch (error) {
       logger.error('Failed to send message:', error);
       message.error(t('messages.sendError'));
     }

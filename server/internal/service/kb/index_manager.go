@@ -365,7 +365,7 @@ func (m *indexManager) searchHNSW(query []float32, topK int) ([]searchCandidate,
 		vec := vectorstore.BlobToFloat32Slice(blob)
 		results = append(results, searchCandidate{
 			ChunkID: n.Key,
-			Score:   cosineSimilarity(query, vec),
+			Score:   vectorstore.CosineSimilarity(query, vec),
 		})
 	}
 
@@ -385,7 +385,7 @@ func (m *indexManager) searchFlat(query []float32, topK int) ([]searchCandidate,
 
 	scores := make([]scored, 0, len(entries))
 	for _, e := range entries {
-		sim := cosineSimilarity(query, e.Embedding)
+		sim := vectorstore.CosineSimilarity(query, e.Embedding)
 		scores = append(scores, scored{chunkID: uint64(e.ChunkID), score: sim})
 	}
 
@@ -530,23 +530,6 @@ func safeAddToGraph(sg *hnsw.SavedGraph[uint64], chunkID uint64, embedding []flo
 type searchCandidate struct {
 	ChunkID uint64
 	Score   float64
-}
-
-// cosineSimilarity computes cosine similarity between two float32 vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 // saveGraph persists the HNSW graph to disk atomically.

@@ -24,13 +24,4 @@ export function isAllowedFileExtension(fileName: string): boolean {
   return ALLOWED_FILE_EXTENSIONS.some(ext => lowerFileName.endsWith(ext));
 }
 
-/**
- * Gets the file extension from a file name.
- * @param fileName - The file name
- * @returns The file extension in lowercase (e.g., '.txt')
- */
-export function getFileExtension(fileName: string): string {
-  const lastDotIndex = fileName.lastIndexOf('.');
-  if (lastDotIndex === -1) return '';
-  return fileName.substring(lastDotIndex).toLowerCase();
-}
+

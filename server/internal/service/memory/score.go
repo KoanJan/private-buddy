@@ -241,7 +241,7 @@ func propagateSemantic(
 			continue
 		}
 
-		similarity := cosineSimilarity64(params.HitEmbedding, storedEmbedding)
+		similarity := vectorstore.CosineSimilarity(params.HitEmbedding, storedEmbedding)
 		if similarity > propagateSimilarityThreshold {
 			applyPropagationToObservation(oc.ObservationID, params.DeltaBase*propagateSimilar)
 			processed[oc.ObservationID] = true
@@ -270,25 +270,4 @@ func applyPropagationToObservation(obsID int64, delta float64) {
 		applogger.Error("Failed to save propagated observation",
 			"obs_id", obsID, "error", err)
 	}
-}
-
-// cosineSimilarity64 computes cosine similarity between two float32 vectors,
-// returning a float64 result. Uses float64 internally for precision.
-func cosineSimilarity64(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-
-	var dotProduct, normA, normB float64
-	for i := range a {
-		dotProduct += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }

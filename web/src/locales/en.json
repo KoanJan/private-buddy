@@ -114,9 +114,14 @@
     "llmConfig": "LLM",
     "embeddingConfig": "Embedding",
     "agentConfig": "Agent",
-    "kbConfig": "Knowledge Base",
+    "kbConfig": "Knowledge",
     "searchConfig": "Search Engine",
-    "language": "Language"
+    "language": "Language",
+    "systemLLMConfig": "System LLM",
+    "publicExperience": "Experience"
+  },
+  "library": {
+    "title": "Library"
   },
   "searchConfig": {
     "title": "Search Engine",
@@ -217,5 +222,43 @@
     "message_1": "Agents and knowledge bases need an embedding model to process and understand information.",
     "message_2": "Please configure the embedding model in settings before proceeding.",
     "goSettings": "Go to settings"
+  },
+  "systemLLMRequired": {
+    "message_1": "Skill ingestion needs a system LLM to refine content. Please configure it in settings first."
+  },
+  "systemLLMConfig": {
+    "title": "System LLM",
+    "description": "The system LLM powers host-level operations (e.g., skill ingestion). It is not tied to any agent. Related features are unavailable without it.",
+    "llmConfigId": "LLM",
+    "llmConfigIdPlaceholder": "Please select LLM config",
+    "loadError": "Failed to load config",
+    "saveSuccess": "Saved successfully",
+    "saveError": "Failed to save"
+  },
+  "publicExperience": {
+    "title": "Experience Library",
+    "ingest": "Ingest Skill",
+    "skillFile": "Skill File",
+    "skillFileRequired": "Please select a Skill file",
+    "uploadHint": "Click or drag a SKILL.md file here",
+    "preview": "Preview",
+    "noData": "No experiences",
+    "loadError": "Failed to load experiences",
+    "ingestSuccess": "Skill submitted and refined successfully",
+    "ingestFailed": "Ingest failed",
+    "readFileError": "Failed to read file",
+    "duplicateSkill": "This skill has already been ingested",
+    "deleteSuccess": "Deleted successfully",
+    "deleteFailed": "Failed to delete",
+    "confirmDelete": "Are you sure you want to delete this experience?",
+    "confirmDeleteTitle": "Confirm Delete",
+    "sourceIngestion": "Skill Ingestion",
+    "sourceShare": "Agent Share",
+    "fieldWhenToUse": "When to Use",
+    "fieldGuidelines": "Guidelines",
+    "fieldPitfalls": "Pitfalls",
+    "fieldProcedure": "Procedure",
+    "sourceContent": "Source Content",
+    "sourceContentUnavailable": "Source content unavailable"
   }
 }

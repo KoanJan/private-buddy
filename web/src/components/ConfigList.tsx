@@ -4,7 +4,6 @@ import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { logger } from '../logger';
 import { confirmDelete } from '../utils/confirm';
-import { ConfigIcon, type IconType } from './AgentAvatar';
 
 interface FormField {
   name: string;
@@ -16,7 +15,6 @@ interface FormField {
 }
 
 interface ConfigListProps<T extends { id: number }> {
-  iconType: IconType;
   api: {
     list: () => Promise<{ data: T[] }>;
     create: (data: Record<string, unknown>) => Promise<{ data: T }>;
@@ -28,19 +26,28 @@ interface ConfigListProps<T extends { id: number }> {
   onSelectConfig?: (config: T | null) => void;
   showCreate?: boolean;
   onCreateClose?: () => void;
-  displayField: string;
+  // Field rendered as the primary (top, bold) line of each card.
+  primaryField: string;
+  // Field rendered as the secondary (bottom, muted) line of each card. A native
+  // title attribute is attached so hovering the line reveals its full content
+  // even when it's truncated by ellipsis.
+  secondaryField: string;
+  // CSS class for the grid container. Defaults to 'list-grid-2'; pass e.g.
+  // 'list-grid-3' to switch column count.
+  gridClassName?: string;
   editInitialValues?: (item: T) => Record<string, unknown>;
 }
 
 export default function ConfigList<T extends { id: number }>({
-  iconType,
   api,
   formFields,
   i18nPrefix,
   onSelectConfig,
   showCreate,
   onCreateClose,
-  displayField,
+  primaryField,
+  secondaryField,
+  gridClassName,
   editInitialValues,
 }: ConfigListProps<T>) {
   const { t } = useTranslation();
@@ -180,40 +187,46 @@ export default function ConfigList<T extends { id: number }>({
         ) : configs.length === 0 ? (
           <div className="empty-state-text">{t(`${i18nPrefix}.noConfig`)}</div>
         ) : (
-          configs.map(config => (
-            <div key={config.id} className="agent-card">
-              <div className="agent-card-header">
-                <ConfigIcon type={iconType} />
-                <div className="agent-card-info">
-                  <div className="agent-card-name">
-                    {(config as Record<string, unknown>).name as string}
+          <div className={gridClassName || 'list-grid-2'}>
+            {configs.map(config => {
+              const record = config as Record<string, unknown>;
+              const primary = String(record[primaryField]);
+              const secondary = String(record[secondaryField]);
+              return (
+              <div key={config.id} className="item-card">
+                <div className="item-card-header">
+                  <div className="item-card-info">
+                    <div className="item-card-name">
+                      {primary}
+                    </div>
+                    <div className="item-card-desc" title={secondary}>
+                      {secondary}
+                    </div>
                   </div>
-                  <div className="agent-card-desc">
-                    {(config as Record<string, unknown>)[displayField] as string}
+                  <div className="item-actions">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={e => {
+                        e.stopPropagation();
+                        handleEdit(config);
+                      }}
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    />
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={e => handleDelete(config.id, e)}
+                    />
                   </div>
-                </div>
-                <div className="item-actions">
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={e => {
-                      e.stopPropagation();
-                      handleEdit(config);
-                    }}
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  />
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={e => handleDelete(config.id, e)}
-                  />
                 </div>
               </div>
-            </div>
-          ))
+              );
+            })}
+          </div>
         )}
       </div>
 
