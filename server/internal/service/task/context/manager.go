@@ -106,16 +106,14 @@ func (cm *ContextManager) BuildMessages() []llm.Message {
 	return messages
 }
 
-// buildFullSystemPrompt builds the full system prompt by merging static rules
-// with dynamic context information.
+// buildFullSystemPrompt appends dynamic context information to the static
+// system prompt. Only truly dynamic values (iteration counts, notes length)
+// are included here so that the static prefix remains stable across iterations,
+// preserving LLM provider prefix caching.
 //
-// Context information is appended to the system prompt so the agent always sees
-// it as system-level instructions rather than a separate user message that may
-// be overlooked. Includes:
-//   - Working memory limit and visible iteration count
-//   - Notes size warning if approaching limit (>80%)
-//   - Instructions for understanding current project state
-//   - NOTES usage guide (entry types and best practices)
+// Static instruction blocks ([Understanding Current State], [NOTES Usage Guide],
+// [Critical Identifiers]) are part of the static system prompt built at task
+// start — see task.buildSystemPrompt.
 func (cm *ContextManager) buildFullSystemPrompt(visibleIterations, invisibleIterations, notesLength int) string {
 	settings := config.Get()
 	notesMaxChars := settings.NotesMaxChars
@@ -132,44 +130,6 @@ func (cm *ContextManager) buildFullSystemPrompt(visibleIterations, invisibleIter
 	if notesLength > int(float64(notesMaxChars)*0.8) {
 		contextParts = append(contextParts, "WARNING: Your NOTES are approaching the size limit. Consider consolidating older entries.")
 	}
-
-	contextParts = append(contextParts,
-		"",
-		"[Understanding Current State]",
-		"To understand the current project state:",
-		"- Use 'ls -la' to see files in your working directory",
-		"- Use 'cat <filename>' to read file contents",
-		"- Use 'find . -type f' to discover all files",
-		"- Check your NOTES (provided above) for previous progress",
-		"",
-		"[NOTES Usage Guide]",
-		"The write_notes tool appends structured entries to your notes.",
-		"",
-		"Entry types:",
-		"- observation: Something you discovered",
-		"- decision: A choice you made (explain why)",
-		"- finding: A key result or conclusion",
-		"- correction: A fix to a previous entry (use conflicts_with)",
-		"- progress: Current status and next steps",
-		"",
-		"Best practices:",
-		"- Each entry is APPENDED, not overwritten",
-		"- Write CONCISE entries — notes have a size limit",
-		"- Only write IMPORTANT information — skip trivial or obvious facts",
-		"- Ask: would losing this information hurt the task? If not, skip it",
-		"- Include file references when relevant",
-		"- Use conflicts_with when correcting earlier decisions",
-		"- Write self-contained entries (future LLM calls have no memory)",
-		// Critical Identifiers: guide the agent to preserve identifiers that
-		// cannot be recovered through filesystem inspection. This is an agent
-		// behavior protocol — the system does not extract or enforce identifiers.
-		// File paths and git commit hashes are recoverable and need no recording.
-		"",
-		"[Critical Identifiers]",
-		"- If you encounter an identifier that cannot be recovered through filesystem inspection (ls, find, git log, etc.), record it explicitly in your notes.",
-		"- File paths are recoverable — you don't need to record them.",
-		"- External API response IDs, user-provided tokens, and unique session identifiers should be preserved.",
-	)
 
 	return cm.systemPrompt + strings.Join(contextParts, "\n")
 }

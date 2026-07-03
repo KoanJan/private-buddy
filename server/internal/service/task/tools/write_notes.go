@@ -48,9 +48,11 @@ func NewWriteNotesTool(sessionID int64, workspaceRoot string, notesMaxChars int)
 
 func (w *WriteNotesTool) Name() string { return "write_notes" }
 
+func (w *WriteNotesTool) Description() string { return "Append structured entries to your notes.md" }
+
 func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: "write_notes",
+		Name: w.Name(),
 		Description: "Append a structured entry to your NOTES. " +
 			"This ADDS a new entry, it does NOT overwrite. " +
 			"Use this to persist important information for future steps. " +

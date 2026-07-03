@@ -25,9 +25,11 @@ func NewWebSearchTool(searchConfig *model.SearchConfig) *WebSearchTool {
 
 func (w *WebSearchTool) Name() string { return "web_search" }
 
+func (w *WebSearchTool) Description() string { return "Search the web for information" }
+
 func (w *WebSearchTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name:        "web_search",
+		Name:        w.Name(),
 		Description: "Search the web for information. Use this tool to find current information, documentation, or answers to questions.",
 		Parameters: map[string]interface{}{
 			"type": "object",

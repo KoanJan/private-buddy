@@ -16,7 +16,7 @@ import (
 
 const (
 	learningSearchTopN     = 10  // Max candidate public experiences to retrieve
-	learningSearchMinScore = 0.3 // Minimum cosine similarity for candidates
+	learningSearchMinScore = 0.4 // Minimum cosine similarity for candidates
 )
 
 // learnDecision is the structured output from the LLM judging which public
@@ -120,15 +120,12 @@ func CheckLearning(ctx context.Context, agentID int64) {
 			continue
 		}
 
-		// sourceFingerprint stores the public experience ID as a string.
-		// This enables future dedup without schema changes.
-		fingerprint := fmt.Sprintf("%d", pub.ID)
-
+		// source_id = public_experience_id: this lesson was copied from pub.
 		copied := func() bool {
 			writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			_, err := createExperience(writeCtx, agentID, model.AgentExperienceSourceLearn, fingerprint,
+			_, err := createExperience(writeCtx, agentID, model.AgentExperienceSourceLearn, pub.ID,
 				pub.Title, pub.Description, pub.WhenToUse, pub.Guidelines, pub.Pitfalls, pub.Procedure)
 			if err != nil {
 				applogger.Error("CheckLearning: failed to copy experience",
@@ -187,10 +184,15 @@ func judgeLearning(ctx context.Context, agent *model.Agent, llmCfg *model.LLMCon
 ## Candidate Public Experiences
 %s
 
-Judge which candidates are worth learning. Consider:
+Judge which candidates are worth learning. For each candidate, consider:
 - Does the experience address a domain you actually work in?
 - Would you likely encounter the problem pattern or task signature described?
 - Is the guidance applicable to the types of tasks you perform?
+
+Reject a candidate if:
+- It shares surface-level technology with your work but targets a different task category (e.g., both involve H5/canvas, but one is game development and the other is generative art)
+- Its core methodology is not transferable to the types of tasks you actually perform
+- You are uncertain — when in doubt, do not learn
 
 Only include IDs of clearly relevant experiences. It is better to learn nothing than to learn irrelevant knowledge.
 

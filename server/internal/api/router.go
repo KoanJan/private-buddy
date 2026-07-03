@@ -118,6 +118,7 @@ func SetupRouter() *gin.Engine {
 			publicExperiences.DELETE("/:id", h.DeletePublicExperience)
 			publicExperiences.POST("/ingest", middleware.RequireSystemLLM, h.IngestPublicExperience)
 			publicExperiences.POST("/search", h.SearchPublicExperiences)
+			publicExperiences.POST("/:id/redistill", middleware.RequireSystemLLM, h.RedistillPublicExperience)
 			publicExperiences.GET("/system-llm-config", h.GetSystemLLMConfigHandler)
 			publicExperiences.PUT("/system-llm-config", h.UpdateSystemLLMConfigHandler)
 		}

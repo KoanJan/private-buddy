@@ -37,13 +37,15 @@ func NewBashTool(sessionRoot, workDir string) *BashTool {
 
 func (b *BashTool) Name() string { return "bash" }
 
+func (b *BashTool) Description() string { return "Execute shell commands in your working directory" }
+
 func (b *BashTool) Schema() llm.FunctionDefinition {
 	workspaceHint := ""
 	if b.sessionRoot != "" {
 		workspaceHint = fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", b.sessionRoot)
 	}
 	return llm.FunctionDefinition{
-		Name:        "bash",
+		Name:        b.Name(),
 		Description: "Execute a shell command. Use this tool to run commands, manage files, and interact with the system." + workspaceHint,
 		Parameters: map[string]interface{}{
 			"type": "object",

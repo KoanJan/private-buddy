@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Modal, Form, Upload, message, Spin } from 'antd';
-import { DeleteOutlined, UploadOutlined } from '@ant-design/icons';
+import { Button, Modal, Form, Upload, message, Spin, Tag } from 'antd';
+import { DeleteOutlined, UploadOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { confirmDelete } from '../utils/confirm';
 import type { PublicExperience } from '../types';
+import {
+  PUBLIC_EXPERIENCE_STATUS_GENERATING,
+  PUBLIC_EXPERIENCE_STATUS_ERROR,
+} from '../types';
 import { publicExperienceApi } from '../services/api';
 
 interface PublicExperienceListProps {
@@ -13,19 +17,50 @@ interface PublicExperienceListProps {
   onSelectExp?: (exp: PublicExperience) => void;
 }
 
+// Poll interval for refreshing the list while any experience is still Generating.
+const POLL_INTERVAL_MS = 3000;
+
 const PublicExperienceList: React.FC<PublicExperienceListProps> = ({ showIngest, onIngestClose, onSelectExp }) => {
   const { t } = useTranslation();
   const [experiences, setExperiences] = useState<PublicExperience[]>([]);
   const [loading, setLoading] = useState(false);
   const [ingestVisible, setIngestVisible] = useState(false);
   const [ingesting, setIngesting] = useState(false);
+  const [redistillingId, setRedistillingId] = useState<number | null>(null);
   const [ingestForm] = Form.useForm();
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
 
+  // Load the experience list. When silent=true, no loading spinner / error toast
+  // is shown — used by the polling loop to avoid disruptive UX.
+  const loadExperiences = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const res = await publicExperienceApi.list();
+      setExperiences(res.data);
+    } catch {
+      if (!silent) message.error(t('publicExperience.loadError'));
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadExperiences();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Poll while any experience is still in Generating status so the UI
+  // transitions to Active/Error without manual refresh.
+  useEffect(() => {
+    const hasGenerating = experiences.some(e => e.status === PUBLIC_EXPERIENCE_STATUS_GENERATING);
+    if (!hasGenerating) return;
+    const timer = setInterval(() => {
+      loadExperiences(true);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [experiences]);
 
   useEffect(() => {
     if (showIngest) {
@@ -39,18 +74,6 @@ const PublicExperienceList: React.FC<PublicExperienceListProps> = ({ showIngest,
     setFileContent(null);
     setFileName(null);
     onIngestClose?.();
-  };
-
-  const loadExperiences = async () => {
-    setLoading(true);
-    try {
-      const res = await publicExperienceApi.list();
-      setExperiences(res.data);
-    } catch {
-      message.error(t('publicExperience.loadError'));
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleDelete = async (id: number) => {
@@ -95,25 +118,61 @@ const PublicExperienceList: React.FC<PublicExperienceListProps> = ({ showIngest,
     setIngesting(true);
     try {
       await publicExperienceApi.ingest({
-        source_name: fileName,
+        file_name: fileName,
         raw_content: fileContent,
       });
       closeIngest();
       message.success(t('publicExperience.ingestSuccess'));
-    } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      if (detail?.includes('already been ingested')) {
-        message.warning(t('publicExperience.duplicateSkill'));
-      } else {
-        message.error(t('publicExperience.ingestFailed'));
-      }
+      // Refresh list so the newly pre-written Generating record shows up.
+      loadExperiences();
+    } catch {
+      message.error(t('publicExperience.ingestFailed'));
     } finally {
       setIngesting(false);
     }
   };
 
+  const handleRedistill = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    setRedistillingId(id);
+    try {
+      await publicExperienceApi.redistill(id);
+      message.success(t('publicExperience.redistillSuccess'));
+      loadExperiences();
+    } catch {
+      message.error(t('publicExperience.redistillFailed'));
+    } finally {
+      setRedistillingId(null);
+    }
+  };
+
   const sourceLabel = (sourceType: number) =>
     sourceType === 1 ? t('publicExperience.sourceIngestion') : t('publicExperience.sourceShare');
+
+  // Render a status tag for non-Active experiences. Active records show no tag
+  // (the normal case) to avoid visual noise.
+  const renderStatusTag = (status: number) => {
+    if (status === PUBLIC_EXPERIENCE_STATUS_GENERATING) {
+      return <Tag color="processing">{t('publicExperience.statusGenerating')}</Tag>;
+    }
+    if (status === PUBLIC_EXPERIENCE_STATUS_ERROR) {
+      return <Tag color="error">{t('publicExperience.statusError')}</Tag>;
+    }
+    return null;
+  };
+
+  // Dynamic title: for non-Active statuses, prepend/append status text around
+  // the placeholder title (derived from the uploaded skill). For Active, show
+  // the LLM-generated title as-is.
+  const displayTitle = (exp: PublicExperience): string => {
+    if (exp.status === PUBLIC_EXPERIENCE_STATUS_GENERATING) {
+      return t('publicExperience.statusGeneratingTitle', { title: exp.title });
+    }
+    if (exp.status === PUBLIC_EXPERIENCE_STATUS_ERROR) {
+      return t('publicExperience.statusErrorTitle', { title: exp.title });
+    }
+    return exp.title;
+  };
 
   return (
     <>
@@ -126,37 +185,54 @@ const PublicExperienceList: React.FC<PublicExperienceListProps> = ({ showIngest,
           <div className="empty-state-text">{t('publicExperience.noData')}</div>
         ) : (
           <div className="list-grid-2">
-            {experiences.map(exp => (
-              <div
-                key={exp.id}
-                className="item-card"
-                style={{ cursor: 'pointer' }}
-                onClick={() => onSelectExp?.(exp)}
-              >
-                <div className="item-card-header">
-                  <div className="item-card-info" style={{ flex: 1 }}>
-                    <div className="item-card-name">{exp.title}</div>
-                    <div className="item-card-desc">
-                      {exp.description}
+            {experiences.map(exp => {
+              const isGenerating = exp.status === PUBLIC_EXPERIENCE_STATUS_GENERATING;
+              const isError = exp.status === PUBLIC_EXPERIENCE_STATUS_ERROR;
+              return (
+                <div
+                  key={exp.id}
+                  className="item-card"
+                  style={{ cursor: isGenerating ? 'default' : 'pointer', opacity: isGenerating ? 0.6 : 1 }}
+                  onClick={() => !isGenerating && onSelectExp?.(exp)}
+                >
+                  <div className="item-card-header">
+                    <div className="item-card-info" style={{ flex: 1 }}>
+                      <div className="item-card-name">
+                        {displayTitle(exp)}
+                      </div>
+                      <div className="item-card-desc">
+                        {exp.description}
+                      </div>
+                      <div className="item-card-desc" style={{ fontSize: '11px', opacity: 0.6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {renderStatusTag(exp.status)}
+                        <span>{sourceLabel(exp.source_type)} · {new Date(exp.created_at).toLocaleDateString()}</span>
+                      </div>
                     </div>
-                    <div className="item-card-desc" style={{ fontSize: '11px', opacity: 0.6 }}>
-                      {sourceLabel(exp.source_type)} · {new Date(exp.created_at).toLocaleDateString()}
+                    <div className="item-actions" style={{ display: 'flex', gap: 4 }}>
+                      {isError && (
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<ReloadOutlined />}
+                          loading={redistillingId === exp.id}
+                          onClick={(e) => handleRedistill(e, exp.id)}
+                        />
+                      )}
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(exp.id);
+                        }}
+                      />
                     </div>
                   </div>
-                  <Button
-                    className="item-actions"
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(exp.id);
-                    }}
-                  />
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

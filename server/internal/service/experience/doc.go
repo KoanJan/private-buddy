@@ -12,7 +12,6 @@
 // Key API:
 //   - Init: sets the shared embedding service reference (must be called at startup).
 //   - SearchExperiences: semantic search over an agent's private experiences.
-//   - FormatForSystemPrompt: injects relevant experiences into the task system prompt.
 //   - CheckReflection: heartbeat callback that distills reusable experience from
 //     task execution notes via LLM reflection.
 package experience

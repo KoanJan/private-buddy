@@ -47,9 +47,13 @@ func NewWakeMeWhenTool(agentID, sessionID, triggerMessageID int64) *WakeMeWhenTo
 
 func (w *WakeMeWhenTool) Name() string { return "wake_me_when" }
 
+func (w *WakeMeWhenTool) Description() string {
+	return "Set an alarm to wake yourself at a future time (e.g., reminders, follow-ups)"
+}
+
 func (w *WakeMeWhenTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: "wake_me_when",
+		Name: w.Name(),
 		Description: "Set an alarm to wake yourself up at a future time. " +
 			"When the alarm fires, you will receive a notification with the context you provide. " +
 			"This is YOUR self-wake mechanism — it does NOT create OS-level notifications or system alerts. " +

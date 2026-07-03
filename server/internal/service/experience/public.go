@@ -17,48 +17,82 @@ type PublicSearchResult struct {
 	Score      float64 // Cosine similarity, 0..1
 }
 
-// createPublicExperience inserts a public experience and computes its embedding
-// from the description. Called internally by IngestSkill.
-func createPublicExperience(ctx context.Context, title, description, whenToUse,
-	guidelines, pitfalls, procedure string, sourceID int64, sourceFingerprint string) (*model.PublicExperience, error) {
+// finalizePublicExperience fills in the content fields of a pre-written
+// PublicExperience, sets Status=Active, and upserts the embedding vector.
+// Called by processIngestion when LLM distillation succeeds.
+func finalizePublicExperience(ctx context.Context, expID int64, output ingestOutput) error {
+	updates := map[string]interface{}{
+		"title":       output.Title,
+		"description": output.Description,
+		"when_to_use": output.WhenToUse,
+		"guidelines":  output.Guidelines,
+		"pitfalls":    output.Pitfalls,
+		"procedure":   output.Procedure,
+		"status":      model.PublicExperienceStatusActive,
+	}
+	if err := database.DB.Model(&model.PublicExperience{}).
+		Where("id = ?", expID).
+		Updates(updates).Error; err != nil {
+		return fmt.Errorf("update public_experience: %w", err)
+	}
 
-	emb, err := embeddingSvc.EmbedSingle(ctx, description)
+	// Embed description and upsert vector.
+	emb, err := embeddingSvc.EmbedSingle(ctx, output.Description)
 	if err != nil {
-		return nil, fmt.Errorf("embed public experience description: %w", err)
+		return fmt.Errorf("embed public experience description: %w", err)
+	}
+	embBlob := vectorstore.Float32SliceToBlob(emb)
+
+	// Try update first; if no row exists (first distillation), create one.
+	result := database.DB.Model(&model.PublicExperienceVector{}).
+		Where("experience_id = ?", expID).
+		Update("embedding", embBlob)
+	if result.Error != nil {
+		return fmt.Errorf("update public_experience_vector: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		vec := &model.PublicExperienceVector{
+			ExperienceID: expID,
+			Embedding:    embBlob,
+		}
+		if err := database.DB.Create(vec).Error; err != nil {
+			return fmt.Errorf("insert public_experience_vector: %w", err)
+		}
 	}
 
-	exp := &model.PublicExperience{
-		Title:             title,
-		Description:       description,
-		WhenToUse:         whenToUse,
-		Guidelines:        guidelines,
-		Pitfalls:          pitfalls,
-		Procedure:         procedure,
-		SourceType:        model.PublicExperienceSourceIngestion,
-		SourceID:          sourceID,
-		SourceFingerprint: sourceFingerprint,
-	}
+	return nil
+}
 
-	if err := database.DB.Create(exp).Error; err != nil {
-		return nil, fmt.Errorf("insert public_experience: %w", err)
-	}
-
-	vec := &model.PublicExperienceVector{
-		ExperienceID: exp.ID,
-		Embedding:    vectorstore.Float32SliceToBlob(emb),
-	}
-	if err := database.DB.Create(vec).Error; err != nil {
-		applogger.Error("Failed to insert public_experience_vector, orphaned experience row",
-			"experience_id", exp.ID,
+// markPublicExperienceError sets Status=Error on a public experience.
+// Called by processIngestion when distillation fails. Error details are
+// logged but not stored in the DB.
+func markPublicExperienceError(expID int64) {
+	if err := database.DB.Model(&model.PublicExperience{}).
+		Where("id = ?", expID).
+		Update("status", model.PublicExperienceStatusError).Error; err != nil {
+		applogger.Error("Failed to mark public experience as error",
+			"exp_id", expID,
 			"error", err,
 		)
-		return nil, fmt.Errorf("insert public_experience_vector: %w", err)
 	}
+}
 
-	applogger.Info("PublicExperience created",
-		"id", exp.ID,
-	)
-	return exp, nil
+// deletePublicExperience removes a public experience and its vector.
+// Called by processIngestion when LLM returns skip=true (nothing worth extracting).
+func deletePublicExperience(expID int64) {
+	if err := database.DB.Where("experience_id = ?", expID).
+		Delete(&model.PublicExperienceVector{}).Error; err != nil {
+		applogger.Error("Failed to delete public_experience_vector during skip cleanup",
+			"exp_id", expID,
+			"error", err,
+		)
+	}
+	if err := database.DB.Delete(&model.PublicExperience{}, expID).Error; err != nil {
+		applogger.Error("Failed to delete public_experience during skip cleanup",
+			"exp_id", expID,
+			"error", err,
+		)
+	}
 }
 
 // SearchPublicExperiences performs semantic retrieval against public experiences.
@@ -93,7 +127,8 @@ func SearchPublicExperiences(ctx context.Context, query string, topN int, minSco
 
 	for _, v := range allVectors {
 		var exp model.PublicExperience
-		if err := database.DB.Where("id = ?", v.ExperienceID).First(&exp).Error; err != nil {
+		// Only return Active experiences — Generating/Error records are excluded.
+		if err := database.DB.Where("id = ? AND status = ?", v.ExperienceID, model.PublicExperienceStatusActive).First(&exp).Error; err != nil {
 			continue
 		}
 		candidates = append(candidates, expWithVec{

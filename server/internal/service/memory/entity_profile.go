@@ -282,17 +282,26 @@ func generateProfile(ctx context.Context, agentID int64, entityType int, entityI
 	// Load relevant observations with event content
 	evidences := loadProfileEvidences(agentID, entityType, entityID, agentName)
 
-	// Build the LLM prompt
+	// Build the LLM prompt.
+	// When the agent is reflecting on itself, use "yourself" instead of the agent
+	// name as the entity label to prevent the LLM from slipping into third-person.
+	entityDesc := entityName
+	extraDirective := ""
+	if entityType == model.EntityTypeAgent && entityID == agentID {
+		entityDesc = "yourself"
+		extraDirective = " Write in first-person (use 'I', 'me', 'my')."
+	}
+
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(`You are %s, reflecting on your accumulated observations about %s.
 Below are the key observations you've recorded (your messages are labeled with your name).
 Based on these, write a concise narrative describing your understanding and impression of %s.
 
 Focus on patterns, traits, preferences, or notable characteristics. Be honest about what
-you know and what remains uncertain. Do not fabricate observations.
+you know and what remains uncertain. Do not fabricate observations.%s
 
 Key observations:
-`, agentName, entityName, entityName))
+`, agentName, entityDesc, entityDesc, extraDirective))
 
 	for i, ev := range evidences {
 		sb.WriteString(fmt.Sprintf("- [Observation %d] %s\n", i+1, ev))

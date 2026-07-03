@@ -384,7 +384,13 @@ function App() {
               setSettingsSubview('library');
             }}
           >
-            <PublicExperienceDetail exp={selectedExp} />
+            <PublicExperienceDetail
+              exp={selectedExp}
+              onRedistilled={() => {
+                setSelectedExp(null);
+                setSettingsSubview('library');
+              }}
+            />
           </PanelDetail>
         ) : null;
 

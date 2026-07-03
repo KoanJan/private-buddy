@@ -1,20 +1,31 @@
 import React, { useEffect, useState } from 'react';
-import { Segmented, Spin } from 'antd';
+import { Segmented, Spin, Tag, Button, message } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { PublicExperience } from '../types';
-import { uploadedSkillApi } from '../services/api';
+import {
+  PUBLIC_EXPERIENCE_STATUS_GENERATING,
+  PUBLIC_EXPERIENCE_STATUS_ERROR,
+} from '../types';
+import { uploadedSkillApi, publicExperienceApi } from '../services/api';
 
 interface PublicExperienceDetailProps {
   exp: PublicExperience;
+  // Called after a successful re-distill request so the parent can navigate
+  // back to the list (which will remount and show the Generating status).
+  onRedistilled?: () => void;
 }
 
-const PublicExperienceDetail: React.FC<PublicExperienceDetailProps> = ({ exp }) => {
+const PublicExperienceDetail: React.FC<PublicExperienceDetailProps> = ({ exp, onRedistilled }) => {
   const { t } = useTranslation();
   const [tab, setTab] = useState<'content' | 'source'>('content');
   const [sourceContent, setSourceContent] = useState<string | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
+  const [redistilling, setRedistilling] = useState(false);
 
   const hasSource = exp.source_type === 1 && exp.source_id > 0;
+  const isGenerating = exp.status === PUBLIC_EXPERIENCE_STATUS_GENERATING;
+  const isError = exp.status === PUBLIC_EXPERIENCE_STATUS_ERROR;
 
   // Lazy-load source content only when the source tab is first selected.
   useEffect(() => {
@@ -37,19 +48,64 @@ const PublicExperienceDetail: React.FC<PublicExperienceDetailProps> = ({ exp }) 
     );
   };
 
+  const handleRedistill = async () => {
+    setRedistilling(true);
+    try {
+      await publicExperienceApi.redistill(exp.id);
+      message.success(t('publicExperience.redistillSuccess'));
+      onRedistilled?.();
+    } catch {
+      message.error(t('publicExperience.redistillFailed'));
+    } finally {
+      setRedistilling(false);
+    }
+  };
+
   const sourceLabel = exp.source_type === 1
     ? t('publicExperience.sourceIngestion')
     : t('publicExperience.sourceShare');
   const formattedDate = new Date(exp.created_at).toLocaleString('sv-SE').replace('T', ' ');
 
+  const renderStatusTag = () => {
+    if (isGenerating) return <Tag color="processing">{t('publicExperience.statusGenerating')}</Tag>;
+    if (isError) return <Tag color="error">{t('publicExperience.statusError')}</Tag>;
+    return null;
+  };
+
+  // Dynamic title: for non-Active statuses, prepend/append status text around
+  // the placeholder title. For Active, show the LLM-generated title as-is.
+  const displayTitle = () => {
+    if (isGenerating) {
+      return t('publicExperience.statusGeneratingTitle', { title: exp.title });
+    }
+    if (isError) {
+      return t('publicExperience.statusErrorTitle', { title: exp.title });
+    }
+    return exp.title;
+  };
+
   return (
     <div>
       <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, color: 'var(--color-text-primary)' }}>
-        {exp.title}
+        {displayTitle()}
       </h3>
-      <div style={{ fontSize: 12, color: 'var(--color-text-placeholder)', marginBottom: 16 }}>
-        {sourceLabel} · {formattedDate}
+      <div style={{ fontSize: 12, color: 'var(--color-text-placeholder)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
+        {renderStatusTag()}
+        <span>{sourceLabel} · {formattedDate}</span>
       </div>
+
+      {isError && (
+        <div style={{ marginBottom: 20 }}>
+          <Button
+            type="primary"
+            icon={<ReloadOutlined />}
+            loading={redistilling}
+            onClick={handleRedistill}
+          >
+            {t('publicExperience.redistill')}
+          </Button>
+        </div>
+      )}
 
       {hasSource && (
         <div style={{ marginBottom: 20 }}>
@@ -65,7 +121,13 @@ const PublicExperienceDetail: React.FC<PublicExperienceDetailProps> = ({ exp }) 
         </div>
       )}
 
-      {tab === 'content' ? (
+      {isGenerating ? (
+        // While the LLM is distilling, content fields are empty — show a
+        // spinner instead of a blank panel.
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+          <Spin />
+        </div>
+      ) : tab === 'content' ? (
         <>
           <p style={{ color: 'var(--color-text-secondary)', marginBottom: 24, lineHeight: 1.8 }}>
             {exp.description}

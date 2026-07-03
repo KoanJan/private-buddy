@@ -35,30 +35,27 @@ func SearchExperiences(ctx context.Context, agentID int64, taskDescription strin
 		return nil, nil
 	}
 
-	type expWithVec struct {
-		exp model.AgentExperience
-		vec []float32
+	// Pre-filter by agent_id at the SQL level to avoid loading the entire
+	// vectors table. First load this agent's experience IDs, then load only
+	// the corresponding vectors.
+	var experiences []model.AgentExperience
+	if err := database.DB.Where("agent_id = ?", agentID).Find(&experiences).Error; err != nil {
+		return nil, fmt.Errorf("load agent experiences: %w", err)
 	}
-	var candidates []expWithVec
-
-	var allVectors []model.AgentExperienceVector
-	if err := database.DB.Find(&allVectors).Error; err != nil {
-		return nil, fmt.Errorf("load experience vectors: %w", err)
-	}
-
-	for _, v := range allVectors {
-		var exp model.AgentExperience
-		if err := database.DB.Where("id = ? AND agent_id = ?", v.ExperienceID, agentID).First(&exp).Error; err != nil {
-			continue
-		}
-		candidates = append(candidates, expWithVec{
-			exp: exp,
-			vec: vectorstore.BlobToFloat32Slice(v.Embedding),
-		})
-	}
-
-	if len(candidates) == 0 {
+	if len(experiences) == 0 {
 		return nil, nil
+	}
+
+	expIDs := make([]int64, len(experiences))
+	expMap := make(map[int64]model.AgentExperience, len(experiences))
+	for i, e := range experiences {
+		expIDs[i] = e.ID
+		expMap[e.ID] = e
+	}
+
+	var vectors []model.AgentExperienceVector
+	if err := database.DB.Where("experience_id IN ?", expIDs).Find(&vectors).Error; err != nil {
+		return nil, fmt.Errorf("load experience vectors: %w", err)
 	}
 
 	type scoreEntry struct {
@@ -67,11 +64,23 @@ func SearchExperiences(ctx context.Context, agentID int64, taskDescription strin
 	}
 	var entries []scoreEntry
 
-	for _, c := range candidates {
-		sim := vectorstore.CosineSimilarity(queryVec, c.vec)
+	for _, v := range vectors {
+		exp, ok := expMap[v.ExperienceID]
+		if !ok {
+			// Vector exists but its parent experience row is missing —
+			// data integrity violation. Error-level because this should
+			// never happen under normal operation (cascade should keep
+			// vectors in sync with their parent rows).
+			applogger.Error("Experience retrieval: vector has no matching experience row (data integrity violation)",
+				"experience_id", v.ExperienceID,
+				"agent_id", agentID,
+			)
+			continue
+		}
+		sim := vectorstore.CosineSimilarity(queryVec, vectorstore.BlobToFloat32Slice(v.Embedding))
 		if sim >= minScore {
 			entries = append(entries, scoreEntry{
-				result: SearchResult{Experience: c.exp, Score: sim},
+				result: SearchResult{Experience: exp, Score: sim},
 				score:  sim,
 			})
 		}
@@ -90,7 +99,7 @@ func SearchExperiences(ctx context.Context, agentID int64, taskDescription strin
 
 	applogger.Info("Experience retrieval completed",
 		"agent_id", agentID,
-		"candidates", len(candidates),
+		"candidates", len(vectors),
 		"results", len(results),
 	)
 	return results, nil

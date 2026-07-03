@@ -6,7 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.0.22] - 2026-07-01
+## [0.0.23] - 2026-07-03
+
+### Changed
+- **Experience Toolization**: private experiences changed from fixed system prompt injection to on-demand tools (`scan_my_experience` / `recall_my_experience`)
+- **System Prompt Reorganization**: tool description texts and static guidance sections moved out of per-iteration rebuild; OS information added to prompt
+- **Experience Reflection**: LLM can now update existing experiences instead of always creating new ones
+- **Source Identification**: `AgentExperience.SourceFingerprint` replaced with `SourceID`; fingerprint.txt write timing moved from task completion to reflection end
+- **Skill Ingestion UX**: public experiences pre-written on upload with Generating/Active/Error status; redistill API added; UploadedSkill made stateless
+- **Learn Judgment**: semantic search threshold raised, explicit rejection heuristics added to judgment prompt, entity self-profiles switched to first-person
+- **Experience Extraction Prompt**: distinction clarified between host-environment coupling (strip) and domain technical details (keep)
+
+### Removed
+- **Skill Dedup**: fingerprint-based upload deduplication
+
+## [0.0.22] - 2026-07-02
 
 ### Added
 - **Private Experience System**: heartbeat-triggered reflection automatically distills transferable lessons from task execution notes into structured agent-owned experiences (title, description, when-to-use, guidelines, pitfalls, procedure); experiences are semantically retrieved and injected into task system prompts to guide future execution

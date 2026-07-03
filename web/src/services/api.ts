@@ -224,8 +224,9 @@ export const publicExperienceApi = {
   list: () => api.get<PublicExperience[]>('/public-experiences'),
   get: (id: number) => api.get<PublicExperience>(`/public-experiences/${id}`),
   delete: (id: number) => api.delete(`/public-experiences/${id}`),
-  ingest: (data: { source_name: string; raw_content: string }) =>
+  ingest: (data: { file_name: string; raw_content: string }) =>
     api.post<UploadedSkill>('/public-experiences/ingest', data),
+  redistill: (id: number) => api.post(`/public-experiences/${id}/redistill`),
 };
 
 export const uploadedSkillApi = {

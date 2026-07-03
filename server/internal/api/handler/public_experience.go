@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"errors"
-
 	"private-buddy-server/internal/api/response"
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
@@ -79,20 +77,30 @@ func (h *Handler) IngestPublicExperience(c *gin.Context) {
 	}
 
 	uploaded, err := experience.IngestSkill(c.Request.Context(), experience.IngestSkillParams{
-		SourceName: req.SourceName,
+		FileName:   req.FileName,
 		RawContent: req.RawContent,
 	})
 	if err != nil {
-		if errors.Is(err, experience.ErrDuplicateSkill) {
-			response.BadRequest(c, "This skill has already been ingested")
-			return
-		}
-		applogger.Error("IngestPublicExperience failed", "source_name", req.SourceName, "error", err)
+		applogger.Error("IngestPublicExperience failed", "file_name", req.FileName, "error", err)
 		response.InternalError(c, "Failed to submit skill: "+err.Error())
 		return
 	}
 
 	response.Success(c, schema.NewUploadedSkillResponse(uploaded))
+}
+
+// RedistillPublicExperience re-triggers LLM distillation for a public experience.
+// POST /api/public-experiences/:id/redistill
+func (h *Handler) RedistillPublicExperience(c *gin.Context) {
+	id := getPathID(c)
+
+	if err := experience.RedistillPublicExperience(c.Request.Context(), id); err != nil {
+		applogger.Error("RedistillPublicExperience failed", "id", id, "error", err)
+		response.InternalError(c, "Failed to re-distill: "+err.Error())
+		return
+	}
+
+	response.SuccessMessage(c, "Re-distillation started", nil)
 }
 
 // SearchPublicExperiences performs semantic search against public experiences.

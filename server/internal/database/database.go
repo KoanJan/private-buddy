@@ -143,6 +143,18 @@ func AutoMigrate() {
 	// Migrate enum columns from TEXT to INTEGER across all tables
 	migrateEnumColumnsToInt()
 
+	// Rebuild agent_experiences table: replace source_fingerprint (string hash)
+	// with source_id (int64 resource reference). Existing rows cannot be migrated
+	// because a hash cannot be reverse-mapped to a session_id, so the table is
+	// dropped and recreated empty. Decision: clear-and-rebuild is acceptable at
+	// this early stage of the system.
+	rebuildAgentExperiencesForSourceID()
+
+	// Rebuild uploaded_skills table: remove status and fingerprint columns,
+	// rename source_name → file_name, add title column.
+	// UploadedSkill is now stateless — concurrency control is in-memory.
+	rebuildUploadedSkillsStateless()
+
 	applogger.Info("Database migration completed")
 }
 
@@ -291,6 +303,101 @@ func dropExperienceContentColumn() {
 	DB.Exec(`CREATE INDEX idx_agent_experiences_source_fingerprint ON agent_experiences(source_fingerprint)`)
 
 	applogger.Info("Successfully dropped agent_experiences.content column")
+}
+
+// rebuildAgentExperiencesForSourceID replaces the source_fingerprint column
+// (a SHA-256 hash string that conflated "which resource" with "has it changed")
+// with a source_id INTEGER column that purely references the origin resource:
+//
+//   - Source=1 (Reflection): source_id = session_id
+//   - Source=2 (Learn):       source_id = public_experience_id
+//
+// Existing rows cannot be migrated because a hash cannot be reverse-mapped to
+// a session_id. The table (and its vectors table) are dropped and recreated
+// empty. This is acceptable at the current early stage of the system.
+//
+// Triggered when the old source_fingerprint column is detected. After the
+// rebuild, the schema matches model.AgentExperience and no further action
+// is needed on subsequent startups.
+func rebuildAgentExperiencesForSourceID() {
+	if !DB.Migrator().HasTable(&model.AgentExperience{}) {
+		return
+	}
+	// Only rebuild when the deprecated source_fingerprint column is still present.
+	if !DB.Migrator().HasColumn(&model.AgentExperience{}, "source_fingerprint") {
+		return
+	}
+
+	applogger.Info("Rebuilding agent_experiences: replace source_fingerprint with source_id (clearing existing rows)")
+
+	// Drop both the experience table and its vectors table — vectors are
+	// meaningless without their parent rows and would orphan if kept.
+	if DB.Migrator().HasTable(&model.AgentExperienceVector{}) {
+		if err := DB.Migrator().DropTable(&model.AgentExperienceVector{}); err != nil {
+			applogger.Error("Failed to drop agent_experience_vectors during rebuild", "error", err)
+			return
+		}
+	}
+	if err := DB.Migrator().DropTable(&model.AgentExperience{}); err != nil {
+		applogger.Error("Failed to drop agent_experiences during rebuild", "error", err)
+		return
+	}
+
+	// Recreate both tables from the current model definitions.
+	if err := DB.AutoMigrate(&model.AgentExperience{}, &model.AgentExperienceVector{}); err != nil {
+		applogger.Error("Failed to recreate agent_experiences tables", "error", err)
+		return
+	}
+
+	applogger.Info("Successfully rebuilt agent_experiences with source_id column")
+}
+
+// rebuildUploadedSkillsStateless removes the status and fingerprint columns
+// from the uploaded_skills table, renames source_name → file_name, and adds
+// the title column. UploadedSkill is now a stateless record — concurrency
+// control is handled in-memory (sync.Map), and deduplication via fingerprint
+// unique index has been removed.
+//
+// Data (source_name → file_name, raw_content) is preserved during the rebuild.
+// Triggered when any deprecated column (status, fingerprint, source_name) is
+// detected. After rebuild, the schema matches model.UploadedSkill.
+func rebuildUploadedSkillsStateless() {
+	if !DB.Migrator().HasTable(&model.UploadedSkill{}) {
+		return
+	}
+	// Check for any deprecated columns that indicate the table needs rebuilding.
+	hasStatus := DB.Migrator().HasColumn(&model.UploadedSkill{}, "status")
+	hasFingerprint := DB.Migrator().HasColumn(&model.UploadedSkill{}, "fingerprint")
+	hasSourceName := DB.Migrator().HasColumn(&model.UploadedSkill{}, "source_name")
+	if !hasStatus && !hasFingerprint && !hasSourceName {
+		return
+	}
+
+	applogger.Info("Rebuilding uploaded_skills: rename source_name → file_name, add title, remove status/fingerprint")
+
+	DB.Exec(`
+		CREATE TABLE uploaded_skills_new (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_name   VARCHAR(500) NOT NULL DEFAULT '',
+			title       VARCHAR(500) NOT NULL DEFAULT '',
+			raw_content TEXT NOT NULL,
+			created_at  DATETIME NOT NULL
+		)
+	`)
+	// Copy data: source_name → file_name (if column exists), title defaults to ''.
+	// Existing records' titles are left empty — their pubexps are already Active
+	// with LLM-generated titles, so the placeholder title is not needed.
+	if hasSourceName {
+		DB.Exec(`INSERT INTO uploaded_skills_new (id, file_name, title, raw_content, created_at)
+			SELECT id, source_name, '', raw_content, created_at FROM uploaded_skills`)
+	} else {
+		DB.Exec(`INSERT INTO uploaded_skills_new (id, file_name, title, raw_content, created_at)
+			SELECT id, '', '', raw_content, created_at FROM uploaded_skills`)
+	}
+	DB.Exec(`DROP TABLE uploaded_skills`)
+	DB.Exec(`ALTER TABLE uploaded_skills_new RENAME TO uploaded_skills`)
+
+	applogger.Info("Successfully rebuilt uploaded_skills (file_name + title, stateless)")
 }
 
 // migrateEnumColumnsToInt converts all enum columns in the database from

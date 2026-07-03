@@ -173,6 +173,11 @@ export interface SystemLLMConfig {
 export const PUBLIC_EXPERIENCE_SOURCE_INGESTION = 1;
 export const PUBLIC_EXPERIENCE_SOURCE_SHARE = 2;
 
+// PublicExperience status constants (must match backend model.PublicExperienceStatus*)
+export const PUBLIC_EXPERIENCE_STATUS_GENERATING = 1;
+export const PUBLIC_EXPERIENCE_STATUS_ACTIVE = 2;
+export const PUBLIC_EXPERIENCE_STATUS_ERROR = 3;
+
 export interface PublicExperience {
   id: number;
   title: string;
@@ -184,14 +189,15 @@ export interface PublicExperience {
   source_type: number; // 1=ingestion, 2=share
   source_id: number;    // uploaded_skills.id for ingestion, agent_experiences.id for share
   source_fingerprint: string;
+  status: number; // 1=generating, 2=active, 3=error
   created_at: string;
   updated_at: string;
 }
 
 export interface UploadedSkill {
   id: number;
-  source_name: string;
+  file_name: string;
+  title: string;
   raw_content: string;
-  status: number; // 0=pending, 1=processing, 2=completed
   created_at: string;
 }

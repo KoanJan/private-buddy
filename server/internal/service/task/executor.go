@@ -20,18 +20,14 @@ package task
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"runtime"
 	"strings"
 
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/experience"
 	"private-buddy-server/internal/service/llm"
 	taskcontext "private-buddy-server/internal/service/task/context"
 	"private-buddy-server/internal/service/task/tools"
@@ -127,12 +123,6 @@ func RunTask(params RunTaskParams) *TaskResult {
 	})
 }
 
-// sha256Hex returns the hex-encoded SHA-256 hash of s.
-func sha256Hex(s string) string {
-	hash := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(hash[:])
-}
-
 // TaskParams contains all parameters needed for task execution.
 type TaskParams struct {
 	TaskRequirement string                   // The task description to execute (from Decide phase Guidance)
@@ -174,16 +164,13 @@ func Execute(params TaskParams) *TaskResult {
 	writeNotesTool := tools.NewWriteNotesTool(params.SessionID, workspaceRoot, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	// Semantic retrieval of relevant private experiences for this task
-	expResults, err := experience.SearchExperiences(params.Ctx, params.AgentID, params.TaskRequirement, experienceRetrievalTopN, experienceRetrievalMinScore)
-	if err != nil {
-		applogger.Warn("Experience retrieval failed, proceeding without experiences",
-			"agent_id", params.AgentID,
-			"error", err,
-		)
-	}
+	sessionWorkspace := getSessionWorkspace(params.SessionID)
+	sessionOutputDir := getSessionOutputDir(params.SessionID)
+	toolList := buildToolList(sessionWorkspace, sessionOutputDir, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, workspaceRoot, notesMaxChars)
 
-	systemPrompt := buildSystemPrompt(params.SessionID, params.Guidance, expResults)
+	// Build the system prompt AFTER the tool list so that tool descriptions
+	// can be generated from the registered tools.
+	systemPrompt := buildSystemPrompt(params.SessionID, params.Guidance, toolList)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
@@ -197,10 +184,6 @@ func Execute(params TaskParams) *TaskResult {
 		params.LLMConfig.ModelID,
 		llm.TemperatureCreative,
 	)
-
-	sessionWorkspace := getSessionWorkspace(params.SessionID)
-	sessionOutputDir := getSessionOutputDir(params.SessionID)
-	toolList := buildToolList(sessionWorkspace, sessionOutputDir, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, workspaceRoot, notesMaxChars)
 
 	taskLoop := NewTaskLoop(
 		llmClient,
@@ -219,14 +202,12 @@ func Execute(params TaskParams) *TaskResult {
 
 	finalNotes := writeNotesTool.ReadNotes()
 
-	// Write notes fingerprint for reflection dedup
-	if finalNotes != "" {
-		fp := sha256Hex(finalNotes)
-		fpFile := filepath.Join(workspace, ".meta", "fingerprint.txt")
-		if err := os.WriteFile(fpFile, []byte(fp), 0644); err != nil {
-			applogger.Warn("failed to write notes fingerprint", "workspace", workspace, "error", err)
-		}
-	}
+	// Note: <workspace>/.meta/fingerprint.txt is no longer written here.
+	// Its responsibility moved to the reflection pipeline (reflectSession),
+	// which writes it at the end of each reflection to mark "this is what
+	// notes.md looked like when I last processed it". The heartbeat then
+	// compares the current notes.md hash against this file to decide whether
+	// to re-trigger reflection.
 
 	result := &TaskResult{
 		Workspace: workspace,
@@ -261,26 +242,28 @@ func Execute(params TaskParams) *TaskResult {
 	return result
 }
 
-// buildSystemPrompt constructs the system prompt for the task loop.
-// Includes basic rules, available tools, working directory, delivery guidance,
-// relevant past experiences, and the execution directive (Guidance) from the Decide phase.
-func buildSystemPrompt(sessionID int64, guidance string, experiences []experience.SearchResult) string {
+// buildSystemPrompt constructs the static system prompt for the task loop.
+// Built once at task start; includes basic rules, tool descriptions (generated
+// from the registered tool list), working directory, delivery guidance,
+// static instruction blocks, an experience hint, and the execution directive.
+//
+// Dynamic content (iteration counts, notes length) is appended separately by
+// ContextManager at each iteration to preserve LLM prefix caching.
+func buildSystemPrompt(sessionID int64, guidance string, toolList []tools.Tool) string {
 	sessionDir := getSessionWorkspace(sessionID)
 	outputDir := getSessionOutputDir(sessionID)
-	hasWS := hasWebSearch()
+
+	// Generate tool descriptions from the registered tools.
+	toolLines := []string{"Available tools:"}
+	for _, t := range toolList {
+		toolLines = append(toolLines, fmt.Sprintf("- %s: %s", t.Name(), t.Description()))
+	}
 
 	parts := []string{
 		"You can execute tasks using tools.",
 		"",
-		"Available tools:",
-		"- bash: Execute shell commands in your working directory",
-		"- write_notes: Append structured entries to your notes.md",
-		"- wake_me_when: Set an alarm to wake yourself at a future time (e.g., reminders, follow-ups)",
 	}
-
-	if hasWS {
-		parts = append(parts, "- web_search: Search the web for information")
-	}
+	parts = append(parts, toolLines...)
 
 	parts = append(parts,
 		"",
@@ -292,6 +275,7 @@ func buildSystemPrompt(sessionID int64, guidance string, experiences []experienc
 		"",
 		fmt.Sprintf("Your session directory is: %s", sessionDir),
 		fmt.Sprintf("Your default working directory is: %s", outputDir),
+		fmt.Sprintf("Operating system: %s", runtime.GOOS),
 		"",
 		"WORKSPACE ORGANIZATION:",
 		fmt.Sprintf("- Your default working directory is: %s", outputDir),
@@ -312,12 +296,41 @@ func buildSystemPrompt(sessionID int64, guidance string, experiences []experienc
 		"- Never make them guess where things are or manually type paths",
 		"- Never fabricate or guess file paths — verify with `pwd` or `ls` if needed",
 		"- If something was partially completed, clearly state what's done and what's remaining",
+		"",
+		"[Understanding Current State]",
+		"To understand the current project state:",
+		"- Use 'ls -la' to see files in your working directory",
+		"- Use 'cat <filename>' to read file contents",
+		"- Use 'find . -type f' to discover all files",
+		"- Check your NOTES (provided above) for previous progress",
+		"",
+		"[NOTES Usage Guide]",
+		"The write_notes tool appends structured entries to your notes.",
+		"",
+		"Entry types:",
+		"- observation: Something you discovered",
+		"- decision: A choice you made (explain why)",
+		"- finding: A key result or conclusion",
+		"- correction: A fix to a previous entry (use conflicts_with)",
+		"- progress: Current status and next steps",
+		"",
+		"Best practices:",
+		"- Each entry is APPENDED, not overwritten",
+		"- Write CONCISE entries — notes have a size limit",
+		"- Only write IMPORTANT information — skip trivial or obvious facts",
+		"- Ask: would losing this information hurt the task? If not, skip it",
+		"- Include file references when relevant",
+		"- Use conflicts_with when correcting earlier decisions",
+		"- Write self-contained entries (future LLM calls have no memory)",
+		"",
+		"[Critical Identifiers]",
+		"- If you encounter an identifier that cannot be recovered through filesystem inspection (ls, find, git log, etc.), record it explicitly in your notes.",
+		"- File paths are recoverable — you don't need to record them.",
+		"- External API response IDs, user-provided tokens, and unique session identifiers should be preserved.",
+		"",
+		"[Past Experience]",
+		"You have past experiences (lessons learned from prior tasks). Use scan_my_experience to search for relevant experiences by keyword, then recall_my_experience to read the full content of a specific one.",
 	)
-
-	// Inject past experiences before the execution directive
-	if expSection := experience.FormatForSystemPrompt(experiences); expSection != "" {
-		parts = append(parts, "", expSection)
-	}
 
 	// Inject Guidance as a self-directive in the system prompt.
 	// This is the execution intent from the Decide phase — the agent's
@@ -333,22 +346,16 @@ func buildSystemPrompt(sessionID int64, guidance string, experiences []experienc
 	return strings.Join(parts, "\n")
 }
 
-// hasWebSearch checks if web search is available via an active search config.
-func hasWebSearch() bool {
-	var searchConfig model.SearchConfig
-	if err := database.DB.First(&searchConfig).Error; err != nil {
-		return false
-	}
-	return searchConfig.IsAvailable()
-}
-
 // buildToolList creates the list of available tools for the task loop.
-// Always includes bash, write_notes, and wake_me_when; adds web_search if search config is available.
+// Always includes bash, write_notes, wake_me_when, scan_my_experience, and
+// recall_my_experience; adds web_search if search config is available.
 func buildToolList(sessionWorkspace, workDir string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
 		tools.NewBashTool(sessionWorkspace, workDir),
 		tools.NewWriteNotesTool(sessionID, workspaceRoot, notesMaxChars),
 		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
+		tools.NewScanExperienceTool(agentID),
+		tools.NewRecallExperienceTool(agentID),
 	}
 
 	if searchConfig != nil && searchConfig.IsAvailable() {

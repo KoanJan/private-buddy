@@ -8,7 +8,7 @@ import (
 
 // PublicExperienceIngest is the request body for POST /api/public-experiences/ingest.
 type PublicExperienceIngest struct {
-	SourceName string `json:"source_name" binding:"required"`
+	FileName   string `json:"file_name" binding:"required"`
 	RawContent string `json:"raw_content" binding:"required"`
 }
 
@@ -31,6 +31,7 @@ type PublicExperienceResponse struct {
 	SourceType        int       `json:"source_type"`
 	SourceID          int64     `json:"source_id"`
 	SourceFingerprint string    `json:"source_fingerprint"`
+	Status            int       `json:"status"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -48,6 +49,7 @@ func NewPublicExperienceResponse(m *model.PublicExperience) *PublicExperienceRes
 		SourceType:        m.SourceType,
 		SourceID:          m.SourceID,
 		SourceFingerprint: m.SourceFingerprint,
+		Status:            m.Status,
 		CreatedAt:         m.CreatedAt,
 		UpdatedAt:         m.UpdatedAt,
 	}
@@ -71,9 +73,9 @@ type PublicExperienceSearchResult struct {
 // UploadedSkillResponse is the API response for an uploaded skill.
 type UploadedSkillResponse struct {
 	ID         int64     `json:"id"`
-	SourceName string    `json:"source_name"`
+	FileName   string    `json:"file_name"`
+	Title      string    `json:"title"`
 	RawContent string    `json:"raw_content"`
-	Status     int       `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -81,9 +83,9 @@ type UploadedSkillResponse struct {
 func NewUploadedSkillResponse(m *model.UploadedSkill) *UploadedSkillResponse {
 	return &UploadedSkillResponse{
 		ID:         m.ID,
-		SourceName: m.SourceName,
+		FileName:   m.FileName,
+		Title:      m.Title,
 		RawContent: m.RawContent,
-		Status:     m.Status,
 		CreatedAt:  m.CreatedAt,
 	}
 }

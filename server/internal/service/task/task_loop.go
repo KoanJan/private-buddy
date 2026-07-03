@@ -21,14 +21,6 @@ import (
 // defaultMaxIterations is the default maximum number of ReAct loop iterations.
 const defaultMaxIterations = 90
 
-// experienceRetrievalTopN and experienceRetrievalMinScore configure
-// how many past experiences are retrieved and the minimum cosine similarity
-// threshold. Analogous to knowledge-base retrieval parameters.
-const (
-	experienceRetrievalTopN     = 3
-	experienceRetrievalMinScore = 0.4
-)
-
 // TaskLoop implements the ReAct-style task loop for autonomous task execution.
 //
 // The loop iterates:

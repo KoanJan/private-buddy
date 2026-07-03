@@ -39,23 +39,27 @@ func panicIfNotReady() {
 }
 
 // createExperience inserts a private experience and computes its embedding
-// from the description. Called internally by CheckReflection.
-func createExperience(ctx context.Context, agentID int64, source int, sourceFingerprint, title, description, whenToUse, guidelines, pitfalls, procedure string) (*model.AgentExperience, error) {
+// from the description. Called internally by CheckReflection and CheckLearning.
+//
+// sourceID identifies the origin resource, interpreted by source:
+//   - source=1 (Reflection): sourceID = session_id
+//   - source=2 (Learn):       sourceID = public_experience_id
+func createExperience(ctx context.Context, agentID int64, source int, sourceID int64, title, description, whenToUse, guidelines, pitfalls, procedure string) (*model.AgentExperience, error) {
 	emb, err := embeddingSvc.EmbedSingle(ctx, description)
 	if err != nil {
 		return nil, fmt.Errorf("embed experience description: %w", err)
 	}
 
 	exp := &model.AgentExperience{
-		AgentID:           agentID,
-		Title:             title,
-		Description:       description,
-		WhenToUse:         whenToUse,
-		Guidelines:        guidelines,
-		Pitfalls:          pitfalls,
-		Procedure:         procedure,
-		Source:            source,
-		SourceFingerprint: sourceFingerprint,
+		AgentID:     agentID,
+		Title:       title,
+		Description: description,
+		WhenToUse:   whenToUse,
+		Guidelines:  guidelines,
+		Pitfalls:    pitfalls,
+		Procedure:   procedure,
+		Source:      source,
+		SourceID:    sourceID,
 	}
 
 	if err := database.DB.Create(exp).Error; err != nil {
@@ -78,16 +82,59 @@ func createExperience(ctx context.Context, agentID int64, source int, sourceFing
 		"id", exp.ID,
 		"agent_id", agentID,
 		"source", source,
+		"source_id", sourceID,
 	)
 	return exp, nil
 }
 
-// existsBySourceFingerprint checks whether an experience with the given agent,
-// source, and source_fingerprint already exists. Used for dedup before reflection.
-func existsBySourceFingerprint(ctx context.Context, agentID int64, source int, sourceFingerprint string) (bool, error) {
-	var count int64
-	err := database.DB.Model(&model.AgentExperience{}).
-		Where("agent_id = ? AND source = ? AND source_fingerprint = ?", agentID, source, sourceFingerprint).
-		Count(&count).Error
-	return count > 0, err
+// updateExperience overwrites an existing experience's content fields and
+// re-embeds the description if it changed.
+//
+// source_id is intentionally NOT updated: it is a stable resource reference
+// (session_id for reflection, public_experience_id for learn) that does not
+// change when the content is refined. This replaces the previous
+// source_fingerprint handling which needed source-type-specific branching.
+//
+// Called by the reflection step when the LLM determines that a newly distilled
+// experience refines an existing one (update_exp_id > 0) rather than being a
+// new lesson.
+func updateExperience(ctx context.Context, expID, agentID int64, title, description, whenToUse, guidelines, pitfalls, procedure string) error {
+	var exp model.AgentExperience
+	if err := database.DB.Where("id = ? AND agent_id = ?", expID, agentID).First(&exp).Error; err != nil {
+		return fmt.Errorf("experience not found: %w", err)
+	}
+
+	updates := map[string]interface{}{
+		"title":       title,
+		"description": description,
+		"when_to_use": whenToUse,
+		"guidelines":  guidelines,
+		"pitfalls":    pitfalls,
+		"procedure":   procedure,
+	}
+
+	if err := database.DB.Model(&exp).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update agent_experience: %w", err)
+	}
+
+	// Re-embed only when the description actually changed.
+	if description != exp.Description {
+		emb, err := embeddingSvc.EmbedSingle(ctx, description)
+		if err != nil {
+			return fmt.Errorf("re-embed experience description: %w", err)
+		}
+		if err := database.DB.Model(&model.AgentExperienceVector{}).
+			Where("experience_id = ?", expID).
+			Update("embedding", vectorstore.Float32SliceToBlob(emb)).Error; err != nil {
+			return fmt.Errorf("update agent_experience_vector: %w", err)
+		}
+	}
+
+	applogger.Info("AgentExperience updated",
+		"id", expID,
+		"agent_id", agentID,
+		"source", exp.Source,
+		"description_changed", description != exp.Description,
+	)
+	return nil
 }
