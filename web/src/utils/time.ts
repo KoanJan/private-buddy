@@ -9,7 +9,12 @@ import i18n from '../i18n';
  */
 export function formatMessageTime(date: Date): string {
   const now = new Date();
-  const timeStr = date.toLocaleTimeString();
+  const timeStr = date.toLocaleTimeString(i18n.language, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 
   const isSameDay =
     date.getFullYear() === now.getFullYear() &&

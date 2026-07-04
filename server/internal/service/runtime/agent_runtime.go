@@ -23,10 +23,9 @@ import (
 // draftCommitRequest represents a request to commit a draft to the messages table.
 // Sent through commitCh to serialize message writes across concurrent Works.
 type draftCommitRequest struct {
-	content         string // Final content to write
-	draft           *model.MessageDraft
-	sessionID       int64
-	hasInteractions int // HasInteractionsPending, HasInteractionsExists, or HasInteractionsNone
+	content   string // Final content to write
+	draft     *model.MessageDraft
+	sessionID int64
 }
 
 // Heartbeat interval constants for the tickless three-phase model.
@@ -500,10 +499,9 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 	// This ensures message ordering is preserved even if a normal work
 	// is committing at the same time.
 	r.draftCommitCh <- &draftCommitRequest{
-		draft:           draft,
-		sessionID:       sessionID,
-		content:         payload.ActionContent,
-		hasInteractions: model.HasInteractionsNone,
+		draft:     draft,
+		sessionID: sessionID,
+		content:   payload.ActionContent,
 	}
 
 	// Set status back to idle. The commitCh is buffered and handleCommits

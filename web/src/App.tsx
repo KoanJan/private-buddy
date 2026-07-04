@@ -75,6 +75,7 @@ function App() {
   // available (no embedding dependency), a neutral entry point.
   const [settingsSubview, setSettingsSubview] = useState<SettingsSubview>('user');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [systemLLMRefreshKey, setSystemLLMRefreshKey] = useState(0);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showCreateLLM, setShowCreateLLM] = useState(false);
   const [showCreateKB, setShowCreateKB] = useState(false);
@@ -404,10 +405,21 @@ function App() {
               onSelectConfig={handleSelectLLMConfig}
               showCreate={showCreateLLM}
               onCreateClose={() => setShowCreateLLM(false)}
+              onConfigChanged={() => setSystemLLMRefreshKey(k => k + 1)}
+              beforeDelete={async (id) => {
+                try {
+                  const sysRes = await systemLLMConfigApi.get();
+                  if (sysRes.data?.llm_config_id === id) {
+                    message.error(t('llmConfig.inUseError'));
+                    return false;
+                  }
+                } catch { /* proceed with deletion if we can't check */ }
+                return true;
+              }}
             />
             <div style={{ borderTop: '1px solid var(--color-border)', marginTop: 32, paddingTop: 24 }}>
               <h4 style={{ marginBottom: 16 }}>{t('systemLLMConfig.title')}</h4>
-              <SystemLLMConfigForm onSaved={() => setSystemLLMReady(true)} />
+              <SystemLLMConfigForm onSaved={() => setSystemLLMReady(true)} refreshKey={systemLLMRefreshKey} />
             </div>
           </PanelDetail>
         );

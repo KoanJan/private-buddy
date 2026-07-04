@@ -43,8 +43,7 @@ const userFriendlyErrorMessage = "Sorry, something went wrong on the server. Ple
 // table directly. Instead, it returns all results through this struct, and the
 // caller (Work) commits them to a draft and then to messages atomically.
 type ChatResult struct {
-	Content         string // The generated response content
-	HasInteractions int    // HasInteractionsPending, HasInteractionsExists, or HasInteractionsNone
+	Content string // The generated response content
 }
 
 // TriggerOverrideType identifies the kind of trigger override, which determines
@@ -153,7 +152,7 @@ func ExecuteChat(
 	}
 
 	if err := p.loadMessages(); err != nil {
-		return &ChatResult{Content: userFriendlyErrorMessage, HasInteractions: model.HasInteractionsNone}, err
+		return &ChatResult{Content: userFriendlyErrorMessage}, err
 	}
 
 	p.userName = service.GetUserName()
@@ -164,19 +163,18 @@ func ExecuteChat(
 
 	messages, earlyContent, earlyReturn := p.assembleContext(ctx)
 	if earlyReturn {
-		return &ChatResult{Content: earlyContent, HasInteractions: model.HasInteractionsNone}, nil
+		return &ChatResult{Content: earlyContent}, nil
 	}
 
 	fullContent, err := p.streamResponse(ctx, messages)
 	if err != nil {
-		return &ChatResult{Content: fullContent, HasInteractions: model.HasInteractionsNone}, err
+		return &ChatResult{Content: fullContent}, err
 	}
 
 	p.postProcess(ctx)
 
 	return &ChatResult{
-		Content:         fullContent,
-		HasInteractions: model.HasInteractionsNone,
+		Content: fullContent,
 	}, nil
 }
 

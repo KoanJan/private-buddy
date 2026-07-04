@@ -82,6 +82,7 @@ func SetupRouter() *gin.Engine {
 			sessions.POST("", middleware.RequireEmbedding, h.CreateSession)
 			sessions.GET("", h.ListSessions)
 			sessions.GET("/:id", h.GetSession)
+			sessions.GET("/:id/activities", h.GetSessionActivities)
 			sessions.PUT("/:id", h.UpdateSession)
 			sessions.DELETE("/:id", h.DeleteSession)
 		}

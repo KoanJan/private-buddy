@@ -129,6 +129,12 @@ func (h *Handler) DeleteLLMConfig(c *gin.Context) {
 		response.BadRequest(c, "Cannot delete LLM config: it is referenced by "+strconv.Itoa(len(referencingAgents))+" agent(s): "+strings.Join(names, ", "))
 		return
 	}
+	// Check if this LLM config is set as the system LLM.
+	sysCfg := service.GetSystemLLMConfig()
+	if sysCfg != nil && sysCfg.ID == id {
+		response.BadRequest(c, "Cannot delete LLM config: it is currently set as the system LLM")
+		return
+	}
 	h.crudLLM.Delete(id)
 	response.SuccessMessage(c, "LLM config deleted successfully", nil)
 }
@@ -557,11 +563,10 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		return
 	}
 	entity := model.Message{
-		SessionID:       sessionID,
-		Role:            model.MessageRoleUser,
-		Content:         req.Content,
-		Status:          model.MessageStatusCompleted,
-		HasInteractions: model.HasInteractionsNone,
+		SessionID: sessionID,
+		Role:      model.MessageRoleUser,
+		Content:   req.Content,
+		Status:    model.MessageStatusCompleted,
 	}
 	if err := database.DB.Create(&entity).Error; err != nil {
 		response.InternalError(c, err.Error())

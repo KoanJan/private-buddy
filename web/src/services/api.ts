@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { logger } from '../logger';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile, SystemLLMConfig, PublicExperience, UploadedSkill } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile, SystemLLMConfig, PublicExperience, UploadedSkill, ActivityEvent } from '../types';
 
 declare global {
   interface Window {
@@ -125,6 +125,7 @@ export const sessionApi = {
   create: (data: Partial<Session>) => api.post<Session>('/sessions', data),
   update: (id: number, data: Partial<Session>) => api.put<Session>(`/sessions/${id}`, data),
   delete: (id: number) => api.delete(`/sessions/${id}`),
+  getActivities: (id: number) => api.get<ActivityEvent[]>(`/sessions/${id}/activities`),
 };
 
 export const messageApi = {

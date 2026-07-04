@@ -14,7 +14,9 @@
   },
   "chat": {
     "me": "Me",
-    "yesterday": "Yesterday"
+    "yesterday": "Yesterday",
+    "chatView": "Back to Chat",
+    "activityLog": "View Activity"
   },
   "agent": {
     "title": "Agent",
@@ -79,7 +81,8 @@
     "deleteSuccess": "Deleted successfully",
     "deleteFailed": "Failed to delete",
     "confirmDelete": "Are you sure you want to delete this config?",
-    "confirmDeleteTitle": "Confirm Delete"
+    "confirmDeleteTitle": "Confirm Delete",
+    "inUseError": "Cannot delete this LLM config because it is currently set as the system LLM"
   },
   "embeddingConfig": {
     "title": "Embedding",
@@ -234,6 +237,13 @@
     "loadError": "Failed to load config",
     "saveSuccess": "Saved successfully",
     "saveError": "Failed to save"
+  },
+  "activity": {
+    "title": "Agent Activity Log",
+    "noRecords": "No activity records",
+    "loadError": "Failed to load activities",
+    "expand": "Expand",
+    "collapse": "Collapse"
   },
   "publicExperience": {
     "title": "Experience Library",

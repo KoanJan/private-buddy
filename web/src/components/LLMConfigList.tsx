@@ -14,9 +14,11 @@ interface LLMConfigListProps {
   onSelectConfig?: (config: LLMConfig | null) => void;
   showCreate?: boolean;
   onCreateClose?: () => void;
+  onConfigChanged?: () => void;
+  beforeDelete?: (id: number) => Promise<boolean>;
 }
 
-export default function LLMConfigList({ onSelectConfig, showCreate, onCreateClose }: LLMConfigListProps) {
+export default function LLMConfigList({ onSelectConfig, showCreate, onCreateClose, onConfigChanged, beforeDelete }: LLMConfigListProps) {
   return (
     <ConfigList<LLMConfig>
       api={llmConfigApi}
@@ -28,6 +30,8 @@ export default function LLMConfigList({ onSelectConfig, showCreate, onCreateClos
       onSelectConfig={onSelectConfig}
       showCreate={showCreate}
       onCreateClose={onCreateClose}
+      onConfigChanged={onConfigChanged}
+      beforeDelete={beforeDelete}
     />
   );
 }

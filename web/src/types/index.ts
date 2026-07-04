@@ -16,14 +16,9 @@ export interface Message {
   role: number; // 1=user, 2=assistant
   content: string;
   status: number;
-  has_interactions: number;
   created_at: string;
   updated_at: string | null;
 }
-
-export const HAS_INTERACTIONS_PENDING = 0;
-export const HAS_INTERACTIONS_EXISTS = 1;
-export const HAS_INTERACTIONS_NONE = 2;
 
 export interface LLMConfig {
   id: number;
@@ -200,4 +195,13 @@ export interface UploadedSkill {
   title: string;
   raw_content: string;
   created_at: string;
+}
+
+export interface ActivityEvent {
+  time: string;
+  type: string; // "thinking" | "tool_call" | "guidance"
+  content: string; // thinking/guidance text; empty for tool_call
+  tool?: string;   // only for tool_call
+  target?: string; // only for tool_call
+  agent_id: number;
 }

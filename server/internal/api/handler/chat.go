@@ -189,13 +189,12 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 	}
 
 	userMsg := model.Message{
-		SessionID:       session.ID,
-		Role:            model.MessageRoleUser,
-		Content:         message,
-		Status:          model.MessageStatusCompleted,
-		HasInteractions: model.HasInteractionsNone,
+		SessionID: session.ID,
+		Role:      model.MessageRoleUser,
+		Content:   message,
+		Status:    model.MessageStatusCompleted,
 	}
-	if err := database.DB.Select("SessionID", "Role", "Content", "Status", "HasInteractions").Create(&userMsg).Error; err != nil {
+	if err := database.DB.Select("SessionID", "Role", "Content", "Status").Create(&userMsg).Error; err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -252,13 +251,12 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	}
 
 	userMsg := model.Message{
-		SessionID:       sessionID,
-		Role:            model.MessageRoleUser,
-		Content:         message,
-		Status:          model.MessageStatusCompleted,
-		HasInteractions: model.HasInteractionsNone,
+		SessionID: sessionID,
+		Role:      model.MessageRoleUser,
+		Content:   message,
+		Status:    model.MessageStatusCompleted,
 	}
-	if err := database.DB.Select("SessionID", "Role", "Content", "Status", "HasInteractions").Create(&userMsg).Error; err != nil {
+	if err := database.DB.Select("SessionID", "Role", "Content", "Status").Create(&userMsg).Error; err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}

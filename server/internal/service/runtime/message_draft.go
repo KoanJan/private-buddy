@@ -43,12 +43,11 @@ func (r *agentRuntime) commitDraft(req *draftCommitRequest) {
 
 	// Create the message from the draft content
 	msg := model.Message{
-		SessionID:       draft.SessionID,
-		Role:            model.MessageRoleAssistant,
-		Content:         req.content,
-		Status:          model.MessageStatusCompleted,
-		HasInteractions: req.hasInteractions,
-		DraftID:         &draft.ID,
+		SessionID: draft.SessionID,
+		Role:      model.MessageRoleAssistant,
+		Content:   req.content,
+		Status:    model.MessageStatusCompleted,
+		DraftID:   &draft.ID,
 	}
 	if err := tx.Create(&msg).Error; err != nil {
 		applogger.Error("Failed to commit draft to messages",
@@ -101,5 +100,5 @@ func (r *agentRuntime) commitDraft(req *draftCommitRequest) {
 	})
 
 	// Push message event to SSE clients
-	pushMessageEvent(draft.SessionID, msg.ID, msg.Content, msg.HasInteractions)
+	pushMessageEvent(draft.SessionID, msg.ID, msg.Content)
 }

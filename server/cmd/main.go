@@ -81,12 +81,11 @@ func main() {
 			handler.PushSSEToSession(sessionID, data)
 		}
 	}
-	onPushMessage := func(sessionID, messageID int64, content string, hasInteractions int) {
+	onPushMessage := func(sessionID, messageID int64, content string) {
 		data := safeMarshalSSE(map[string]interface{}{
-			"type":             "message",
-			"message_id":       messageID,
-			"content":          content,
-			"has_interactions": hasInteractions,
+			"type":       "message",
+			"message_id": messageID,
+			"content":    content,
 		})
 		if data != "" {
 			handler.PushSSEToSession(sessionID, data)

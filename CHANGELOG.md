@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.24] - 2026-07-05
+
+### Added
+- **Activity View**: new aggregation API transforms raw interaction records into a human-readable execution timeline; frontend panel toggles between chat and activity views, with per-row agent identity display supporting future multi-agent scenarios
+
+### Changed
+- **Task Completion Semantics**: agent execution prompt changed from user-facing delivery instructions to an internal factual work summary, with presentation responsibility delegated to the Chat LLM
+
+### Removed
+- **`has_interactions` Field**: removed across all layers (model, schema, services, runtime, SSE, frontend); activity view availability now determined by the presence of interaction records via API
+
+
 ## [0.0.23] - 2026-07-03
 
 ### Changed

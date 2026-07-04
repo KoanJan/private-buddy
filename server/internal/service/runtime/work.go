@@ -264,22 +264,21 @@ func (w *work) runChat(ctx context.Context) {
 		w.updateDraftContent(result.Content)
 	}
 
-	w.commitDraft(result.Content, result.HasInteractions)
+	w.commitDraft(result.Content)
 }
 
 // commitDraft commits the draft by sending it through the serialized commit channel.
 // The commit handler creates a message from the draft content and pushes it to SSE clients.
-func (w *work) commitDraft(content string, hasInteractions int) {
+func (w *work) commitDraft(content string) {
 	if w.draft == nil {
 		applogger.Error("work.commitDraft called with nil draft", "work_id", w.ID)
 		return
 	}
 
 	w.agent.draftCommitCh <- &draftCommitRequest{
-		draft:           w.draft,
-		sessionID:       w.sessionID,
-		content:         content,
-		hasInteractions: hasInteractions,
+		draft:     w.draft,
+		sessionID: w.sessionID,
+		content:   content,
 	}
 }
 
@@ -365,7 +364,7 @@ func (w *work) getTriggerMessageID() int64 {
 // the draft with an error message.
 func (w *work) handleChatError() {
 	if w.draft != nil {
-		w.commitDraft(userFriendlyErrorMsg, model.HasInteractionsNone)
+		w.commitDraft(userFriendlyErrorMsg)
 	}
 }
 

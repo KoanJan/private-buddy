@@ -6,7 +6,7 @@ import type { LLMConfig } from '../types';
 import { systemLLMConfigApi, llmConfigApi } from '../services/api';
 import { logger } from '../logger';
 
-const SystemLLMConfigForm: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
+const SystemLLMConfigForm: React.FC<{ onSaved?: () => void; refreshKey?: number }> = ({ onSaved, refreshKey }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -16,7 +16,7 @@ const SystemLLMConfigForm: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [refreshKey]);
 
   const loadData = async () => {
     setLoading(true);

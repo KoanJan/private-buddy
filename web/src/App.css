@@ -1095,3 +1095,125 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Activity List — flat timeline */
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background-color: #fafafa;
+}
+
+.activity-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+}
+
+.activity-row {
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.activity-row + .activity-row {
+  border-top: 1px solid #f3f4f6;
+}
+
+.activity-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.activity-agent-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.activity-time {
+  font-size: 11px;
+  color: var(--color-text-placeholder);
+  margin-left: auto;
+}
+
+.activity-summary {
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+
+.activity-expand-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-placeholder, #9ca3af);
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0 0 0 4px;
+  white-space: nowrap;
+}
+
+.activity-expand-btn:hover {
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.activity-row-thinking .activity-summary {
+  color: var(--color-text-secondary);
+}
+
+.activity-row-guidance .activity-summary {
+  color: #7c3aed;
+}
+
+.activity-row-write_notes .activity-summary {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.activity-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  color: var(--color-text-placeholder, #9ca3af);
+  font-size: 13px;
+}
+
+/* View toggle button in chat header */
+.chat-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  flex-shrink: 0;
+}
+
+.chat-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background-color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.chat-view-toggle:hover {
+  border-color: #d1d5db;
+  color: var(--color-text-primary);
+  background-color: #f9fafb;
+}
+
+.chat-view-toggle.active {
+  background-color: #eff6ff;
+  border-color: #93c5fd;
+  color: #2563eb;
+}

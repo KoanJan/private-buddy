@@ -26,6 +26,8 @@ interface ConfigListProps<T extends { id: number }> {
   onSelectConfig?: (config: T | null) => void;
   showCreate?: boolean;
   onCreateClose?: () => void;
+  onConfigChanged?: () => void;
+  beforeDelete?: (id: number) => Promise<boolean>;
   // Field rendered as the primary (top, bold) line of each card.
   primaryField: string;
   // Field rendered as the secondary (bottom, muted) line of each card. A native
@@ -45,6 +47,8 @@ export default function ConfigList<T extends { id: number }>({
   onSelectConfig,
   showCreate,
   onCreateClose,
+  onConfigChanged,
+  beforeDelete,
   primaryField,
   secondaryField,
   gridClassName,
@@ -96,6 +100,7 @@ export default function ConfigList<T extends { id: number }>({
       form.resetFields();
       message.success(t(`${i18nPrefix}.createSuccess`));
       onSelectConfig?.(response.data);
+      onConfigChanged?.();
     } catch (error) {
       logger.error(`Failed to create ${i18nPrefix}:`, error);
       message.error(t(`${i18nPrefix}.createFailed`));
@@ -118,6 +123,7 @@ export default function ConfigList<T extends { id: number }>({
       setEditingConfig(null);
       message.success(t(`${i18nPrefix}.updateSuccess`));
       onSelectConfig?.(response.data);
+      onConfigChanged?.();
     } catch (error) {
       logger.error(`Failed to update ${i18nPrefix}:`, error);
       message.error(t(`${i18nPrefix}.updateFailed`));
@@ -134,12 +140,14 @@ export default function ConfigList<T extends { id: number }>({
       cancelText: t('common.cancel'),
       onOk: async () => {
         try {
+          if (beforeDelete && !(await beforeDelete(configId))) return;
           await api.delete(configId);
           setConfigs(configs.filter(c => c.id !== configId));
           message.success(t(`${i18nPrefix}.deleteSuccess`));
           if (onSelectConfig && editingConfig?.id === configId) {
             onSelectConfig(null);
           }
+          onConfigChanged?.();
         } catch (error) {
           logger.error(`Failed to delete ${i18nPrefix}:`, error);
           message.error(t(`${i18nPrefix}.deleteFailed`));

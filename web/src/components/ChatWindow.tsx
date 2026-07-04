@@ -1,16 +1,17 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Input, Button, message, Spin } from 'antd';
 import { RobotOutlined } from '@ant-design/icons';
-import { Send } from 'lucide-react';
+import { Send, MessagesSquare, List } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMessageTime } from '../utils/time';
 import AgentAvatar from './AgentAvatar';
 import AgentStatusBar from './AgentStatusBar';
+import ActivityList from './ActivityList';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message, Session, Agent, SessionAgentStatus } from '../types';
-import { HAS_INTERACTIONS_NONE, MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING, TEMP_SESSION_ID } from '../types';
-import { messageApi, agentApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
+import { MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING, TEMP_SESSION_ID } from '../types';
+import { messageApi, sessionApi, agentApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
 import { logger } from '../logger';
 
 /**
@@ -46,9 +47,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   const [agentStatus, setAgentStatus] = useState<number>(PARTICIPANT_STATUS_IDLE);
   const [sessionAgents, setSessionAgents] = useState<SessionAgentStatus[]>([]);
+  const [viewMode, setViewMode] = useState<'chat' | 'activity'>('chat');
+  const [hasActivities, setHasActivities] = useState(false);
   
   // Derived: streaming state is determined by agent runtime status (from SSE agent_status events)
   const isStreaming = agentStatus !== PARTICIPANT_STATUS_IDLE;
+
+  // Show activity toggle if the session has any work activities (checked via API).
 
   // Refs for managing async state and preventing race conditions
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -61,6 +66,20 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const loadMessagesRef = useRef<() => void>(() => {});
 
   const isTempSession = session?.id === TEMP_SESSION_ID;
+
+  // Check whether the session has any activity records (existing message flag or API check).
+  useEffect(() => {
+    if (!session || isTempSession) {
+      setHasActivities(false);
+      return;
+    }
+    // Lightweight check: if any work has interactions, the activities API returns non-empty.
+    sessionApi.getActivities(session.id).then(res => {
+      setHasActivities(Array.isArray(res.data) && res.data.length > 0);
+    }).catch(() => {
+      setHasActivities(false);
+    });
+  }, [session?.id, isTempSession]);
 
   // Load session agents with their runtime status
   useEffect(() => {
@@ -155,6 +174,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     setMessages([]);
     isInitialLoadRef.current = true;
     setInputValue('');
+    setViewMode('chat');
     
     prevSessionIdRef.current = currentId;
   }, [session?.id]);
@@ -291,7 +311,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
             role: MESSAGE_ROLE_ASSISTANT,
             content: data.content,
             status: MESSAGE_STATUS_COMPLETED,
-            has_interactions: data.has_interactions ?? HAS_INTERACTIONS_NONE,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           };
@@ -349,11 +368,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           role: MESSAGE_ROLE_USER,
           content: inputValue,
           status: MESSAGE_STATUS_COMPLETED,
-          has_interactions: HAS_INTERACTIONS_NONE,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        
+
         // No placeholder AI message — agent response will arrive via SSE 'message' event
         // when the draft is committed
         setMessages([userMessage]);
@@ -375,7 +393,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
           role: MESSAGE_ROLE_USER,
           content: inputValue,
           status: 1,
-          has_interactions: HAS_INTERACTIONS_NONE,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -410,102 +427,120 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
 
   return (
     <>
-      <AgentStatusBar agents={sessionAgents} />
-      <div className="chat-messages" ref={chatMessagesRef}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '40px' }}>
-            <Spin size="large" />
-          </div>
-        ) : (
-          <>
-            {messages.map((msg) => (
-                <div key={msg.id} className={`message-item ${msg.role === MESSAGE_ROLE_USER ? 'user' : 'assistant'}`}>
-                  <div className="message-header">
-                    {msg.role === MESSAGE_ROLE_USER ? (
-                      <>
-                        <span className="message-time">{formatMessageTime(new Date(msg.updated_at || msg.created_at))}</span>
-                        <span className="message-role">{t('chat.me')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="message-role">
-                          <AgentAvatar avatar={currentAgent?.avatar || ''} size={32} iconSize={16} borderRadius="8px" />
-                          {currentAgent?.name || 'AI'}
-                        </span>
-                        <span className="message-time">{formatMessageTime(new Date(msg.updated_at || msg.created_at))}</span>
-                      </>
-                    )}
-                  </div>
-                  {msg.role === MESSAGE_ROLE_ASSISTANT && msg.content === '' && isStreaming ? (
-                    <div style={{ textAlign: 'center', padding: '8px' }}>
-                      <Spin size="small" />
-                    </div>
-                  ) : (
-                  <div className="message-content">
-                    {msg.role === MESSAGE_ROLE_ASSISTANT ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
-                    ) : (
-                      msg.content
-                    )}
-                  </div>
-                  )}
-                </div>
-              ))}
-            <div ref={messagesEndRef} />
-          </>
+      <div className="chat-header-row">
+        <AgentStatusBar agents={sessionAgents} />
+        {!isTempSession && hasActivities && (
+          <button
+            className={`chat-view-toggle ${viewMode === 'activity' ? 'active' : ''}`}
+            onClick={() => setViewMode(viewMode === 'chat' ? 'activity' : 'chat')}
+          >
+            {viewMode === 'chat' ? <List size={14} /> : <MessagesSquare size={14} />}
+            {viewMode === 'chat' ? t('chat.activityLog') : t('chat.chatView')}
+          </button>
         )}
       </div>
 
-      <div className="chat-input">
-        <div className="input-container-wrapper">
-          <div className="placeholder-text">{t('app.askAnything')}</div>
-          <div className="input-container">
-            <div className="input-area">
-              <Input.TextArea
-                placeholder=""
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onPressEnter={(e) => {
-                  if (!e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                autoSize={{ minRows: 1, maxRows: 4 }}
-                bordered={false}
-                style={{
-                  width: '100%',
-                  fontSize: '14px',
-                  resize: 'none',
-                  backgroundColor: 'transparent'
-                }}
-              />
-            </div>
-            <div className="toolbar-area">
-              <Button
-                type="primary"
-                icon={<Send size={14} />}
-                onClick={handleSend}
-                disabled={isSendDisabled}
-                style={{
-                  borderRadius: '50%',
-                  width: '28px',
-                  height: '28px',
-                  padding: 0,
-                  backgroundColor: isSendDisabled ? '#d1d5db' : '#1890ff',
-                  borderColor: isSendDisabled ? '#d1d5db' : '#1890ff',
-                  color: isSendDisabled ? 'var(--color-text-placeholder)' : '#ffffff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              />
+      {viewMode === 'activity' ? (
+        <ActivityList sessionId={session.id} agents={sessionAgents} />
+      ) : (
+        <>
+          <div className="chat-messages" ref={chatMessagesRef}>
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '40px' }}>
+                <Spin size="large" />
+              </div>
+            ) : (
+              <>
+                {messages.map((msg) => (
+                    <div key={msg.id} className={`message-item ${msg.role === MESSAGE_ROLE_USER ? 'user' : 'assistant'}`}>
+                      <div className="message-header">
+                        {msg.role === MESSAGE_ROLE_USER ? (
+                          <>
+                            <span className="message-time">{formatMessageTime(new Date(msg.updated_at || msg.created_at))}</span>
+                            <span className="message-role">{t('chat.me')}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="message-role">
+                              <AgentAvatar avatar={currentAgent?.avatar || ''} size={32} iconSize={16} borderRadius="8px" />
+                              {currentAgent?.name || 'AI'}
+                            </span>
+                            <span className="message-time">{formatMessageTime(new Date(msg.updated_at || msg.created_at))}</span>
+                          </>
+                        )}
+                      </div>
+                      {msg.role === MESSAGE_ROLE_ASSISTANT && msg.content === '' && isStreaming ? (
+                        <div style={{ textAlign: 'center', padding: '8px' }}>
+                          <Spin size="small" />
+                        </div>
+                      ) : (
+                      <div className="message-content">
+                        {msg.role === MESSAGE_ROLE_ASSISTANT ? (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        ) : (
+                          msg.content
+                        )}
+                      </div>
+                      )}
+                    </div>
+                  ))}
+                <div ref={messagesEndRef} />
+              </>
+            )}
+          </div>
+
+          <div className="chat-input">
+            <div className="input-container-wrapper">
+              <div className="placeholder-text">{t('app.askAnything')}</div>
+              <div className="input-container">
+                <div className="input-area">
+                  <Input.TextArea
+                    placeholder=""
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onPressEnter={(e) => {
+                      if (!e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                    autoSize={{ minRows: 1, maxRows: 4 }}
+                    bordered={false}
+                    style={{
+                      width: '100%',
+                      fontSize: '14px',
+                      resize: 'none',
+                      backgroundColor: 'transparent'
+                    }}
+                  />
+                </div>
+                <div className="toolbar-area">
+                  <Button
+                    type="primary"
+                    icon={<Send size={14} />}
+                    onClick={handleSend}
+                    disabled={isSendDisabled}
+                    style={{
+                      borderRadius: '50%',
+                      width: '28px',
+                      height: '28px',
+                      padding: 0,
+                      backgroundColor: isSendDisabled ? '#d1d5db' : '#1890ff',
+                      borderColor: isSendDisabled ? '#d1d5db' : '#1890ff',
+                      color: isSendDisabled ? 'var(--color-text-placeholder)' : '#ffffff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
     </>
   );

@@ -14,7 +14,9 @@
   },
   "chat": {
     "me": "我",
-    "yesterday": "昨天"
+    "yesterday": "昨天",
+    "chatView": "返回对话",
+    "activityLog": "查看活动"
   },
   "agent": {
     "title": "Agent",
@@ -79,7 +81,8 @@
     "deleteSuccess": "删除成功",
     "deleteFailed": "删除失败",
     "confirmDelete": "确定要删除这个配置吗？",
-    "confirmDeleteTitle": "确认删除"
+    "confirmDeleteTitle": "确认删除",
+    "inUseError": "无法删除此LLM配置，它当前正在被用作系统LLM"
   },
   "embeddingConfig": {
     "title": "向量化模型",
@@ -234,6 +237,13 @@
     "loadError": "加载配置失败",
     "saveSuccess": "保存成功",
     "saveError": "保存失败"
+  },
+  "activity": {
+    "title": "Agent 活动日志",
+    "noRecords": "暂无 Agent 活动记录",
+    "loadError": "加载活动记录失败",
+    "expand": "展开",
+    "collapse": "收起"
   },
   "publicExperience": {
     "title": "经验库",
