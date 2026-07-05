@@ -23,33 +23,23 @@ Two issues stood out:
 
 We draw on **focalization** from narratology (Toolan, 2001) — the distinction between *who speaks* (narrative voice) and *who sees* (focalization). Internal focalization lets the reader perceive events through a character's eyes, creating immersion. External focalization keeps the reader at a distance, observing from outside.
 
-### What We Changed
+### Narrative Techniques
 
-**Focalization shift: external → internal**
+**Internal focalization for background story**
 
-The background story (compressed history) now uses internal focalization — addressing the agent as "You":
+The background story (compressed history) uses internal focalization — addressing the agent as "You":
 
 ```
-Before (external focalization):
-"The user and the assistant discussed travel plans. The assistant suggested..."
-
-After (internal focalization):
 "You have been discussing travel plans with the user. The user mentioned..."
 ```
 
-Why this works: the background story represents the agent's *own* history. Writing it from the agent's viewpoint ("You have been...") lets the LLM naturally step into the role and continue the conversation, rather than narrating it from the sidelines.
+The background story represents the agent's *own* history. Writing it from the agent's viewpoint ("You have been...") lets the LLM naturally step into the role and continue the conversation, rather than narrating it from the sidelines.
 
-**Cohesive transitions instead of labels**
+**Cohesive transitions between sections**
 
-Section headers between prompt components were previously bracketed metadata labels:
+Section headers between prompt components use narrative-style transitions rather than bracketed metadata labels:
 
 ```
-Before:
-[Conversation Summary (compressed from messages 1-10)]
----
-[Recent Conversation (messages 11-15)]
-
-After:
 Background context from earlier in the conversation (messages 1-10):
 ---
 Recent conversation (messages 11-15):
@@ -111,7 +101,7 @@ We model user state along three dimensions. Intent type is *not* a separate dime
    (after the narrative sections, before the response directive)
 ```
 
-**Why structured output → natural language, not XML tags**: The prompt is a narrative. Dropping `<emotion>frustrated</emotion>` into the middle of it breaks the flow that focalization and cohesion carefully built. Instead, we use `with_structured_output(UserState)` to constrain the inference LLM's output, then convert the result to a natural language sentence that fits seamlessly into the instruction area.
+**Why structured output → natural language, not XML tags**: The prompt is a narrative. Dropping `<emotion>frustrated</emotion>` into the middle of it breaks the flow that focalization and cohesion carefully built. Instead, we use `with_structured_output(PersonState)` to constrain the inference LLM's output, then convert the result to a natural language sentence that fits seamlessly into the instruction area.
 
 **Why a separate LLM call, not combined with narrative generation**: The inputs differ (summary+segments vs. recent messages), the logic differs (storytelling vs. psychological inference), and the output formats differ (free text vs. structured enumeration). Forcing both into one prompt risks doing neither well.
 

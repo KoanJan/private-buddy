@@ -98,10 +98,10 @@ Trimming the oldest entries minimizes information loss because the information t
 Each task execution operates within an isolated workspace that provides two complementary information channels:
 
 ```
-~/PrivateBuddyData/workspace/{session_id}/
+~/PrivateBuddyData/workspace/{agent_id}/{session_id}/
     .meta/
-        task.md          # System-managed: task requirements + evolution
         notes.md         # System-managed: reader-oriented shared context (why)
+        fingerprint.txt  # System-managed: reflection dedup hash
     output/              # Agent's working directory (what — observable world state)
 ```
 
@@ -109,7 +109,7 @@ The `.meta/` and `output/` directories serve fundamentally different roles:
 
 | Directory | Information type | Managed by | Agent access | Purpose |
 |-----------|-----------------|-----------|-------------|---------|
-| `.meta/` | Why (reasoning) | System | Read-only via context system; write via `write_notes` tool | Task definition, decision rationale, progress tracking |
+| `.meta/` | Why (reasoning) | System | Read-only via context system; write via `write_notes` tool | Decision rationale, progress tracking |
 | `output/` | What (world state) | Agent | Full read-write via bash | Code, files, deliverables — the materialized results of actions |
 
 This separation is not arbitrary. It mirrors the shift handoff distinction: the patient chart (managed, structured, records reasoning) vs. the patient's physical state (directly observable, records outcomes). The incoming nurse reads the chart for why and observes the patient for what. The incoming LLM instance reads notes.md for why and observes output/ for what.
@@ -123,13 +123,12 @@ The agent's context is assembled from two distinct parts:
 ```
 messages = [
     system:  system_prompt + [Context Information]    ← Fixed (always complete)
-    user:    [Task]\n{task.md}                        ← Fixed (always complete)
     user:    [Your Notes]\n{notes.md}                 ← Fixed (always complete)
     ...dynamic messages (last w iterations)            ← Window-controlled
 ]
 ```
 
-**Fixed part** — task.md and notes.md are always fully included. These are the agent's essential prerequisites: what it needs to accomplish (task.md), and why things are the way they are (notes.md). Removing either would be like asking an incoming nurse to continue care without the handoff document or the treatment plan.
+**Fixed part** — the system prompt (which includes the Guidance as a self-directive) and notes.md are always fully included. These are the agent's essential prerequisites: what it needs to accomplish (Guidance in the system prompt), and why things are the way they are (notes.md). Removing either would be like asking an incoming nurse to continue care without the handoff document or the treatment plan.
 
 **Dynamic part** — only the last `w` iterations (default: 10) are visible. Older iterations are discarded entirely — not compressed, not archived, not retrievable. This is the finite working memory that makes explicit information transfer necessary.
 
@@ -305,17 +304,21 @@ Bash provides the agent's interface with the world state (what). Write_notes pro
 
 A critical design decision: **if a tool is unavailable, the agent doesn't know it exists.** When web search is not configured, the agent receives only bash and write_notes. Its system prompt doesn't mention web search, preventing it from attempting unavailable operations.
 
-### Task Requirement Rewriting
+### Cognitive Order: Comprehend → Decide → Execute
 
-User messages are often ambiguous or context-dependent ("change that file"). Before entering the task loop, a rewriter service uses conversation history to produce a self-contained task requirement:
+User messages are often ambiguous or context-dependent ("change that file"). Before entering the task loop, a cognitive order pipeline (Comprehend → Decide) produces a clear execution intent called Guidance:
 
 ```
 User message:  "Change that file"
 Conversation:  [User: "Create a README.md", AI: "Created..."]
-Rewritten:     "Modify README.md — specific changes need user confirmation"
+
+Comprehend → Decide pipeline produces:
+  Guidance: "Modify README.md to update the installation instructions"
+
+Guidance is the task requirement
 ```
 
-This ensures the agent receives a clear, unambiguous task — not a vague reference that requires guesswork.
+This ensures the agent receives a clear, unambiguous task. The Guidance is injected into the system prompt as a self-directive. New guidance can arrive during execution via the guidance channel, enabling mid-course corrections when the user provides additional direction.
 
 ---
 
@@ -329,8 +332,8 @@ This ensures the agent receives a clear, unambiguous task — not a vague refere
 │       │                                                                      │
 │       ▼                                                                      │
 │   ┌──────────────────────────────────────────────────────────────────────┐   │
-│   │ TaskRequirementRewriter                                              │   │
-│   │ Ambiguous user message → Self-contained task requirement             │   │
+│   │ Cognitive Order Pipeline (Comprehend → Decide)                       │   │
+│   │ Ambiguous user message → Guidance (execution intent)                 │   │
 │   └──────────────────────────────────────────────────────────────────────┘   │
 │       │                                                                      │
 │       ▼                                                                      │
@@ -338,9 +341,9 @@ This ensures the agent receives a clear, unambiguous task — not a vague refere
 │   │ TaskExecutor                                                         │   │
 │   │                                                                      │   │
 │   │  1. Init workspace (.meta/ + output/)                                │   │
-│   │  2. Read task.md + notes.md                                          │   │
+│   │  2. Read notes.md                                                    │   │
 │   │  3. Build ContextManager (fixed part + window)                       │   │
-│   │  4. Assemble tools (bash + write_notes + web_search?)                │   │
+│   │  4. Assemble tools (bash + write_notes + experience + ...)           │   │
 │   │  5. Create TaskLoop                                                  │   │
 │   │                                                                      │   │
 │   │  ┌────────────────────────────────────────────────────────────────┐  │   │
@@ -350,15 +353,15 @@ This ensures the agent receives a clear, unambiguous task — not a vague refere
 │   │  │  │   Context    │    │     LLM     │    │    Tools    │       │  │   │
 │   │  │  │   Manager    │───►│    Client    │───►│  bash (what)│       │  │   │
 │   │  │  │              │    │             │    │  notes (why)│       │  │   │
-│   │  │  │ Fixed:       │    │             │    │  web_search │       │  │   │
-│   │  │  │  - system    │    │             │    └─────────────┘       │  │   │
-│   │  │  │  - task.md   │    │             │           │              │  │   │
-│   │  │  │  - notes.md  │    │             │           ▼              │  │   │
-│   │  │  │              │◄───┤             │    Tool Results          │  │   │
-│   │  │  │ Window:      │    │             │           │              │  │   │
-│   │  │  │  - last w    │    │             │           ▼              │  │   │
-│   │  │  │  iterations  │    │             │    Next Iteration        │  │   │
-│   │  │  └─────────────┘    └─────────────┘                           │  │   │
+│   │  │  │ Fixed:       │    │             │    │  experience │       │  │   │
+│   │  │  │  - system    │    │             │    │  wake_me    │       │  │   │
+│   │  │  │    (Guidance)│    │             │    └─────────────┘       │  │   │
+│   │  │  │  - notes.md  │    │             │           │              │  │   │
+│   │  │  │              │◄───┤             │           ▼              │  │   │
+│   │  │  │ Window:      │    │             │    Tool Results          │  │   │
+│   │  │  │  - last w    │    │             │           │              │  │   │
+│   │  │  │  iterations  │    │             │           ▼              │  │   │
+│   │  │  └─────────────┘    └─────────────┘    Next Iteration        │  │   │
 │   │  │                                                                │  │   │
 │   │  │  Checkpoint: distance ≥ window → write_notes only             │  │   │
 │   │  │  Success:    finish=stop → update notes → return              │  │   │
@@ -376,11 +379,11 @@ This ensures the agent receives a clear, unambiguous task — not a vague refere
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The four information sources — task.md, notes.md, output/ (via bash), and recent iterations (via window) — each serve a distinct role. No source overlaps with another, and none requires history retrieval or system compression:
+The information sources — Guidance (in system prompt), notes.md, output/ (via bash), and recent iterations (via window) — each serve a distinct role. No source overlaps with another, and none requires history retrieval or system compression:
 
 | What the agent needs | Where it comes from | Information type |
 |---------------------|-------------------|-----------------|
-| What the user wants | task.md | Goal (stable anchor) |
+| What the user wants | Guidance in system prompt | Goal (execution intent) |
 | What the world looks like now | output/ via bash | What (observable state) |
 | Why things are the way they are | notes.md | Why (reader-oriented context) |
 | What was just attempted | Last w iterations | What + Why (recent, unfiltered) |

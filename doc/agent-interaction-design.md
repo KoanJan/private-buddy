@@ -150,14 +150,18 @@ Web search is a specialized tool for one meta-capability: reading the state of t
 
 The principle: **a tool must earn its place by being irreplaceable.** Specialized tools that can be composed from bash commands should not exist as separate primitives.
 
-### The "Two Tools + One Memory" Principle
+### The Minimal Tool Set Principle
 
-We deliberately limit the agent to two tools:
+We deliberately keep the agent's tool set small. Each tool must earn its place by being irreplaceable — specialized tools that can be composed from bash commands should not exist as separate primitives.
 
-| Tool | Capability | Why It's Sufficient |
+| Tool | Capability | Why It's Necessary |
 |------|------------|---------------------|
-| **Bash** | Execute shell commands | Covers file operations, code execution, system interaction |
-| **Web Search** | Search the internet | Covers real-time information, documentation, research |
+| **bash** | Execute shell commands | Covers file operations, code execution, system interaction |
+| **write_notes** | Persist reasoning for future LLM instances | Bridges LLM statelessness across iterations (see task execution doc) |
+| **scan_my_experience** | Search past experiences by keyword | Retrieves lessons learned from prior tasks |
+| **recall_my_experience** | Read full experience content | Loads specific experience detail by ID |
+| **wake_me_when** | Schedule future trigger | Enables time-based agent activation |
+| **web_search** | Search the internet | Covers real-time information (optional, only when configured) |
 
 This minimalism is intentional. Each additional tool:
 
@@ -169,18 +173,16 @@ This minimalism is intentional. Each additional tool:
 
 A critical design decision: **if a tool is unavailable, the agent shouldn't know it exists.**
 
-```python
-def _create_tools(self, workspace: Optional[Path] = None) -> List[Tool]:
-    tools = [BashTool(workspace=workspace)]
-    
-    search_config = SearchService.get_config(self._db)
-    if search_config and search_config.is_available():
-        tools.append(WebSearchTool(search_config=search_config))
-    
-    return tools
+```
+tools = [BashTool, WriteNotesTool, WakeMeWhenTool, ScanExperienceTool, RecallExperienceTool]
+
+if searchConfig != nil && searchConfig.IsAvailable():
+    tools.append(WebSearchTool)
+
+return tools
 ```
 
-When search is disabled, the agent receives only the bash tool. Its system prompt doesn't mention web search. This prevents the agent from attempting unavailable operations and failing.
+When search is disabled, the agent never receives the web search tool. Its system prompt doesn't mention web search. This prevents the agent from attempting unavailable operations and failing.
 
 ### Workspace Isolation
 
@@ -189,9 +191,12 @@ The bash tool is confined to a workspace directory:
 ```
 ~/PrivateBuddyData/
 └── workspace/
-    ├── 1/          # Session 1's workspace
-    ├── 2/          # Session 2's workspace
-    └── ...
+    └── {agent_id}/
+        ├── {session_id}/          # Session's workspace
+        │   ├── .meta/             # System-managed files
+        │   └── output/            # Agent's working directory
+        └── {session_id}/
+            └── ...
 ```
 
 This provides:
@@ -199,6 +204,9 @@ This provides:
 1. **Security**: Commands cannot access paths outside the workspace
 2. **Isolation**: Each session's files are independent
 3. **Continuity**: The same workspace persists across multiple deliveries in a session
+4. **Multi-agent readiness**: The agent_id layer prepares for future multi-agent isolation (Actor model)
+
+Path resolution is consolidated in a dedicated workspace package (`workspace.GetWorkspacePath`, `workspace.GetMetaDir`, `workspace.GetOutputDir`), eliminating scattered path concatenation logic across packages.
 
 Path traversal detection ensures commands like `cd ..` or `/etc/passwd` are blocked.
 
@@ -246,21 +254,9 @@ The `type` field uses the **agent's perspective**:
 
 This perspective is crucial. We record what the agent "saw" and "decided," not what an external observer would note (exit codes, stdout). The world's feedback (tool results) becomes part of the next request's input.
 
-### Message Status Tracking
+### Interaction Visibility
 
-The `messages` table includes a `has_interactions` field:
-
-| Value | Meaning | Who Uses It |
-|-------|---------|-------------|
-| 0 | Pending | Agent messages during execution |
-| 1 | Has interactions | Agent messages that triggered tool use |
-| 2 | No interactions | User messages (always), or agent messages that didn't need tools |
-
-This enables the frontend to:
-
-1. Poll for status changes during execution
-2. Display an interaction icon when `has_interactions=1`
-3. Fetch and display interaction records on demand
+The frontend determines whether a message has interactions by querying the interactions table directly. An activity view API aggregates raw interaction records into a human-readable execution timeline, allowing the frontend to toggle between chat and activity views per message. Availability is determined by the presence of interaction records via API.
 
 ---
 
@@ -268,43 +264,31 @@ This enables the frontend to:
 
 ### The Agent Loop
 
-```python
-class AgentLoop:
-    async def run(self, task_requirement: str) -> Dict[str, Any]:
-        context = ContextManager(system_prompt=self._system_prompt)
-        context.add_user_message(task_requirement)
-        
-        for iteration in range(self._max_iterations):
-            # Record request
-            self._record_interaction(
-                iteration=iteration,
-                type=INTERACTION_TYPE_REQUEST,
-                data=context.messages
-            )
-            
-            # Call LLM
-            response = await self._llm_client.invoke(context.messages)
-            
-            # Record response
-            self._record_interaction(
-                iteration=iteration,
-                type=INTERACTION_TYPE_RESPONSE,
-                data={
-                    "content": response.content,
-                    "tool_calls": response.tool_calls,
-                    "finish_reason": response.finish_reason
-                }
-            )
-            
-            if response.finish_reason == "stop":
-                return {"status": "success", "result": response.content}
-            
-            if response.finish_reason == "tool_calls":
-                for tool_call in response.tool_calls:
-                    result = await self._execute_tool(tool_call)
-                    context.add_tool_message(tool_call.id, result)
-        
-        return {"status": "failure", "reason": "Max iterations reached"}
+```
+func (tl *TaskLoop) Run(ctx context.Context) *LoopResult:
+    for iteration := 1; iteration <= maxIterations; iteration++:
+        // Record request (what the agent sees)
+        recordInteraction(iteration, type=REQUEST, data=context.messages)
+
+        // Call LLM
+        response = llmClient.invoke(context.messages)
+
+        // Record response (what the agent decided)
+        recordInteraction(iteration, type=RESPONSE, data={
+            content, tool_calls, finish_reason
+        })
+
+        switch response.finishReason:
+        case "stop":
+            return success(result=response.content)
+        case "tool_calls":
+            for tool_call in response.tool_calls:
+                result = executeTool(tool_call)
+                context.addToolResult(tool_call.id, result)
+        case "length":
+            // Inform agent, continue
+
+    return failure(reason="Max iterations reached")
 ```
 
 Key points:
@@ -312,44 +296,46 @@ Key points:
 1. Every iteration is recorded before and after the LLM call
 2. The context manager maintains internal messages that never leak out
 3. The final result is the only thing returned to the caller
+4. New guidance can arrive via a channel at iteration boundaries, injected as environment events in the ReAct cycle
 
 ### Dependency Injection
 
-The agent service receives its dependencies through the constructor:
+The agent service receives its dependencies through a params struct:
 
-```python
-class AgentService:
-    def __init__(self, db: DBSession):
-        self._db = db  # Public resource: inject
-    
-    async def execute(
-        self,
-        task_requirement: str,
-        llm_config: LLMConfig,  # Data object: pass as parameter
-        ...
-    ) -> AgentDelivery:
-        ...
+```
+type RunTaskParams struct {
+    LLMConfig  *model.LLMConfig
+    SessionID  int64
+    AgentID    int64
+    UserMsgID  int64
+    WorkID     int64
+    Guidance   string                  // Execution intent from Decide phase
+    Ctx        context.Context
+    OnNotify   func(data string)       // Optional SSE callback
+    GuidanceCh <-chan GuidanceDirective // Channel for mid-course corrections
+}
 ```
 
 This distinction is important:
 
-- **Public resources** (database session): Injected once, used throughout
-- **Data objects** (LLM config, task requirement): Passed per invocation
+- **Public resources** (database session): Injected once at initialization, used throughout
+- **Data objects** (LLM config, session IDs, guidance): Passed per invocation
 
-### Task Requirement Rewriting
+### Cognitive Order: Comprehend → Decide → Execute
 
-User messages may be ambiguous or context-dependent. Before execution, a rewriter service clarifies the task:
+User messages may be ambiguous or context-dependent. Before execution, a cognitive order pipeline produces a clear execution intent (Guidance):
 
-```python
-rewritten = await TaskRequirementRewriter.rewrite(
-    llm_config=llm_config,
-    user_message="Change that file",  # Ambiguous
-    history=recent_messages,          # Context for resolution
-)
-# Result: "Modify README.md to update the installation instructions"
+```
+User message:  "Change that file"
+Conversation:  [User: "Create a README.md", AI: "Created..."]
+
+Comprehend → Decide pipeline produces:
+  Guidance: "Modify README.md to update the installation instructions"
+
+Guidance is the task requirement
 ```
 
-This ensures the agent receives a self-contained task requirement, not a vague reference.
+This ensures the agent receives a clear, unambiguous task. The Guidance is injected into the system prompt as a self-directive, and new guidance can arrive during execution via the guidance channel (mid-course corrections from subsequent user messages).
 
 ---
 
@@ -365,28 +351,39 @@ This ensures the agent receives a self-contained task requirement, not a vague r
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Cognitive Order Pipeline                                │
+│                                                                              │
+│   Comprehend (understand intent) → Decide (produce Guidance)                │
+│                                                                              │
+│   Guidance = execution intent, injected as self-directive in system prompt   │
+│   New guidance can arrive during execution via channel (mid-course corrections)│
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
 │                           Agent Service                                      │
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                         Agent Loop                                   │   │
 │   │                                                                      │   │
-│   │   Task Requirement ──► Context Manager ──► LLM Client               │   │
-│   │                              │                  │                    │   │
-│   │                              │                  ▼                    │   │
-│   │                              │         Tool Calls?                  │   │
-│   │                              │              │                       │   │
-│   │                              │         ┌────┴────┐                  │   │
-│   │                              │         │         │                  │   │
-│   │                              │      BashTool  WebSearch             │   │
-│   │                              │         │         │                  │   │
-│   │                              │         └────┬────┘                  │   │
-│   │                              │              │                       │   │
-│   │                              └──────────────┘                       │   │
-│   │                                      │                              │   │
-│   │                              Tool Results                           │   │
-│   │                                      │                              │   │
-│   │                                      ▼                              │   │
-│   │                              Next Iteration                         │   │
+│   │   Guidance ──► Context Manager ──► LLM Client                        │   │
+│   │                      │                  │                             │   │
+│   │                      │                  ▼                             │   │
+│   │                      │         Tool Calls?                           │   │
+│   │                      │              │                                │   │
+│   │                      │    ┌────────┬────┬────────┐                   │   │
+│   │                      │    │        │    │        │                   │   │
+│   │                      │  Bash  WriteNotes  Experience  WakeMeWhen     │   │
+│   │                      │    │        │    │        │    (+ WebSearch?) │   │
+│   │                      │    └────────┴────┴────────┘                   │   │
+│   │                      │              │                                │   │
+│   │                      └──────────────┘                                │   │
+│   │                             │                                       │   │
+│   │                      Tool Results                                   │   │
+│   │                             │                                       │   │
+│   │                             ▼                                       │   │
+│   │                      Next Iteration                                 │   │
 │   │                                                                      │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
@@ -421,13 +418,13 @@ This ensures the agent receives a self-contained task requirement, not a vague r
 
 | Principle | Implementation |
 |-----------|----------------|
-| **Delegation model** | Agent receives task requirement, returns delivery |
+| **Delegation model** | Agent receives Guidance, returns delivery |
 | **Interaction boundary** | Tool calls stored separately from user conversation |
-| **Minimal tools** | Bash + web search cover most tasks |
+| **Minimal tools** | Bash + write_notes + experience + wake_me_when cover most tasks |
 | **Tool invisibility** | Unavailable tools are unknown to the agent |
-| **Workspace isolation** | Each session has a confined workspace |
+| **Workspace isolation** | Each session has a confined workspace under agent_id layer |
 | **Agent perspective** | Interactions record what agent saw/decided |
-| **Dependency injection** | Public resources via constructor, data via parameters |
+| **Dependency injection** | Public resources via init, data via params struct |
 
 ---
 

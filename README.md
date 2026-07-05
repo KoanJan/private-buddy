@@ -6,125 +6,89 @@
   </p>
 </div>
 
-A modern, private AI assistant system built from scratch. I initially called this project "Boring Practice" because it was just a practice project - I once just wanted to build a modern agent system from zero to show I know how to do it. However, as development and iteration continued, I thought perhaps I could try to make it a low-barrier application: no complex deployment, users can start using it right after downloading and installing. Additionally, I found something interesting — as an engineer without a background in cognitive science, psychology, or narratology, I discovered that through AI one can quickly judge whether certain theories have practical positive significance for the current business or engineering, and then apply them cross-disciplinarily, which was truly hard to imagine before.
+A private AI assistant that runs entirely on your machine. Download, install, configure your LLM API key — and you have a fully autonomous agent system with long-term memory, task execution, and knowledge base integration.
+
+This project started as a practice exercise in building a modern agent system from scratch. Along the way, it became a space to explore a question that intrigued me as an engineer: can theories from cognitive science, narratology, and psychology be applied cross-disciplinarily to improve agent design — and can AI itself help validate whether those theories have practical engineering value?
+
+The result is a system whose design choices are grounded in theory rather than convention. The design documents below describe the reasoning behind each subsystem.
 
 ---
 
-## What It Does
+## What is Different
 
-You can:
-- Create multiple AI agents with different prompts
-- Chat with them and keep history
-- Delegate tasks to agents for real-world execution
-- Build knowledge bases and bind them to agents for RAG-enhanced chat
+Most agent frameworks treat all messages uniformly — tool calls, user messages, and assistant replies all go into the same conversation history. Private Buddy takes a different approach across several subsystems.
 
-Unlike traditional Q&A chatbots, Private Buddy agents are autonomous — they decide how to respond (answer immediately, acknowledge-and-work, or wake themselves for scheduled tasks) rather than passively reacting to every message.
+### Cognitive Order Pipeline
 
-More features will be added gradually.
+Before an agent responds, a Comprehend → Decide pipeline determines the response strategy: should the agent answer directly (chat), acknowledge and execute (task), or schedule a future action? The pipeline produces a **Guidance** — an execution intent that becomes the task requirement. The cognitive work of understanding intent happens before execution begins.
+
+→ [Agent Interaction Design](doc/agent-interaction-design.md)
+
+### Message Isolation
+
+Tool interactions (bash commands, web searches, file operations) are stored separately from user conversation. The user sees only the request and the delivery — the agent's internal execution process is invisible, just like delegating a task to a colleague. This separation keeps the conversation clean and prevents cognitive overload from irrelevant tool history.
+
+→ [Agent Interaction Design](doc/agent-interaction-design.md)
+
+### Reader-Oriented Notes
+
+LLM calls are stateless — each invocation is a fresh instance with no shared hidden state, like nurses at a shift change. The agent writes notes for a **future reader** (the next LLM instance), not for itself. Notes record *why* decisions were made; the workspace's physical state records *what* happened. A checkpoint mechanism forces periodic note-writing, ensuring continuity even when the agent is deep in a task.
+
+→ [Task Execution & Reader-Oriented Memory](doc/task-execution-and-reader-oriented-memory.md)
+
+### Experience Rather Than Skill
+
+After each task, a reflection pipeline distills transferable principles from the agent's session notes — stripping task-identifying details and host coupling, keeping only the abstract insight. "State the insight, not what was done." These experiences persist as permanent cognitive assets, distinct from the memory system where observations fade with disuse. When reflection identifies a lesson that refines an existing one, it updates rather than appends — the library converges, not just accumulates.
+
+Retrieval uses progressive disclosure: scan a lightweight summary, then recall full content only for relevant entries. This makes retrieval an active agent behavior — the agent decides what to recall — rather than system-driven context insertion. The `when_to_use` field serves as a reverse filter against semantic false positives, helping the agent distinguish "similar but inapplicable" from "different but applicable."
+
+Anthropic's Agent Skills standard lets skills bundle guidance with scripts, assets, and host-specific tool bindings — effective when the package runs in its target environment, but the host-coupled elements don't transfer when the environment changes. Private Buddy's experiences are host-decoupled by design: the reflection pipeline explicitly strips system-specific tools, internal APIs, and configuration, keeping only domain-level knowledge (external APIs, library names, algorithms). Experiences survive host changes — the agent maps each principle to whatever tools the current environment provides, rather than relying on pre-bundled scripts or tool bindings.
+
+### Forgetting-First Memory
+
+The memory system is designed around purposeful forgetting, not indiscriminate preservation. Every observation starts at neutral importance. Only retrieval and use drive importance up; disuse lets it decay. There is no binary gate — importance rises on use and fades continuously, so once-useful but now-obsolete content eventually disappears. A two-layer architecture pairs mechanical observation recording with LLM-driven reflection (EntityProfile), giving the agent both point retrieval and synthesized understanding.
+
+→ [Memory System: Forgetting & Retrieval](doc/memory-system-forgetting-and-retrieval.md)
+
+### Narrative Engineering
+
+The prompt is a narrative, not a form. Background history uses **internal focalization** — addressing the agent as "You" rather than narrating in third person — so the LLM steps into the role instead of observing from the sidelines. A person state inference model (emotion + purpose + situation) runs concurrently within the comprehension phase, producing a single natural-language sentence that guides response strategy without breaking the narrative flow.
+
+→ [Narrative Engineering & User State](doc/narrative-engineering-and-user-state.md)
+
+### Identity-Driven Memory
+
+The agent never encounters the label "Assistant" or "AI" in its own memory records. All evidence labels use real names — the agent's own name and the person's name. This is not cosmetic: when an LLM is told it is "an AI assistant," it activates training patterns associated with sycophancy (agreeing with the user, avoiding disagreement). By using named identities, the agent is positioned as a person with a name who can hold opinions and form independent judgments — producing memory narratives about relationships rather than service logs.
+
+---
 
 ## Quick Start
 
-> **Note**: All 0.0.x versions are pre-release. Data compatibility is not guaranteed between versions — upgrading may clear existing user data. This will change once the project reaches 0.1.0.
-
-### Option A: Desktop Application (Recommended)
+### Desktop Application
 
 Download the latest release for your platform from the [Releases](https://github.com/KoanJan/private-buddy/releases) page. No development environment required.
 
-Or build from source (requires Go 1.26+ and Node.js 18+):
+### Development Mode
 
-```bash
-# Clone the repository
-git clone https://github.com/KoanJan/private-buddy.git
-cd private-buddy
-
-# Install dependencies
-npm install
-
-# Build for your platform
-npm run dist:mac    # macOS (DMG + ZIP)
-npm run dist:win    # Windows (NSIS installer)
-npm run dist:linux  # Linux (AppImage + DEB)
-```
-
-The built packages will be in `dist-electron/<platform>/`.
-
-### Option B: Development Mode
-
-#### 1. Clone the Repository
+Requires Go 1.26+ and Node.js 18+.
 
 ```bash
 git clone https://github.com/KoanJan/private-buddy.git
 cd private-buddy
-```
-
-#### 2. Setup Server
-
-```bash
-cd server
-
-# Configure environment variables (optional)
-cp .env.example .env
-
-# Start server (builds and runs Go binary)
-./start.sh
-```
-
-The server runs on `http://localhost:8000` by default.
-
-#### 3. Setup Web
-
-```bash
-cd web
-
-# Install dependencies
 npm install
 
-# Start development server
-npm run dev
-```
-
-#### 4. Access the Application
-
-- **Web UI**: http://localhost:5173
-
-### Option C: Electron Development
-
-Run the Electron app in development mode (requires two terminals):
-
-**Terminal 1 - Start Vite dev server:**
-```bash
-npm run dev:web
-```
-
-**Terminal 2 - Build backend and run Electron:**
-```bash
-# Build Go backend (required before first run or after server code changes)
+# Electron app (recommended for development)
 npm run build:server
-
-# Start Electron app
 npm run dev
+
+# Or run server and web separately:
+cd server && ./start.sh      # Go backend on :8000
+cd web && npm run dev         # Vite dev server on :5173
 ```
 
-This will:
-1. Compile Electron main process
-2. Start the Go backend server
-3. Load the web frontend from Vite dev server (hot reload enabled)
-4. Open the desktop application window
+> **Note**: All 0.0.x versions are pre-release. Data compatibility is not guaranteed between versions — upgrading may clear existing user data. This will change once the project reaches 0.1.0.
 
-## Service Management
-
-Both server and web services include management scripts:
-
-```bash
-# Start service
-./start.sh
-
-# Stop service
-./stop.sh
-
-# Restart service
-./restart.sh
-```
+---
 
 ## Architecture
 

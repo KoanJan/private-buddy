@@ -62,7 +62,7 @@ The `importance` field serves as the system's sole retention signal. An observat
 
 **Relevance propagation also counters decay**: An observation that received a propagated delta can have importance > 0.5 even without direct retrieval. The propagation path provides a second defense against decay — semantically or temporally related observations are protected by association.
 
-**The continuous nature matters**: Unlike the binary gate approach (importance > 0.5 → preserved forever), continuous decay means every observation is slowly losing strength. This eliminates the acknowledged limitation of the previous design — once-useful but now-obsolete content will eventually fade, regardless of whether it was retrieved in the distant past. The system has genuine forgetting, not just a one-time filter.
+**The continuous nature matters**: Continuous decay means every observation is slowly losing strength. Once-useful but now-obsolete content will eventually fade, regardless of whether it was retrieved in the distant past. The system has genuine forgetting, not just a one-time filter.
 
 Note that decay is multiplicative, so importance never reaches exactly zero (barring floating-point underflow after thousands of days). Observations with importance below a practical floor (≤ 1e-6) are excluded from daily decay updates and from the retrieval set via the `importance > 0` filter — they have been effectively forgotten.
 
@@ -197,15 +197,15 @@ Observations store only a reference (`event_id`). Content is loaded on demand wh
 
 More importantly, observations belong to agents — multiple agents in the same session each get an observation record for the same event. Caching content in every observation would multiply storage for no retrieval benefit, since content is identical across agents. The join cost is a one-time query overhead; the duplication cost is permanent.
 
-### Why No Separate Intensity/Surprise Dimensions
+### Why a Single Importance Dimension
 
-Earlier designs for this system included multiple scoring dimensions: intensity (information density of the message), surprise (deviation from recent conversational patterns), and importance. Each dimension would contribute independently to a composite score.
+A single `importance` field serves as the system's sole retention signal, rather than multiple scoring dimensions (e.g., intensity, surprise, importance).
 
-**Why we consolidated**: The multi-dimensional model proved redundant in practice. Intensity — higher for longer, denser messages — correlates strongly with what retrieval naturally surfaces: important messages tend to be substantive. Surprise — measured as 1 minus cosine similarity with recent messaging — captures deviations that are already handled by the semantic search: unusual messages produce distinctive embeddings.
+**Why a single dimension suffices**: Intensity — higher for longer, denser messages — correlates strongly with what retrieval naturally surfaces: important messages tend to be substantive. Surprise — measured as 1 minus cosine similarity with recent messaging — captures deviations that are already handled by the semantic search: unusual messages produce distinctive embeddings.
 
 The marginal benefit of separate dimensions did not justify the implementation complexity. Each additional dimension requires its own update logic, decay function, and tuning parameters. More importantly, the agent has no cognitive model of intensity or surprise — these are system-level judgments imposed on the agent's experience. Importance, in contrast, is determined by the agent's own behavior (retrieval frequency), making it a behavioral rather than prescribed metric.
 
-**The honest limitation**: This consolidation means the system cannot distinguish between "frequently retrieved because important" and "frequently retrieved because the agent keeps encountering similar situations." A topic that recurs frequently in conversation (e.g., daily status updates) will accumulate high importance even if no single occurrence was particularly significant. We accept this because retrieval frequency in this system serves as the operational definition of importance — if the agent consistently needs to recall information about a topic, that information is important by definition.
+**The honest limitation**: A single dimension means the system cannot distinguish between "frequently retrieved because important" and "frequently retrieved because the agent keeps encountering similar situations." A topic that recurs frequently in conversation (e.g., daily status updates) will accumulate high importance even if no single occurrence was particularly significant. We accept this because retrieval frequency in this system serves as the operational definition of importance — if the agent consistently needs to recall information about a topic, that information is important by definition.
 
 ### Rate Limiting vs. Continuous Profile Regeneration
 
