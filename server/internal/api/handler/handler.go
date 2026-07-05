@@ -16,6 +16,7 @@ import (
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/memory"
 	"private-buddy-server/internal/service/runtime"
+	"private-buddy-server/internal/service/workspace"
 )
 
 type Handler struct {
@@ -429,7 +430,8 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		}
 
 		for _, sid := range sessionIDs {
-			removeSessionWorkspace(sid)
+			// id is the agentID; sid is each session owned by this agent.
+			workspace.RemoveWorkspace(id, sid)
 		}
 	}
 
@@ -510,7 +512,8 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 
 func (h *Handler) DeleteSession(c *gin.Context) {
 	id := getPathID(c)
-	_, err := h.crudSession.Get(id)
+	// Capture the session so we can read its AgentID for workspace cleanup.
+	sess, err := h.crudSession.Get(id)
 	if err != nil {
 		handleNotFound(c, "Session", id)
 		return
@@ -546,7 +549,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		applogger.Error("DeleteSession: failed to delete messages", "session_id", id, "error", err)
 	}
 	h.crudSession.Delete(id)
-	removeSessionWorkspace(id)
+	workspace.RemoveWorkspace(sess.AgentID, id)
 	response.SuccessMessage(c, "Session deleted successfully", nil)
 }
 

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.25] - 2026-07-06
+
+### Added
+- **Tool Output Safety Boundary**: two-layer protection against context window exhaustion from oversized tool outputs — tools self-truncate at the semantic level before serialization to preserve JSON structure integrity, with a system-level byte fallback that discards any output exceeding the hard limit, ensuring tool blowups can never silently overflow the agent's context
+
+### Changed
+- **Workspace Directory Layout**: session workspaces reorganized from a flat `{root}/{session_id}` structure to `{root}/{agent_id}/{session_id}`, adding an agent-level directory layer as structural preparation for future multi-agent isolation; all path resolution consolidated into a dedicated workspace package, eliminating scattered path concatenation logic across five packages
+
+
 ## [0.0.24] - 2026-07-05
 
 ### Added

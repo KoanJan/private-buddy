@@ -4,11 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
 
-	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
@@ -20,6 +16,13 @@ import (
 
 // defaultMaxIterations is the default maximum number of ReAct loop iterations.
 const defaultMaxIterations = 90
+
+// hardOutputLimit is the system-level byte fallback threshold for tool outputs.
+// If a tool's total output exceeds this, the content is discarded and replaced
+// with a notice. This is a safety net only — tools are expected to self-truncate
+// at the semantic level (see tools.TruncateHead / TruncateTail) before marshalling.
+// Must be greater than tools.DefaultTruncateBytes + JSON overhead buffer.
+const hardOutputLimit = 50 * 1024 // 50KB
 
 // TaskLoop implements the ReAct-style task loop for autonomous task execution.
 //
@@ -605,6 +608,17 @@ func (tl *TaskLoop) executeToolCall(tc llm.ToolCall) llm.Message {
 		result = fmt.Sprintf("Error executing tool '%s': %s", toolName, err.Error())
 	}
 
+	// Byte-level fallback: if a tool forgot to self-truncate and its output is
+	// abnormally large, discard the content entirely and notify. Do not attempt
+	// semantic truncation here — the tool is responsible for that before marshalling.
+	if len(result) > hardOutputLimit {
+		applogger.Warn("Tool output exceeds hard limit, discarded",
+			"tool", toolName, "bytes", len(result))
+		result = fmt.Sprintf(
+			"[OUTPUT TOO LARGE: %d bytes. This tool did not truncate its own output. "+
+				"Use a more targeted command or smaller scope.]", len(result))
+	}
+
 	return llm.Message{
 		Role:       "tool",
 		ToolCallID: toolCallID,
@@ -632,52 +646,4 @@ func (tl *TaskLoop) weakWriteInteraction(iteration, interactionType int, data ma
 	if err := database.DB.Create(&record).Error; err != nil {
 		applogger.Error("Failed to write interaction record", "error", err)
 	}
-}
-
-// getWorkspaceRoot returns the root directory for all session workspaces,
-// resolved to an absolute path so that paths shown to the agent in prompts
-// and used as bash CWD are unambiguous.
-func getWorkspaceRoot() string {
-	root := config.Get().GetWorkspaceRoot()
-	if abs, err := filepath.Abs(root); err == nil {
-		return abs
-	}
-	return root
-}
-
-// getSessionWorkspace returns the session-level workspace root directory.
-// Path: {workspaceRoot}/{session_id}
-func getSessionWorkspace(sessionID int64) string {
-	return filepath.Join(getWorkspaceRoot(), strconv.FormatInt(sessionID, 10))
-}
-
-// getSessionMetaDir returns the .meta directory path for a session.
-// Path: {workspaceRoot}/{session_id}/.meta
-func getSessionMetaDir(sessionID int64) string {
-	return filepath.Join(getSessionWorkspace(sessionID), ".meta")
-}
-
-// getSessionOutputDir returns the output directory path for a session.
-// Path: {workspaceRoot}/{session_id}/output
-func getSessionOutputDir(sessionID int64) string {
-	return filepath.Join(getSessionWorkspace(sessionID), "output")
-}
-
-// initWorkspace creates the session-level workspace directory structure.
-// Initializes notes.md in the .meta directory if it doesn't exist.
-// The workspace is scoped to the session — no work-level subdirectories.
-func initWorkspace(sessionID int64) string {
-	workspace := getSessionWorkspace(sessionID)
-	metaDir := filepath.Join(workspace, ".meta")
-	os.MkdirAll(metaDir, 0755)
-
-	notesFile := filepath.Join(metaDir, "notes.md")
-	if _, err := os.Stat(notesFile); err != nil {
-		os.WriteFile(notesFile, []byte("# Agent Notes\n\nStructured log of agent's work progress.\n\n"), 0644)
-	}
-
-	outputDir := getSessionOutputDir(sessionID)
-	os.MkdirAll(outputDir, 0755)
-
-	return workspace
 }

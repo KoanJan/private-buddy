@@ -14,6 +14,11 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// maxStdoutBytes is the maximum bytes of stdout retained after truncation.
+// stdout beyond this is truncated to the tail (keeping the most recent output,
+// where error messages typically appear). stderr and exit_code are never truncated.
+const maxStdoutBytes = 20 * 1024 // 20KB
+
 // BashTool executes shell commands within a session workspace.
 //
 // Provides the agent with the ability to run shell commands on the local system.
@@ -137,8 +142,15 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 				exitCode = exitErr.ExitCode()
 			}
 		}
+		stdoutStr := stdout.String()
+		// Semantic truncation: keep tail of stdout (error messages usually at the end).
+		// Happens before marshal so the JSON structure stays intact.
+		if shown, truncated := TruncateTail(stdoutStr, maxStdoutBytes); truncated {
+			stdoutStr = "[... earlier output omitted ...]\n" + shown + "\n" +
+				Hint(len(shown), len(stdoutStr))
+		}
 		result, _ := json.Marshal(BashResult{
-			Stdout:   stdout.String(),
+			Stdout:   stdoutStr,
 			Stderr:   stderr.String(),
 			ExitCode: exitCode,
 		})

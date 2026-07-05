@@ -7,15 +7,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
-	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/workspace"
 )
 
 // reflectOutput is the structured output from the LLM during reflection.
@@ -52,12 +51,10 @@ func CheckReflection(ctx context.Context, agentID int64) {
 		return
 	}
 
-	workspaceRoot := config.Get().GetWorkspaceRoot()
-
 	for _, sess := range sessions {
-		workspace := filepath.Join(workspaceRoot, strconv.FormatInt(sess.ID, 10))
-		fpFile := filepath.Join(workspace, ".meta", "fingerprint.txt")
-		notesFile := filepath.Join(workspace, ".meta", "notes.md")
+		metaDir := workspace.GetMetaDir(sess.AgentID, sess.ID)
+		fpFile := filepath.Join(metaDir, "fingerprint.txt")
+		notesFile := filepath.Join(metaDir, "notes.md")
 
 		notesBytes, err := os.ReadFile(notesFile)
 		if err != nil {

@@ -54,12 +54,6 @@ func osRemoveIfExists(path string) {
 	os.Remove(path)
 }
 
-func removeSessionWorkspace(sessionID int64) {
-	settings := config.Get()
-	workspaceDir := settings.GetWorkspaceRoot() + "/" + strconv.FormatInt(sessionID, 10)
-	os.RemoveAll(workspaceDir)
-}
-
 // handleNotFound returns a not-found response via business code.
 func handleNotFound(c *gin.Context, entityName string, id int64) {
 	response.NotFound(c, fmt.Sprintf("%s %d not found", entityName, id))

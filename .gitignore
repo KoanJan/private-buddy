@@ -47,9 +47,8 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-doc/draft
-doc/experiments
 server/data/
+draft
 
 # Go build artifacts
 server/private-buddy-server

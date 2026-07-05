@@ -31,6 +31,7 @@ import (
 	"private-buddy-server/internal/service/llm"
 	taskcontext "private-buddy-server/internal/service/task/context"
 	"private-buddy-server/internal/service/task/tools"
+	"private-buddy-server/internal/service/workspace"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -154,23 +155,23 @@ func Execute(params TaskParams) *TaskResult {
 		"max_iterations", maxIterations,
 	)
 
-	workspace := initWorkspace(params.SessionID)
+	ws := workspace.InitWorkspace(params.AgentID, params.SessionID)
 
 	settings := config.Get()
 	iterationWindow := settings.ContextWindowIterations
 	notesMaxChars := settings.NotesMaxChars
-	workspaceRoot := settings.GetWorkspaceRoot()
 
-	writeNotesTool := tools.NewWriteNotesTool(params.SessionID, workspaceRoot, notesMaxChars)
+	metaDir := workspace.GetMetaDir(params.AgentID, params.SessionID)
+	writeNotesTool := tools.NewWriteNotesTool(metaDir, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	sessionWorkspace := getSessionWorkspace(params.SessionID)
-	sessionOutputDir := getSessionOutputDir(params.SessionID)
-	toolList := buildToolList(sessionWorkspace, sessionOutputDir, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, workspaceRoot, notesMaxChars)
+	sessionWorkspace := workspace.GetWorkspacePath(params.AgentID, params.SessionID)
+	sessionOutputDir := workspace.GetOutputDir(params.AgentID, params.SessionID)
+	toolList := buildToolList(sessionWorkspace, sessionOutputDir, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
 
 	// Build the system prompt AFTER the tool list so that tool descriptions
 	// can be generated from the registered tools.
-	systemPrompt := buildSystemPrompt(params.SessionID, params.Guidance, toolList)
+	systemPrompt := buildSystemPrompt(params.AgentID, params.SessionID, params.Guidance, toolList)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
@@ -210,8 +211,8 @@ func Execute(params TaskParams) *TaskResult {
 	// to re-trigger reflection.
 
 	result := &TaskResult{
-		Workspace: workspace,
-		NotesPath: fmt.Sprintf("%s/.meta/notes.md", workspace),
+		Workspace: ws,
+		NotesPath: fmt.Sprintf("%s/.meta/notes.md", ws),
 		Notes:     finalNotes,
 	}
 
@@ -249,9 +250,9 @@ func Execute(params TaskParams) *TaskResult {
 //
 // Dynamic content (iteration counts, notes length) is appended separately by
 // ContextManager at each iteration to preserve LLM prefix caching.
-func buildSystemPrompt(sessionID int64, guidance string, toolList []tools.Tool) string {
-	sessionDir := getSessionWorkspace(sessionID)
-	outputDir := getSessionOutputDir(sessionID)
+func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []tools.Tool) string {
+	sessionDir := workspace.GetWorkspacePath(agentID, sessionID)
+	outputDir := workspace.GetOutputDir(agentID, sessionID)
 
 	// Generate tool descriptions from the registered tools.
 	toolLines := []string{"Available tools:"}
@@ -347,10 +348,13 @@ func buildSystemPrompt(sessionID int64, guidance string, toolList []tools.Tool) 
 // buildToolList creates the list of available tools for the task loop.
 // Always includes bash, write_notes, wake_me_when, scan_my_experience, and
 // recall_my_experience; adds web_search if search config is available.
-func buildToolList(sessionWorkspace, workDir string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, workspaceRoot string, notesMaxChars int) []tools.Tool {
+//
+// metaDir is the resolved .meta directory (caller-provided) so this function
+// stays decoupled from workspace layout details.
+func buildToolList(sessionWorkspace, workDir string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
 		tools.NewBashTool(sessionWorkspace, workDir),
-		tools.NewWriteNotesTool(sessionID, workspaceRoot, notesMaxChars),
+		tools.NewWriteNotesTool(metaDir, notesMaxChars),
 		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
 		tools.NewScanExperienceTool(agentID),
 		tools.NewRecallExperienceTool(agentID),

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -29,19 +28,19 @@ import (
 // The notes are stored in a system-managed location (.meta/notes.md) that the
 // agent should not directly access. Use this tool to interact with notes.
 //
-// Workspace is scoped by session_id — one notes.md per session.
+// The caller supplies the resolved .meta directory path so this tool stays
+// decoupled from workspace layout details (see service/workspace).
 type WriteNotesTool struct {
-	sessionID     int64 // Session ID for determining the workspace path
-	workspaceRoot string
-	notesMaxChars int // Maximum character limit for notes file
+	metaDir       string // Resolved .meta directory path for this session
+	notesMaxChars int    // Maximum character limit for notes file
 }
 
-// NewWriteNotesTool creates a WriteNotesTool for the given session.
-// The workspace path is derived from session_id for session-level notes.
-func NewWriteNotesTool(sessionID int64, workspaceRoot string, notesMaxChars int) *WriteNotesTool {
+// NewWriteNotesTool creates a WriteNotesTool bound to the given metaDir.
+// The caller is responsible for resolving the metaDir via the workspace package
+// (workspace.GetMetaDir(agentID, sessionID)) so this tool stays layout-agnostic.
+func NewWriteNotesTool(metaDir string, notesMaxChars int) *WriteNotesTool {
 	return &WriteNotesTool{
-		sessionID:     sessionID,
-		workspaceRoot: workspaceRoot,
+		metaDir:       metaDir,
 		notesMaxChars: notesMaxChars,
 	}
 }
@@ -143,10 +142,10 @@ func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 		entryType, len(content), refCount, conflictMarker), nil
 }
 
-// getMetaDir returns the .meta directory path for this session's workspace.
-// Path: {workspaceRoot}/{session_id}/.meta
+// getMetaDir returns the .meta directory path bound at construction time.
+// Path layout is owned by the workspace package; this tool just uses it.
 func (w *WriteNotesTool) getMetaDir() string {
-	return filepath.Join(w.workspaceRoot, strconv.FormatInt(w.sessionID, 10), ".meta")
+	return w.metaDir
 }
 
 // appendNote appends a structured entry to the notes.md file.
