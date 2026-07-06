@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
@@ -24,7 +25,10 @@ func NewRecallExperienceTool(agentID int64) *RecallExperienceTool {
 	return &RecallExperienceTool{agentID: agentID}
 }
 
-func (r *RecallExperienceTool) Name() string { return "recall_my_experience" }
+// ToolNameRecallMyExperience is the type-safe name constant for RecallExperienceTool.
+const ToolNameRecallMyExperience ToolName = "recall_my_experience"
+
+func (r *RecallExperienceTool) Name() ToolName { return ToolNameRecallMyExperience }
 
 func (r *RecallExperienceTool) Description() string {
 	return "Read the full content of a specific experience by its exp_id"
@@ -32,7 +36,7 @@ func (r *RecallExperienceTool) Description() string {
 
 func (r *RecallExperienceTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: r.Name(),
+		Name: string(r.Name()),
 		Description: "Read the full content of one of your private experiences by its exp_id. " +
 			"Returns all fields: id, title, description, when_to_use, guidelines, pitfalls, and procedure. " +
 			"The content is never truncated — you receive the complete experience text.",
@@ -65,14 +69,12 @@ type recallDetail struct {
 func (r *RecallExperienceTool) Execute(args map[string]interface{}) (string, error) {
 	expID, ok := parseInt64(args["exp_id"])
 	if !ok || expID <= 0 {
-		resp, _ := json.Marshal(recallDetail{})
-		return string(resp), nil
+		return "", fmt.Errorf("exp_id is required and must be a positive integer")
 	}
 
 	var exp model.AgentExperience
 	if err := database.DB.Where("id = ? AND agent_id = ?", expID, r.agentID).First(&exp).Error; err != nil {
-		resp, _ := json.Marshal(map[string]string{"error": "experience not found"})
-		return string(resp), nil
+		return "", fmt.Errorf("experience not found")
 	}
 
 	detail := recallDetail{

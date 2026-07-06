@@ -298,10 +298,18 @@ func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []too
 		"",
 		"[Understanding Current State]",
 		"To understand the current project state:",
-		"- Use 'ls -la' to see files in your working directory",
-		"- Use 'cat <filename>' to read file contents",
+		"- Use read_text_file to read file contents",
+		"- Use 'ls -la' to list files in your working directory",
 		"- Use 'find . -type f' to discover all files",
 		"- Check your NOTES (provided above) for previous progress",
+		"",
+		"FILE OPERATIONS:",
+		"- read_text_file: Read file contents with line offset/limit. Preferred over bash cat.",
+		"- write_text_file: Create, overwrite, or append to files. Preferred over bash echo/heredoc.",
+		"- edit_text_file: Make precise text replacements in existing files. Preferred for modifying files.",
+		"  - Copy old_str EXACTLY from read_text_file output, preserving indentation and special characters",
+		"  - Keep old_str concise but unique enough to match exactly one location",
+		"- bash: Use for system commands (mkdir, find, git, build, etc.) and directory operations",
 		"",
 		"[NOTES Usage Guide]",
 		"The write_notes tool appends structured entries to your notes.",
@@ -346,13 +354,17 @@ func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []too
 }
 
 // buildToolList creates the list of available tools for the task loop.
-// Always includes bash, write_notes, wake_me_when, scan_my_experience, and
-// recall_my_experience; adds web_search if search config is available.
+// Always includes read_text_file, write_text_file, edit_text_file, bash,
+// write_notes, wake_me_when, scan_my_experience, and recall_my_experience;
+// adds web_search if search config is available.
 //
 // metaDir is the resolved .meta directory (caller-provided) so this function
 // stays decoupled from workspace layout details.
 func buildToolList(sessionWorkspace, workDir string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
+		tools.NewReadTextFileTool(agentID, sessionID),
+		tools.NewWriteTextFileTool(agentID, sessionID),
+		tools.NewEditTextFileTool(agentID, sessionID),
 		tools.NewBashTool(sessionWorkspace, workDir),
 		tools.NewWriteNotesTool(metaDir, notesMaxChars),
 		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),

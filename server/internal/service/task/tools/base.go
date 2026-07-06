@@ -6,6 +6,9 @@
 // schema for LLM tool calling.
 //
 // Available tools:
+//   - ReadTextFileTool: Read text file contents with line offset/limit
+//   - WriteTextFileTool: Create, overwrite, or append to text files
+//   - EditTextFileTool: Make precise text replacements in existing files
 //   - BashTool: Execute shell commands within a workspace
 //   - WriteNotesTool: Append structured entries to agent's notes
 //   - WakeMeWhenTool: Set a future alarm for self-wake
@@ -16,13 +19,17 @@ package tools
 
 import "private-buddy-server/internal/service/llm"
 
+// ToolName is the type-safe identifier for a tool. Each tool implementation
+// should define a package-level constant of this type and return it from Name().
+type ToolName string
+
 // Tool is the interface that all agent tools must implement.
 // Each tool has a unique name, a short description for the system prompt's
 // tool list, a function definition schema, and an execute method that
 // performs the actual work.
 type Tool interface {
 	// Name returns the unique identifier for this tool.
-	Name() string
+	Name() ToolName
 	// Description returns a short one-line summary used in the system prompt's
 	// "Available tools" section. This is separate from Schema().Description
 	// which is the detailed description passed to the LLM's function calling.

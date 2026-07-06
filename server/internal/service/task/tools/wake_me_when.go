@@ -45,7 +45,10 @@ func NewWakeMeWhenTool(agentID, sessionID, triggerMessageID int64) *WakeMeWhenTo
 	}
 }
 
-func (w *WakeMeWhenTool) Name() string { return "wake_me_when" }
+// ToolNameWakeMeWhen is the type-safe name constant for WakeMeWhenTool.
+const ToolNameWakeMeWhen ToolName = "wake_me_when"
+
+func (w *WakeMeWhenTool) Name() ToolName { return ToolNameWakeMeWhen }
 
 func (w *WakeMeWhenTool) Description() string {
 	return "Set an alarm to wake yourself at a future time (e.g., reminders, follow-ups)"
@@ -53,7 +56,7 @@ func (w *WakeMeWhenTool) Description() string {
 
 func (w *WakeMeWhenTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: w.Name(),
+		Name: string(w.Name()),
 		Description: "Set an alarm to wake yourself up at a future time. " +
 			"When the alarm fires, you will receive a notification with the context you provide. " +
 			"This is YOUR self-wake mechanism — it does NOT create OS-level notifications or system alerts. " +
@@ -107,18 +110,18 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 	message, _ := args["message"].(string)
 
 	if triggerAtStr == "" || message == "" {
-		return "Error: trigger_at and message are required", nil
+		return "", fmt.Errorf("trigger_at and message are required")
 	}
 
 	// Parse trigger_at
 	triggerAt, err := parseTriggerAt(triggerAtStr)
 	if err != nil {
-		return fmt.Sprintf("Error: invalid trigger_at format '%s': %v", triggerAtStr, err), nil
+		return "", fmt.Errorf("invalid trigger_at format '%s': %v", triggerAtStr, err)
 	}
 
 	// Validate: trigger time must be in the future
 	if triggerAt.Before(time.Now()) {
-		return fmt.Sprintf("Error: trigger_at '%s' is in the past", triggerAtStr), nil
+		return "", fmt.Errorf("trigger_at '%s' is in the past", triggerAtStr)
 	}
 
 	// Parse action and action_content
@@ -131,7 +134,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 
 	// Validate: send_message action requires action_content
 	if action == model.ScheduledEventActionSendMessage && actionContent == "" {
-		return "Error: action_content is required when action is 'send_message'", nil
+		return "", fmt.Errorf("action_content is required when action is 'send_message'")
 	}
 
 	// Create a DB record for persistence and debugging
@@ -151,7 +154,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 			"session_id", w.sessionID,
 			"error", err,
 		)
-		return "Error: failed to create alarm", nil
+		return "", fmt.Errorf("failed to create alarm")
 	}
 
 	// Notify runtime to register a goroutine for this alarm.

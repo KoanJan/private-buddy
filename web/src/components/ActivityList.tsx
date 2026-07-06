@@ -22,6 +22,9 @@ const toolEmoji: Record<string, string> = {
   wake_me_when: '⏰',
   scan_my_experience: '🔎',
   recall_my_experience: '🧠',
+  read_text_file: '📖',
+  write_text_file: '✏️',
+  edit_text_file: '🔧',
 };
 
 /**
@@ -105,14 +108,53 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
     <div className="activity-list">
       <div className="activity-content">
         {events.map((event, idx) => {
-          const fullText = getDisplayText(event);
-          const needsTruncate = fullText.length > CONTENT_TRUNCATE_LENGTH;
-          const expanded = expandedIndices.has(idx);
           const agent = agentMap[event.agent_id];
           const displayName = agent?.name || 'AI';
 
+          if (event.type === 'tool_call') {
+            const emoji = toolEmoji[event.tool || ''] || '🔧';
+            const action = t(`activity.tool.${event.tool}`);
+            const targetText = event.target || '';
+            const needsTruncate = targetText.length > CONTENT_TRUNCATE_LENGTH;
+            const expanded = expandedIndices.has(idx);
+
+            return (
+              <div key={idx} className="activity-row activity-row-tool_call">
+                <div className="activity-row-header">
+                  <AgentAvatar avatar={agent?.avatar || ''} size={24} iconSize={12} borderRadius="6px" />
+                  <span className="activity-agent-name">{displayName}</span>
+                  <span className="activity-time">{event.time}</span>
+                </div>
+                <div className="activity-summary">
+                  {emoji} {action}
+                  {targetText && (needsTruncate && !expanded ? (
+                    <span className="activity-tool-target">
+                      {' '}{targetText.slice(0, CONTENT_TRUNCATE_LENGTH)}...
+                      <button className="activity-expand-btn" onClick={() => toggleExpand(idx)}>
+                        {t('activity.expand')}
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="activity-tool-target">
+                      {' '}{targetText}
+                      {needsTruncate && (
+                        <button className="activity-expand-btn" onClick={() => toggleExpand(idx)}>
+                          {t('activity.collapse')}
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+
+          const fullText = getDisplayText(event);
+          const needsTruncate = fullText.length > CONTENT_TRUNCATE_LENGTH;
+          const expanded = expandedIndices.has(idx);
+
           return (
-            <div key={idx} className={`activity-row activity-row-${event.type}${event.type === 'tool_call' && event.tool === 'write_notes' ? ' activity-row-write_notes' : ''}`}>
+            <div key={idx} className={`activity-row activity-row-${event.type}`}>
               <div className="activity-row-header">
                 <AgentAvatar avatar={agent?.avatar || ''} size={24} iconSize={12} borderRadius="6px" />
                 <span className="activity-agent-name">{displayName}</span>
@@ -146,7 +188,8 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
 };
 
 /**
- * Returns the full display text for an activity event (with emoji).
+ * Returns the full display text for a thinking or guidance event.
+ * Tool calls are rendered separately with structured markup.
  */
 function getDisplayText(event: ActivityEvent): string {
   switch (event.type) {
@@ -154,21 +197,9 @@ function getDisplayText(event: ActivityEvent): string {
       return `🤔 ${event.content}`;
     case 'guidance':
       return event.content ? `🤔 ${event.content}` : '🤔';
-    case 'tool_call':
-      return getToolCallText(event.tool, event.target);
     default:
       return event.content || '';
   }
-}
-
-function getToolCallText(tool?: string, target?: string): string {
-  if (!tool) return '';
-
-  const emoji = toolEmoji[tool] || '🔧';
-  if (target) {
-    return `${emoji} ${target}`;
-  }
-  return `${emoji} ${tool}`;
 }
 
 export default ActivityList;

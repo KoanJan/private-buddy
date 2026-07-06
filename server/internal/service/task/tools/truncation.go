@@ -9,7 +9,10 @@ import (
 // truncation. The system-level byte fallback threshold is defined separately
 // in task_loop.go (hardOutputLimit) and must be greater than this value plus
 // a buffer for JSON marshalling overhead.
-const DefaultTruncateBytes = 20 * 1024 // 20KB
+const (
+	DefaultTruncateBytes = 20 * 1024 // 20KB
+	newlineAlignWindow   = 1024      // Line-boundary alignment window (1KB) for truncation
+)
 
 // TruncateHead keeps the beginning of s and truncates the tail.
 // Used by read_file, grep, and similar tools where the beginning is more
@@ -30,7 +33,7 @@ func TruncateHead(s string, maxBytes int) (string, bool) {
 	// Find the last newline within maxBytes to avoid splitting a line.
 	// Only effective when the last newline is within 1KB of the cut point;
 	// otherwise the byte-level cut is used directly.
-	if lastNL := strings.LastIndex(s[:maxBytes], "\n"); lastNL > maxBytes-1024 {
+	if lastNL := strings.LastIndex(s[:maxBytes], "\n"); lastNL > maxBytes-newlineAlignWindow {
 		cut = lastNL
 	}
 	return s[:cut], true
@@ -58,7 +61,7 @@ func TruncateTail(s string, maxBytes int) (string, bool) {
 	// Find the first newline after start to avoid splitting a line.
 	// Only effective when the first newline is within 1KB of the cut point;
 	// otherwise the byte-level cut is used directly.
-	if firstNL := strings.Index(s[start:], "\n"); firstNL >= 0 && firstNL < 1024 {
+	if firstNL := strings.Index(s[start:], "\n"); firstNL >= 0 && firstNL < newlineAlignWindow {
 		start = start + firstNL + 1
 	}
 	return s[start:], true

@@ -243,7 +243,18 @@
     "noRecords": "No activity records",
     "loadError": "Failed to load activities",
     "expand": "Expand",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "tool": {
+      "bash": "Run command",
+      "web_search": "Search web",
+      "write_notes": "Write notes",
+      "wake_me_when": "Set alarm",
+      "scan_my_experience": "Scan experience",
+      "recall_my_experience": "Recall experience",
+      "read_text_file": "Read file",
+      "write_text_file": "Write file",
+      "edit_text_file": "Edit file"
+    }
   },
   "publicExperience": {
     "title": "Experience Library",

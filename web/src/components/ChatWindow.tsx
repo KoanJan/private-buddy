@@ -11,7 +11,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message, Session, Agent, SessionAgentStatus } from '../types';
 import { MESSAGE_STATUS_COMPLETED, MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, PARTICIPANT_STATUS_IDLE, PARTICIPANT_STATUS_WORKING, TEMP_SESSION_ID } from '../types';
-import { messageApi, sessionApi, agentApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
+import { messageApi, agentApi, chatApi, getDynamicApiBaseUrl } from '../services/api';
 import { logger } from '../logger';
 
 /**
@@ -48,12 +48,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [agentStatus, setAgentStatus] = useState<number>(PARTICIPANT_STATUS_IDLE);
   const [sessionAgents, setSessionAgents] = useState<SessionAgentStatus[]>([]);
   const [viewMode, setViewMode] = useState<'chat' | 'activity'>('chat');
-  const [hasActivities, setHasActivities] = useState(false);
   
   // Derived: streaming state is determined by agent runtime status (from SSE agent_status events)
   const isStreaming = agentStatus !== PARTICIPANT_STATUS_IDLE;
-
-  // Show activity toggle if the session has any work activities (checked via API).
 
   // Refs for managing async state and preventing race conditions
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -66,20 +63,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const loadMessagesRef = useRef<() => void>(() => {});
 
   const isTempSession = session?.id === TEMP_SESSION_ID;
-
-  // Check whether the session has any activity records (existing message flag or API check).
-  useEffect(() => {
-    if (!session || isTempSession) {
-      setHasActivities(false);
-      return;
-    }
-    // Lightweight check: if any work has interactions, the activities API returns non-empty.
-    sessionApi.getActivities(session.id).then(res => {
-      setHasActivities(Array.isArray(res.data) && res.data.length > 0);
-    }).catch(() => {
-      setHasActivities(false);
-    });
-  }, [session?.id, isTempSession]);
 
   // Load session agents with their runtime status
   useEffect(() => {
@@ -429,7 +412,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     <>
       <div className="chat-header-row">
         <AgentStatusBar agents={sessionAgents} />
-        {!isTempSession && hasActivities && (
+        {!isTempSession && (
           <button
             className={`chat-view-toggle ${viewMode === 'activity' ? 'active' : ''}`}
             onClick={() => setViewMode(viewMode === 'chat' ? 'activity' : 'chat')}

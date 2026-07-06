@@ -71,7 +71,7 @@ func NewTaskLoop(
 ) *TaskLoop {
 	registry := make(map[string]tools.Tool)
 	for _, t := range toolList {
-		registry[t.Name()] = t
+		registry[string(t.Name())] = t
 	}
 
 	return &TaskLoop{
@@ -246,7 +246,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			var toolResults []llm.Message
 			hasWriteNotes := false
 			for _, tc := range toolCalls {
-				if tc.Function.Name == "write_notes" {
+				if tc.Function.Name == string(tools.ToolNameWriteNotes) {
 					hasWriteNotes = true
 				}
 				toolResult := tl.executeToolCall(tc)
@@ -460,7 +460,7 @@ After writing notes, you will regain access to all tools.`
 		for _, tc := range toolCalls {
 			toolCallID := tc.ID
 
-			if tc.Function.Name != "write_notes" {
+			if tc.Function.Name != string(tools.ToolNameWriteNotes) {
 				applogger.Warn("Notes iteration: unexpected tool call", "tool", tc.Function.Name)
 				toolResults = append(toolResults, llm.Message{
 					Role:       "tool",
@@ -546,7 +546,7 @@ This will help you continue work if changes are requested later.`
 
 	if response.FinishReason == "tool_calls" {
 		for _, tc := range response.ToolCalls {
-			if tc.Function.Name != "write_notes" {
+			if tc.Function.Name != string(tools.ToolNameWriteNotes) {
 				continue
 			}
 			var args map[string]interface{}

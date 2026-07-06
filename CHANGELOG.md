@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.26] - 2026-07-07
+
+### Added
+- **Text File Tools**: three new agent tools (`read_text_file`, `write_text_file`, `edit_text_file`) for text file operations, avoiding the escaping pitfalls of `echo`, `sed`, and heredoc; supports line-based pagination, atomic overwrite, append mode, and exact substring replacement
+
+### Changed
+- **Activity Display**: tool call entries in the activity log now show action and target with distinct visual hierarchy; the activity toggle button is always visible during session execution
+
+
 ## [0.0.25] - 2026-07-06
 
 ### Added

@@ -45,13 +45,16 @@ func NewWriteNotesTool(metaDir string, notesMaxChars int) *WriteNotesTool {
 	}
 }
 
-func (w *WriteNotesTool) Name() string { return "write_notes" }
+// ToolNameWriteNotes is the type-safe name constant for WriteNotesTool.
+const ToolNameWriteNotes ToolName = "write_notes"
+
+func (w *WriteNotesTool) Name() ToolName { return ToolNameWriteNotes }
 
 func (w *WriteNotesTool) Description() string { return "Append structured entries to your notes.md" }
 
 func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: w.Name(),
+		Name: string(w.Name()),
 		Description: "Append a structured entry to your NOTES. " +
 			"This ADDS a new entry, it does NOT overwrite. " +
 			"Use this to persist important information for future steps. " +
@@ -127,7 +130,7 @@ func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 	conflictsWith, _ := args["conflicts_with"].(string)
 
 	if entryType == "" || content == "" {
-		return "Error: entry_type and content are required", nil
+		return "", fmt.Errorf("entry_type and content are required")
 	}
 
 	w.appendNote(entryType, content, references, conflictsWith)

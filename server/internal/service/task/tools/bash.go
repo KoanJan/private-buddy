@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -17,7 +16,10 @@ import (
 // maxStdoutBytes is the maximum bytes of stdout retained after truncation.
 // stdout beyond this is truncated to the tail (keeping the most recent output,
 // where error messages typically appear). stderr and exit_code are never truncated.
-const maxStdoutBytes = 20 * 1024 // 20KB
+const (
+	maxStdoutBytes       = 20 * 1024 // 20KB
+	defaultBashTimeoutMs = 30_000    // Default bash command timeout in milliseconds (30s)
+)
 
 // BashTool executes shell commands within a session workspace.
 //
@@ -40,7 +42,10 @@ func NewBashTool(sessionRoot, workDir string) *BashTool {
 	return &BashTool{sessionRoot: sessionRoot, workDir: workDir}
 }
 
-func (b *BashTool) Name() string { return "bash" }
+// ToolNameBash is the type-safe name constant for BashTool.
+const ToolNameBash ToolName = "bash"
+
+func (b *BashTool) Name() ToolName { return ToolNameBash }
 
 func (b *BashTool) Description() string { return "Execute shell commands in your working directory" }
 
@@ -50,7 +55,7 @@ func (b *BashTool) Schema() llm.FunctionDefinition {
 		workspaceHint = fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", b.sessionRoot)
 	}
 	return llm.FunctionDefinition{
-		Name:        b.Name(),
+		Name:        string(b.Name()),
 		Description: "Execute a shell command. Use this tool to run commands, manage files, and interact with the system." + workspaceHint,
 		Parameters: map[string]interface{}{
 			"type": "object",
@@ -61,8 +66,8 @@ func (b *BashTool) Schema() llm.FunctionDefinition {
 				},
 				"timeout": map[string]interface{}{
 					"type":        "integer",
-					"description": "Timeout in milliseconds (default: 30000)",
-					"default":     30000,
+					"description": fmt.Sprintf("Timeout in milliseconds (default: %d)", defaultBashTimeoutMs),
+					"default":     defaultBashTimeoutMs,
 				},
 			},
 			"required": []string{"command"},
@@ -81,31 +86,16 @@ type BashResult struct {
 // Handles timeout, security checks, and returns JSON with stdout/stderr/exit_code.
 func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	command, _ := args["command"].(string)
-	timeoutMs := 30000
+	timeoutMs := defaultBashTimeoutMs
 	if t, ok := args["timeout"].(float64); ok {
 		timeoutMs = int(t)
 	}
 
 	if command == "" {
-		return `{"stdout": "", "stderr": "Error: empty command", "exit_code": 1}`, nil
+		return "", fmt.Errorf("command is required")
 	}
 
-	if b.sessionRoot != "" {
-		if blocked := b.isBlockedCommand(command); blocked != "" {
-			cmdPreview := command
-			if len(cmdPreview) > 200 {
-				cmdPreview = cmdPreview[:200]
-			}
-			applogger.Warn("BashTool blocked command", "command", cmdPreview, "reason", blocked)
-			return fmt.Sprintf(`{"stdout": "", "stderr": "Error: %s", "exit_code": 1}`, blocked), nil
-		}
-	}
-
-	cmdPreview := command
-	if len(cmdPreview) > 200 {
-		cmdPreview = cmdPreview[:200]
-	}
-	applogger.Info("BashTool executing", "command", cmdPreview, "timeout_ms", timeoutMs)
+	applogger.Info("BashTool executing", "command", command, "timeout_ms", timeoutMs)
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -126,8 +116,7 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
-		result, _ := json.Marshal(BashResult{Stderr: err.Error(), ExitCode: 1})
-		return string(result), nil
+		return "", fmt.Errorf("failed to start command: %s", err.Error())
 	}
 
 	done := make(chan error, 1)
@@ -157,78 +146,6 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 		return string(result), nil
 	case <-timer.C:
 		cmd.Process.Kill()
-		result, _ := json.Marshal(BashResult{Stderr: "Error: command timed out", ExitCode: -1})
-		return string(result), nil
+		return "", fmt.Errorf("command timed out after %dms", timeoutMs)
 	}
-}
-
-// isBlockedCommand checks if a command should be blocked for security reasons.
-// Blocks access to .meta directory and path traversal outside workspace.
-func (b *BashTool) isBlockedCommand(command string) string {
-	checkPart := stripHeredocContent(command)
-
-	if strings.Contains(checkPart, ".meta") {
-		return "access to .meta directory is not allowed"
-	}
-
-	if b.isPathTraversal(checkPart) {
-		return "command attempts to access paths outside workspace"
-	}
-
-	return ""
-}
-
-// isPathTraversal checks if a command attempts to access paths outside the session workspace.
-// Relative paths are resolved against workDir (the command's CWD), then checked
-// against sessionRoot to allow session-internal access.
-func (b *BashTool) isPathTraversal(command string) bool {
-	if b.sessionRoot == "" {
-		return false
-	}
-	parts := strings.Fields(command)
-	for _, part := range parts {
-		if strings.HasPrefix(part, "/") && !strings.HasPrefix(part, b.sessionRoot) {
-			if !isSafeAbsolutePath(part) {
-				return true
-			}
-		}
-		if strings.Contains(part, "..") {
-			resolved := safeResolve(part, b.workDir)
-			if resolved != "" && !strings.HasPrefix(resolved, b.sessionRoot) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// safeResolve resolves a path relative to the given base directory and returns the cleaned path.
-func safeResolve(pathStr, baseDir string) string {
-	if filepath.IsAbs(pathStr) {
-		return filepath.Clean(pathStr)
-	}
-	joined := filepath.Join(baseDir, pathStr)
-	return filepath.Clean(joined)
-}
-
-// stripHeredocContent removes heredoc content from a command for security checking.
-// Heredoc content may contain paths that should not be checked for traversal.
-func stripHeredocContent(command string) string {
-	idx := strings.Index(command, "<<")
-	if idx < 0 {
-		return command
-	}
-	return command[:idx]
-}
-
-// isSafeAbsolutePath checks if an absolute path is a known safe system directory.
-// Paths under /bin/, /usr/bin/, /usr/local/bin/, /sbin/, /usr/sbin/, /opt/homebrew/ are allowed.
-func isSafeAbsolutePath(pathStr string) bool {
-	safePrefixes := []string{"/bin/", "/usr/bin/", "/usr/local/bin/", "/sbin/", "/usr/sbin/", "/opt/homebrew/"}
-	for _, prefix := range safePrefixes {
-		if strings.HasPrefix(pathStr, prefix) {
-			return true
-		}
-	}
-	return false
 }

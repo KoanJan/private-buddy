@@ -7,16 +7,20 @@ import (
 
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
+	"private-buddy-server/internal/service/task/tools"
 )
 
 // argumentKeys maps tool names to the parameter keys used to extract a display target.
-var argumentKeys = map[string][]string{
-	"bash":                 {"command"},
-	"web_search":           {"query"},
-	"write_notes":          {"content", "entry_type"},
-	"wake_me_when":         {},
-	"scan_my_experience":   {"task_description"},
-	"recall_my_experience": {"query"},
+var argumentKeys = map[tools.ToolName][]string{
+	tools.ToolNameBash:               {"command"},
+	tools.ToolNameWebSearch:          {"query"},
+	tools.ToolNameWriteNotes:         {"content", "entry_type"},
+	tools.ToolNameWakeMeWhen:         {},
+	tools.ToolNameScanMyExperience:   {"task_description"},
+	tools.ToolNameRecallMyExperience: {"query"},
+	tools.ToolNameReadTextFile:       {"file_path"},
+	tools.ToolNameWriteTextFile:      {"file_path"},
+	tools.ToolNameEditTextFile:       {"file_path"},
 }
 
 // interactionDataResponse is the parsed form of Data JSON for type=2 interactions.
@@ -91,7 +95,7 @@ func parseResponseInteraction(interaction *model.Interaction) []schema.ActivityE
 
 // buildToolCallEvent converts a raw tool call into an ActivityEvent with tool name and target.
 func buildToolCallEvent(timeStr string, tc *rawToolCall) schema.ActivityEvent {
-	keys := argumentKeys[tc.Function.Name]
+	keys := argumentKeys[tools.ToolName(tc.Function.Name)]
 	target := ""
 	if len(keys) > 0 {
 		target = extractTarget(tc.Function.Arguments, keys)

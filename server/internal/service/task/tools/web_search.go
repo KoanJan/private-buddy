@@ -11,6 +11,12 @@ import (
 	"private-buddy-server/internal/service/llm"
 )
 
+// ToolNameWebSearch is the type-safe name constant for WebSearchTool.
+const ToolNameWebSearch ToolName = "web_search"
+
+// defaultSearchNumResults is the default number of web search results returned.
+const defaultSearchNumResults = 5
+
 // WebSearchTool searches the web for information using configured search providers.
 // Currently supports Tavily as the search provider.
 // Returns a list of search results with title, URL, and snippet.
@@ -23,13 +29,13 @@ func NewWebSearchTool(searchConfig *model.SearchConfig) *WebSearchTool {
 	return &WebSearchTool{searchConfig: searchConfig}
 }
 
-func (w *WebSearchTool) Name() string { return "web_search" }
+func (w *WebSearchTool) Name() ToolName { return ToolNameWebSearch }
 
 func (w *WebSearchTool) Description() string { return "Search the web for information" }
 
 func (w *WebSearchTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name:        w.Name(),
+		Name:        string(w.Name()),
 		Description: "Search the web for information. Use this tool to find current information, documentation, or answers to questions.",
 		Parameters: map[string]interface{}{
 			"type": "object",
@@ -40,8 +46,8 @@ func (w *WebSearchTool) Schema() llm.FunctionDefinition {
 				},
 				"num_results": map[string]interface{}{
 					"type":        "integer",
-					"description": "Number of results to return (default: 5)",
-					"default":     5,
+					"description": fmt.Sprintf("Number of results to return (default: %d)", defaultSearchNumResults),
+					"default":     defaultSearchNumResults,
 				},
 			},
 			"required": []string{"query"},
@@ -66,19 +72,17 @@ type SearchResponse struct {
 // Returns error message if search config is not available or provider is unknown.
 func (w *WebSearchTool) Execute(args map[string]interface{}) (string, error) {
 	query, _ := args["query"].(string)
-	numResults := 5
+	numResults := defaultSearchNumResults
 	if n, ok := args["num_results"].(float64); ok {
 		numResults = int(n)
 	}
 
 	if query == "" {
-		resp, _ := json.Marshal(SearchResponse{Error: "Empty query"})
-		return string(resp), nil
+		return "", fmt.Errorf("query is required")
 	}
 
 	if w.searchConfig == nil || !w.searchConfig.IsAvailable() {
-		resp, _ := json.Marshal(SearchResponse{Error: "Search engine not configured"})
-		return string(resp), nil
+		return "", fmt.Errorf("search engine not configured")
 	}
 
 	provider := w.searchConfig.Provider
@@ -91,13 +95,11 @@ func (w *WebSearchTool) Execute(args map[string]interface{}) (string, error) {
 	case "tavily":
 		results, err = w.searchTavily(apiKey, query, numResults)
 	default:
-		resp, _ := json.Marshal(SearchResponse{Error: fmt.Sprintf("Unknown search provider: %s", provider)})
-		return string(resp), nil
+		return "", fmt.Errorf("unknown search provider: %s", provider)
 	}
 
 	if err != nil {
-		resp, _ := json.Marshal(SearchResponse{Error: err.Error()})
-		return string(resp), nil
+		return "", fmt.Errorf("search failed: %s", err.Error())
 	}
 
 	resp, _ := json.Marshal(SearchResponse{Results: results})

@@ -36,7 +36,10 @@ func NewScanExperienceTool(agentID int64) *ScanExperienceTool {
 	return &ScanExperienceTool{agentID: agentID}
 }
 
-func (s *ScanExperienceTool) Name() string { return "scan_my_experience" }
+// ToolNameScanMyExperience is the type-safe name constant for ScanExperienceTool.
+const ToolNameScanMyExperience ToolName = "scan_my_experience"
+
+func (s *ScanExperienceTool) Name() ToolName { return ToolNameScanMyExperience }
 
 func (s *ScanExperienceTool) Description() string {
 	return "Search your past experiences by keyword to find relevant lessons"
@@ -44,7 +47,7 @@ func (s *ScanExperienceTool) Description() string {
 
 func (s *ScanExperienceTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: s.Name(),
+		Name: string(s.Name()),
 		Description: "Search your private experiences (lessons learned from past tasks) by keyword. " +
 			"Returns a list of matching experiences with id, title, description, and when_to_use. " +
 			"Use recall_my_experience with the exp_id to read the full content of a specific experience.",
@@ -80,8 +83,7 @@ type scanResponse struct {
 func (s *ScanExperienceTool) Execute(args map[string]interface{}) (string, error) {
 	keyword, _ := args["keyword"].(string)
 	if keyword == "" {
-		resp, _ := json.Marshal(scanResponse{Error: "keyword is required"})
-		return string(resp), nil
+		return "", fmt.Errorf("keyword is required")
 	}
 
 	results, err := experience.SearchExperiences(
@@ -94,8 +96,7 @@ func (s *ScanExperienceTool) Execute(args map[string]interface{}) (string, error
 			"keyword", keyword,
 			"error", err,
 		)
-		resp, _ := json.Marshal(scanResponse{Error: fmt.Sprintf("search failed: %s", err.Error())})
-		return string(resp), nil
+		return "", fmt.Errorf("search failed: %s", err.Error())
 	}
 
 	entries := make([]scanResultEntry, 0, len(results))

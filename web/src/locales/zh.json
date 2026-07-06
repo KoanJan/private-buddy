@@ -243,7 +243,18 @@
     "noRecords": "暂无 Agent 活动记录",
     "loadError": "加载活动记录失败",
     "expand": "展开",
-    "collapse": "收起"
+    "collapse": "收起",
+    "tool": {
+      "bash": "执行命令",
+      "web_search": "搜索网页",
+      "write_notes": "记录笔记",
+      "wake_me_when": "定下闹钟",
+      "scan_my_experience": "搜索经验",
+      "recall_my_experience": "回忆经验",
+      "read_text_file": "查看文件",
+      "write_text_file": "写入文件",
+      "edit_text_file": "编辑文件"
+    }
   },
   "publicExperience": {
     "title": "经验库",
