@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.27] - 2026-07-09
+
+### Added
+- **Sandbox Execution**: kernel-level sandbox for `BashTool` — `sandbox-exec` (Seatbelt) on macOS, `bubblewrap` on Linux, plain exec fallback on Windows; sandbox unavailability falls back without blocking the task
+
+### Changed
+- **Architecture-Aware Packages**: macOS and Linux install packages split by CPU architecture (amd64/arm64); filenames include `{arch}` suffix; Linux targets switched from `AppImage + deb` to `deb + rpm`
+
+### Fixed
+- **Production Log Visibility**: Go server logs moved from app bundle internals to user data directory; log level defaults to `INFO` in production
+
 ## [0.0.26] - 2026-07-07
 
 ### Added

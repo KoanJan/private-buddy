@@ -1,0 +1,54 @@
+;; private-buddy Seatbelt sandbox policy
+;; Design: availability over security. Restrict writes only;
+;; reads and execution are fully allowed for now.
+(version 1)
+(deny default)
+
+;; === Read & Execute: fully allowed ===
+(allow file-read*)
+(allow process-exec)
+(allow process-fork)
+
+;; === Write: only workspace and temp directories ===
+(allow file-write*
+    (subpath "$WORKSPACE")
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders")
+)
+(allow file-write*
+    (literal "/dev/null")
+    (literal "/dev/stdin")
+    (literal "/dev/stdout")
+    (literal "/dev/stderr")
+    (literal "/dev/dtracehelper")
+)
+
+;; === Write: deny protected directories (deny takes precedence over allow) ===
+(deny file-write*
+    (subpath "/private/etc")
+    (subpath "/private/var/log")
+    (subpath "/private/var/db")
+    (subpath "/private/var/run")
+    (subpath "/usr")
+    (subpath "/System")
+    (subpath "/Library")
+    (subpath "/Applications")
+    (regex #"^/Users/[^/]+/\.(ssh|gnupg|aws)")
+)
+
+;; === Other necessary capabilities ===
+(allow sysctl-read)
+(allow signal (target self))
+(allow network-outbound
+    (remote tcp)
+    (remote udp "*:53")
+)
+(allow mach-lookup
+    (global-name "com.apple.trustd")
+    (global-name "com.apple.bsd.dirhelper")
+    (global-name "com.apple.system.notification_center")
+)
+(deny mach-lookup
+    (global-name "com.apple.windowserver.active")
+    (global-name "com.apple.CoreServices.coreservicesd")
+)

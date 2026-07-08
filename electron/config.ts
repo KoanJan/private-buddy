@@ -103,6 +103,22 @@ export function getDataRoot(): string {
   return path.join(app.getPath('userData'), 'data');
 }
 
+// Returns the log directory, injected as LOG_DIR env var.
+// Writes to userData so logs persist outside the app bundle:
+//   macOS:   ~/Library/Application Support/Private Buddy/logs
+//   Windows: %APPDATA%/Private Buddy/logs
+//   Linux:   ~/.config/Private Buddy/logs
+export function getLogRoot(): string {
+  return path.join(app.getPath('userData'), 'logs');
+}
+
+// Returns the log level for the Go server.
+// Dev mode: DEBUG (verbose, with source file info).
+// Production: INFO (concise).
+export function getLogLevel(): string {
+  return isDev() ? 'DEBUG' : 'INFO';
+}
+
 // For pre-release versions (0.0.x), data compatibility is not guaranteed.
 // When the app version changes, wipe the data directory to avoid schema
 // migration issues. A .data-version file tracks which version last wrote data.

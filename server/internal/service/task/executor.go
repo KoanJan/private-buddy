@@ -165,9 +165,7 @@ func Execute(params TaskParams) *TaskResult {
 	writeNotesTool := tools.NewWriteNotesTool(metaDir, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	sessionWorkspace := workspace.GetWorkspacePath(params.AgentID, params.SessionID)
-	sessionOutputDir := workspace.GetOutputDir(params.AgentID, params.SessionID)
-	toolList := buildToolList(sessionWorkspace, sessionOutputDir, params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
+	toolList := buildToolList(params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
 
 	// Build the system prompt AFTER the tool list so that tool descriptions
 	// can be generated from the registered tools.
@@ -360,12 +358,12 @@ func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []too
 //
 // metaDir is the resolved .meta directory (caller-provided) so this function
 // stays decoupled from workspace layout details.
-func buildToolList(sessionWorkspace, workDir string, sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
+func buildToolList(sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
 		tools.NewReadTextFileTool(agentID, sessionID),
 		tools.NewWriteTextFileTool(agentID, sessionID),
 		tools.NewEditTextFileTool(agentID, sessionID),
-		tools.NewBashTool(sessionWorkspace, workDir),
+		tools.NewBashTool(agentID, sessionID),
 		tools.NewWriteNotesTool(metaDir, notesMaxChars),
 		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
 		tools.NewScanExperienceTool(agentID),

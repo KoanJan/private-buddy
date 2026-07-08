@@ -32,6 +32,7 @@ var globalSettings *Settings
 // Settings holds all application configuration values.
 type Settings struct {
 	DataRoot                string // Root directory for all data storage
+	LogDir                  string // Directory for log files (default: logs/)
 	SummaryWindowSize       int    // Number of messages before triggering summary generation
 	SummaryTokenThreshold   int    // Token budget threshold for fallback summary trigger
 	LogLevel                string // Logging level (DEBUG, INFO, WARN, ERROR)
@@ -47,6 +48,7 @@ func Init() {
 
 	globalSettings = &Settings{
 		DataRoot:                dataRoot,
+		LogDir:                  expandHome(getEnv("LOG_DIR", "logs")),
 		SummaryWindowSize:       getEnvInt("SUMMARY_WINDOW_SIZE", 50),
 		SummaryTokenThreshold:   getEnvInt("SUMMARY_TOKEN_THRESHOLD", 16000),
 		LogLevel:                getEnv("LOG_LEVEL", "INFO"),

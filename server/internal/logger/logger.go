@@ -22,9 +22,9 @@ var globalInstance *slog.Logger
 func Init() {
 	settings := config.Get()
 
-	logDir := "logs"
+	logDir := settings.LogDir
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create log directory %s: %v\n", logDir, err)
 	}
 
 	logFile := filepath.Join(logDir, fmt.Sprintf("app_%s.log", time.Now().Format("20060102")))

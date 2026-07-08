@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/sandbox"
+	"private-buddy-server/internal/service/workspace"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -28,18 +29,21 @@ const (
 // Supports configurable timeout and returns stdout, stderr, and exit code.
 //
 // Security:
-//   - Path traversal outside the session workspace is blocked
-//   - Access to .meta directory is blocked (system-managed files)
+//   - Commands are executed inside a platform-native sandbox (macOS Seatbelt,
+//     Linux bubblewrap, Windows AppContainer)
+//   - Sandbox enforces filesystem write isolation at the kernel level
+//   - Falls back to plain exec if the sandbox is unavailable (availability over security)
 type BashTool struct {
-	sessionRoot string // Session-level security boundary for path traversal checks
-	workDir     string // Command execution working directory (session_X/output/)
+	agentID   int64 // Agent ID for workspace path derivation and sandbox policy generation
+	sessionID int64 // Session ID for workspace path derivation and sandbox policy generation
 }
 
-// NewBashTool creates a BashTool with the given session root and working directory.
-// sessionRoot defines the security boundary — commands cannot access paths outside it.
-// workDir is the CWD for command execution, scoped to the session's output directory.
-func NewBashTool(sessionRoot, workDir string) *BashTool {
-	return &BashTool{sessionRoot: sessionRoot, workDir: workDir}
+// NewBashTool creates a BashTool with the given session context.
+// Workspace paths (session root, output dir) are derived internally from
+// agentID/sessionID via the workspace package — the single source of truth
+// for path layout.
+func NewBashTool(agentID, sessionID int64) *BashTool {
+	return &BashTool{agentID: agentID, sessionID: sessionID}
 }
 
 // ToolNameBash is the type-safe name constant for BashTool.
@@ -50,10 +54,8 @@ func (b *BashTool) Name() ToolName { return ToolNameBash }
 func (b *BashTool) Description() string { return "Execute shell commands in your working directory" }
 
 func (b *BashTool) Schema() llm.FunctionDefinition {
-	workspaceHint := ""
-	if b.sessionRoot != "" {
-		workspaceHint = fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", b.sessionRoot)
-	}
+	sessionRoot := workspace.GetWorkspacePath(b.agentID, b.sessionID)
+	workspaceHint := fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", sessionRoot)
 	return llm.FunctionDefinition{
 		Name:        string(b.Name()),
 		Description: "Execute a shell command. Use this tool to run commands, manage files, and interact with the system." + workspaceHint,
@@ -95,17 +97,15 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("command is required")
 	}
 
-	applogger.Info("BashTool executing", "command", command, "timeout_ms", timeoutMs)
+	// Build sandbox command: sandbox.Run handles platform dispatch internally
+	sessionRoot := workspace.GetWorkspacePath(b.agentID, b.sessionID)
+	cmd, sandboxed, err := sandbox.Run(sessionRoot, b.agentID, b.sessionID, []string{"bash", "-c", command})
+	if err != nil {
+		return "", fmt.Errorf("failed to create sandbox command: %s", err.Error())
+	}
+	cmd.Dir = workspace.GetOutputDir(b.agentID, b.sessionID)
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", command)
-	} else {
-		cmd = exec.Command("bash", "-c", command)
-	}
-	if b.workDir != "" {
-		cmd.Dir = b.workDir
-	}
+	applogger.Info("BashTool executing", "command", command, "timeout_ms", timeoutMs, "sandbox", sandboxed)
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 	timer := time.NewTimer(timeout)

@@ -6,6 +6,7 @@ files:
   - electron/dist/**/*
   - web-dist/**/*
 mac:
+  artifactName: "${name}-${version}-mac-${arch}.${ext}"
   target:
     - dmg
     - zip
@@ -19,6 +20,7 @@ mac:
     NSMicrophoneUsageDescription: "Private Buddy does not use the microphone."
     NSCameraUsageDescription: "Private Buddy does not use the camera."
 win:
+  artifactName: "${name}-${version}-win-${arch}.${ext}"
   target:
     - target: nsis
       arch:
@@ -28,9 +30,10 @@ win:
     - from: server/private-buddy-server.exe
       to: server/private-buddy-server.exe
 linux:
+  artifactName: "${name}-${version}-linux-${arch}.${ext}"
   target:
-    - AppImage
     - deb
+    - rpm
   icon: build/icon-1024.png
   category: Utility
   extraResources:

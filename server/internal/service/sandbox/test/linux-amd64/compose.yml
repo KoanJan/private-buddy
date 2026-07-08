@@ -1,0 +1,21 @@
+# Docker Compose for running Linux sandbox unit tests (amd64).
+#
+# Usage (from this directory):
+#   docker compose up --build --abort-on-container-exit
+#
+# The Dockerfile compiles bubblewrap from source and embeds it into the Go
+# test binary, testing real bwrap sandbox behavior. Requires privileged mode
+# for user namespaces.
+
+services:
+  sandbox-test:
+    build:
+      context: ../../../../..    # server/
+      dockerfile: internal/service/sandbox/test/linux-amd64/Dockerfile
+    platform: linux/amd64
+    privileged: true
+    volumes:
+      - go-mod-cache:/go/pkg/mod
+
+volumes:
+  go-mod-cache:

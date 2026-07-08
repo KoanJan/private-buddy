@@ -9,7 +9,7 @@
  */
 
 import { ChildProcess, spawn } from 'child_process';
-import { getServerExecutable, getServerCwd, isDev, SERVER_HOST, getServerPort, setServerPort, findFreePort, getDataRoot } from './config';
+import { getServerExecutable, getServerCwd, isDev, SERVER_HOST, getServerPort, setServerPort, findFreePort, getDataRoot, getLogRoot, getLogLevel } from './config';
 import http from 'http';
 import { existsSync } from 'fs';
 
@@ -84,6 +84,8 @@ export async function startServer(): Promise<void> {
       ...process.env,
       PORT: String(port),
       DATA_ROOT: getDataRoot(),
+      LOG_DIR: getLogRoot(),
+      LOG_LEVEL: getLogLevel(),
     };
 
     let spawnError: Error | null = null;

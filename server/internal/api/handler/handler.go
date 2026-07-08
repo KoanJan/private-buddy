@@ -432,6 +432,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		for _, sid := range sessionIDs {
 			// id is the agentID; sid is each session owned by this agent.
 			workspace.RemoveWorkspace(id, sid)
+			workspace.RemoveAac(id, sid)
 		}
 	}
 
@@ -550,6 +551,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	}
 	h.crudSession.Delete(id)
 	workspace.RemoveWorkspace(sess.AgentID, id)
+	workspace.RemoveAac(sess.AgentID, id)
 	response.SuccessMessage(c, "Session deleted successfully", nil)
 }
 
