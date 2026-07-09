@@ -9,7 +9,7 @@
  * 5. Graceful shutdown of server on quit
  */
 
-import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, globalShortcut, shell } from 'electron';
 import path from 'path';
 import { startServer, stopServer } from './server-manager';
 import { isDev, getWebDistPath, getServerPort, APP_NAME, checkPreReleaseDataReset } from './config';
@@ -112,6 +112,9 @@ app.on('ready', async () => {
   ipcMain.handle('get-app-version', () => app.getVersion());
   ipcMain.handle('is-packaged', () => app.isPackaged);
   ipcMain.handle('get-platform', () => process.platform);
+  ipcMain.handle('open-path', async (_event, filePath: string) => {
+    return await shell.openPath(filePath);
+  });
 
   createSplashWindow();
 

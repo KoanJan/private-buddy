@@ -109,6 +109,7 @@ func AutoMigrate() {
 		&model.PublicExperienceVector{},
 		&model.SystemLLMConfig{},
 		&model.UploadedSkill{},
+		&model.AgentDelivery{},
 	}
 
 	// Run structural migrations BEFORE addMissingColumns, because some

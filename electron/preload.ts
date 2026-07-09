@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
   isPackaged: (): Promise<boolean> => ipcRenderer.invoke('is-packaged'),
   getPlatform: (): Promise<string> => ipcRenderer.invoke('get-platform'),
+  openPath: (filePath: string): Promise<string> => ipcRenderer.invoke('open-path', filePath),
   onBackendStatus: (callback: (status: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: string) => callback(status);
     ipcRenderer.on('backend-status', handler);

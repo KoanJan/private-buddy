@@ -1,0 +1,18 @@
+package model
+
+import "time"
+
+// AgentDelivery records a file delivery from one agent to another (or to user).
+// Each delivery creates a delivery_N subdirectory under the recipient's received/
+// directory to avoid conflicts between multiple deliveries in the same session.
+type AgentDelivery struct {
+	ID          int64     `gorm:"primaryKey;autoIncrement;type:INTEGER PRIMARY KEY AUTOINCREMENT" json:"id"`
+	FromAgentID int64     `gorm:"not null;index:idx_from_agent;column:from_agent_id" json:"from_agent_id"`
+	ToAgentID   int64     `gorm:"not null;index:idx_to_agent;column:to_agent_id" json:"to_agent_id"`
+	SessionID   int64     `gorm:"not null;index:idx_session;column:session_id" json:"session_id"`
+	Paths       string    `gorm:"type:text;not null" json:"paths"`                  // JSON array of relative paths delivered
+	Remark      string    `gorm:"type:text;not null;default:''" json:"remark"`     // Optional note from the sender
+	CreatedAt   time.Time `gorm:"not null;autoCreateTime;column:created_at" json:"created_at"`
+}
+
+func (AgentDelivery) TableName() string { return "agent_deliveries" }

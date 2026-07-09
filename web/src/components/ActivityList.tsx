@@ -25,6 +25,7 @@ const toolEmoji: Record<string, string> = {
   read_text_file: '📖',
   write_text_file: '✏️',
   edit_text_file: '🔧',
+  deliver_to: '📦',
 };
 
 /**

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { logger } from '../logger';
-import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile, SystemLLMConfig, PublicExperience, UploadedSkill, ActivityEvent } from '../types';
+import type { Session, Message, LLMConfig, EmbeddingConfig, Agent, AgentWithSessions, SearchConfig, KnowledgeBase, Document, SearchResult, SessionAgentStatus, UserProfile, SystemLLMConfig, PublicExperience, UploadedSkill, ActivityEvent, ReceivedDelivery } from '../types';
 
 declare global {
   interface Window {
@@ -9,6 +9,7 @@ declare global {
       getAppVersion: () => Promise<string>;
       isPackaged: () => Promise<boolean>;
       getPlatform: () => Promise<string>;
+      openPath: (filePath: string) => Promise<string>;
       onBackendStatus: (callback: (status: string) => void) => () => void;
       onBackendError: (callback: (error: string) => void) => () => void;
     };
@@ -126,6 +127,9 @@ export const sessionApi = {
   update: (id: number, data: Partial<Session>) => api.put<Session>(`/sessions/${id}`, data),
   delete: (id: number) => api.delete(`/sessions/${id}`),
   getActivities: (id: number) => api.get<ActivityEvent[]>(`/sessions/${id}/activities`),
+  getReceivedDeliveries: (id: number) => api.get<ReceivedDelivery[]>(`/sessions/${id}/received/deliveries`),
+  getReceivedFileUrl: (id: number, delivery: string, path: string) =>
+    `${getDynamicServerBaseUrl()}/api/sessions/${id}/received/file?delivery=${encodeURIComponent(delivery)}&path=${encodeURIComponent(path)}`,
 };
 
 export const messageApi = {

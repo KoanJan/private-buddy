@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Input, Button, message, Spin } from 'antd';
 import { RobotOutlined } from '@ant-design/icons';
-import { Send, MessagesSquare, List } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMessageTime } from '../utils/time';
 import AgentAvatar from './AgentAvatar';
 import AgentStatusBar from './AgentStatusBar';
 import ActivityList from './ActivityList';
+import ReceivedPanel from './ReceivedPanel';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message, Session, Agent, SessionAgentStatus } from '../types';
@@ -47,7 +48,20 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   const [agentStatus, setAgentStatus] = useState<number>(PARTICIPANT_STATUS_IDLE);
   const [sessionAgents, setSessionAgents] = useState<SessionAgentStatus[]>([]);
-  const [viewMode, setViewMode] = useState<'chat' | 'activity'>('chat');
+  const [viewMode, setViewMode] = useState<'chat' | 'activity' | 'received'>('chat');
+  const tabContainerRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  
+  // Update tab indicator position when viewMode changes
+  useEffect(() => {
+    const container = tabContainerRef.current;
+    const activeTab = tabRefs.current[viewMode];
+    if (!container || !activeTab) return;
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = activeTab.getBoundingClientRect();
+    container.style.setProperty('--indicator-left', `${tabRect.left - containerRect.left}px`);
+    container.style.setProperty('--indicator-width', `${tabRect.width}px`);
+  }, [viewMode]);
   
   // Derived: streaming state is determined by agent runtime status (from SSE agent_status events)
   const isStreaming = agentStatus !== PARTICIPANT_STATUS_IDLE;
@@ -413,18 +427,37 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
       <div className="chat-header-row">
         <AgentStatusBar agents={sessionAgents} />
         {!isTempSession && (
-          <button
-            className={`chat-view-toggle ${viewMode === 'activity' ? 'active' : ''}`}
-            onClick={() => setViewMode(viewMode === 'chat' ? 'activity' : 'chat')}
-          >
-            {viewMode === 'chat' ? <List size={14} /> : <MessagesSquare size={14} />}
-            {viewMode === 'chat' ? t('chat.activityLog') : t('chat.chatView')}
-          </button>
+          <div className="chat-view-tabs" ref={tabContainerRef}>
+            <div className="chat-tab-indicator" />
+            <button
+              ref={(el) => { tabRefs.current.chat = el; }}
+              className={`chat-tab ${viewMode === 'chat' ? 'active' : ''}`}
+              onClick={() => setViewMode('chat')}
+            >
+              Chat
+            </button>
+            <button
+              ref={(el) => { tabRefs.current.activity = el; }}
+              className={`chat-tab ${viewMode === 'activity' ? 'active' : ''}`}
+              onClick={() => setViewMode('activity')}
+            >
+              Activities
+            </button>
+            <button
+              ref={(el) => { tabRefs.current.received = el; }}
+              className={`chat-tab ${viewMode === 'received' ? 'active' : ''}`}
+              onClick={() => setViewMode('received')}
+            >
+              Received
+            </button>
+          </div>
         )}
       </div>
 
       {viewMode === 'activity' ? (
         <ActivityList sessionId={session.id} agents={sessionAgents} />
+      ) : viewMode === 'received' ? (
+        <ReceivedPanel sessionId={session.id} />
       ) : (
         <>
           <div className="chat-messages" ref={chatMessagesRef}>

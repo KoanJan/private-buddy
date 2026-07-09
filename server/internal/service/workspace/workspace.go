@@ -3,8 +3,12 @@
 // The workspace layout is:
 //
 //	{workspaceRoot}/{agent_id}/{session_id}/
-//	  ├── .meta/    — system-managed files (notes.md, fingerprint.txt)
-//	  └── output/   — agent's working output directory
+//	  ├── .meta/       — system-managed files (notes.md, fingerprint.txt)
+//	  ├── output/      — agent's working output directory (read-write)
+//	  └── received/    — files delivered from other agents/user (read-only copies)
+//	      ├── delivery_1/
+//	      ├── delivery_2/
+//	      └── ...
 //
 // The {agent_id} layer provides structural preparation for future multi-agent
 // isolation (Actor model). In single-agent mode it is purely organizational —
@@ -47,6 +51,13 @@ func GetOutputDir(agentID, sessionID int64) string {
 	return filepath.Join(GetWorkspacePath(agentID, sessionID), "output")
 }
 
+// GetReceivedDir returns the received directory path for files delivered
+// by other agents or users.
+// Path: {workspaceRoot}/{agent_id}/{session_id}/received
+func GetReceivedDir(agentID, sessionID int64) string {
+	return filepath.Join(GetWorkspacePath(agentID, sessionID), "received")
+}
+
 // InitWorkspace creates the workspace directory structure for a session and
 // initializes notes.md if it doesn't exist. Returns the workspace path.
 func InitWorkspace(agentID, sessionID int64) string {
@@ -61,6 +72,9 @@ func InitWorkspace(agentID, sessionID int64) string {
 
 	outputDir := GetOutputDir(agentID, sessionID)
 	os.MkdirAll(outputDir, 0755)
+
+	receivedDir := GetReceivedDir(agentID, sessionID)
+	os.MkdirAll(receivedDir, 0755)
 
 	return ws
 }

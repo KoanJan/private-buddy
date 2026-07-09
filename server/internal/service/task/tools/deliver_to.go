@@ -1,0 +1,292 @@
+package tools
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/workspace"
+
+	applogger "private-buddy-server/internal/logger"
+)
+
+// ToolNameDeliverTo is the type-safe name constant for DeliverToTool.
+const ToolNameDeliverTo ToolName = "deliver_to"
+
+// DeliverToTool copies files from the agent's output/ directory to another
+// participant's received/ directory. Each delivery creates a numbered
+// subdirectory (delivery_1, delivery_2, ...) to avoid conflicts between
+// multiple deliveries in the same session.
+type DeliverToTool struct {
+	agentID   int64
+	sessionID int64
+}
+
+// NewDeliverToTool creates a DeliverToTool for the given agent and session.
+func NewDeliverToTool(agentID, sessionID int64) *DeliverToTool {
+	return &DeliverToTool{
+		agentID:   agentID,
+		sessionID: sessionID,
+	}
+}
+
+func (d *DeliverToTool) Name() ToolName { return ToolNameDeliverTo }
+
+func (d *DeliverToTool) Description() string {
+	return "Deliver files from your output directory to another participant's received/ directory"
+}
+
+func (d *DeliverToTool) Schema() llm.FunctionDefinition {
+	return llm.FunctionDefinition{
+		Name: string(d.Name()),
+		Description: "Deliver files from your output/ directory to another participant. " +
+			"The files will be copied to the recipient's received/ directory under a " +
+			"numbered subdirectory (e.g., delivery_1/). Use this when you have completed " +
+			"work products that someone else needs.",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"receiver_name": map[string]interface{}{
+					"type":        "string",
+					"description": "The name of the recipient to deliver to.",
+				},
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"description": "List of file or directory paths to deliver (relative to your output/ directory)",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"remark": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional note describing what is being delivered and why",
+				},
+			},
+			"required": []string{"receiver_name", "paths"},
+		},
+	}
+}
+
+// resolveReceiver looks up the receiver name in agents and users tables
+// and returns the workspace agent_id. agent names and user names form
+// a unique union, so at most one entity will match.
+// User delivery targets agent_id=0 regardless of the user's DB ID,
+// because the workspace root is always {agent_id=0}/... for the user.
+func resolveReceiver(name string) (int64, error) {
+	var agent model.Agent
+	if err := database.DB.Where("name = ?", name).First(&agent).Error; err == nil {
+		return agent.ID, nil
+	}
+
+	var user model.User
+	if err := database.DB.Where("name = ?", name).First(&user).Error; err == nil {
+		return 0, nil // User workspace always at agent_id=0
+	}
+
+	return 0, fmt.Errorf("recipient '%s' not found", name)
+}
+
+func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
+	// Parse receiver_name and resolve to agent ID.
+	receiverName, ok := args["receiver_name"].(string)
+	if !ok || receiverName == "" {
+		return "", fmt.Errorf("receiver_name must be a non-empty string")
+	}
+
+	targetAgentID, err := resolveReceiver(receiverName)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse paths
+	pathsRaw, ok := args["paths"].([]interface{})
+	if !ok {
+		return "", fmt.Errorf("paths must be an array of strings")
+	}
+	if len(pathsRaw) == 0 {
+		return "", fmt.Errorf("paths must not be empty")
+	}
+
+	var paths []string
+	for _, p := range pathsRaw {
+		pathStr, ok := p.(string)
+		if !ok {
+			return "", fmt.Errorf("each path must be a string")
+		}
+		paths = append(paths, pathStr)
+	}
+
+	// Parse remark (optional)
+	remark := ""
+	if r, ok := args["remark"].(string); ok {
+		remark = r
+	}
+
+	// Validate each source path exists and is within output/
+	outputDir := workspace.GetOutputDir(d.agentID, d.sessionID)
+	var validatedPaths []string
+	for _, p := range paths {
+		resolved, err := resolvePath(p, d.agentID, d.sessionID)
+		if err != nil {
+			return "", fmt.Errorf("invalid path '%s': %w", p, err)
+		}
+		if _, err := os.Stat(resolved); os.IsNotExist(err) {
+			return "", fmt.Errorf("path '%s' does not exist in your output/ directory", p)
+		}
+		// Record the relative path from output/ for DB and target
+		relPath, err := filepath.Rel(outputDir, resolved)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve relative path for '%s': %w", p, err)
+		}
+		validatedPaths = append(validatedPaths, relPath)
+	}
+
+	// Determine delivery number by scanning existing delivery_* directories
+	receivedDir := workspace.GetReceivedDir(targetAgentID, d.sessionID)
+	if err := os.MkdirAll(receivedDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create received directory: %w", err)
+	}
+
+	deliveryNum := nextDeliveryNum(receivedDir)
+	deliveryDir := filepath.Join(receivedDir, "delivery_"+strconv.Itoa(deliveryNum))
+	if err := os.MkdirAll(deliveryDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create delivery directory: %w", err)
+	}
+
+	// Copy each path into the delivery directory
+	for _, relPath := range validatedPaths {
+		src := filepath.Join(outputDir, relPath)
+		dst := filepath.Join(deliveryDir, relPath)
+
+		// Ensure parent directory exists
+		dstParent := filepath.Dir(dst)
+		if err := os.MkdirAll(dstParent, 0755); err != nil {
+			return "", fmt.Errorf("failed to create target directory: %w", err)
+		}
+
+		if err := copyPath(src, dst); err != nil {
+			return "", fmt.Errorf("failed to copy '%s': %w", relPath, err)
+		}
+	}
+
+	// Write delivery record to database
+	pathsJSON, err := json.Marshal(validatedPaths)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal paths: %w", err)
+	}
+
+	record := model.AgentDelivery{
+		FromAgentID: d.agentID,
+		ToAgentID:   targetAgentID,
+		SessionID:   d.sessionID,
+		Paths:       string(pathsJSON),
+		Remark:      remark,
+	}
+	if err := database.DB.Create(&record).Error; err != nil {
+		applogger.Error("Failed to write agent_delivery record", "error", err)
+		// File copy succeeded, DB write failed — log but don't fail the delivery
+	}
+
+	// Build result message
+	pathList := strings.Join(validatedPaths, ", ")
+	result := fmt.Sprintf("Delivered %d file(s) to user (delivery #%d): %s",
+		len(validatedPaths), deliveryNum, pathList)
+
+	return result, nil
+}
+
+// nextDeliveryNum scans the received/ directory for existing delivery_N
+// subdirectories and returns the next available number (max + 1).
+func nextDeliveryNum(receivedDir string) int {
+	entries, err := os.ReadDir(receivedDir)
+	if err != nil {
+		return 1
+	}
+
+	maxNum := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "delivery_") {
+			numStr := strings.TrimPrefix(name, "delivery_")
+			if n, err := strconv.Atoi(numStr); err == nil && n > maxNum {
+				maxNum = n
+			}
+		}
+	}
+	return maxNum + 1
+}
+
+// copyPath copies a file or directory tree from src to dst.
+// If src is a directory, its contents are copied recursively.
+func copyPath(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if srcInfo.IsDir() {
+		return copyDirectory(src, dst)
+	}
+	return copyFile(src, dst)
+}
+
+// copyDirectory recursively copies a directory tree from src to dst.
+func copyDirectory(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			if err := copyDirectory(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// copyFile copies a single file from src to dst, preserving permissions.
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}

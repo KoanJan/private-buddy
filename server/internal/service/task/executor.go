@@ -284,14 +284,15 @@ func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []too
 		"- This keeps your workspace organized but is not enforced — use your judgment",
 		"",
 		"COMPLETION OUTPUT:",
-		"When the task is complete, provide a factual summary of the work done.",
+		"Remember: the recipient cannot see your output/ directory. If they need any of your output files, you must use deliver_to to send them before summarizing.",
+		"- Deliver whole directories (e.g., paths: [\"my-project\"]) rather than individual files.",
+		"- Verify what you produced with `ls output/` or `find output/ -type f` first.",
 		"",
 		"- Accomplishments: what was achieved, with specific details",
-		"- Files: list created or modified files with ABSOLUTE paths (use `pwd` if unsure)",
 		"- Verification: how correctness was confirmed (test results, checks, etc.)",
 		"- Status: if partially completed, state exactly what's done and what remains",
 		"",
-		"- ALWAYS provide ABSOLUTE file paths, not relative paths",
+		"- Do NOT list raw file paths from your output/ directory — delivered files are already in the recipient's received/ area",
 		"- Never fabricate or guess file paths — verify with `pwd` or `ls` if needed",
 		"",
 		"[Understanding Current State]",
@@ -368,6 +369,7 @@ func buildToolList(sessionID, agentID, triggerMessageID int64, searchConfig *mod
 		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
 		tools.NewScanExperienceTool(agentID),
 		tools.NewRecallExperienceTool(agentID),
+		tools.NewDeliverToTool(agentID, sessionID),
 	}
 
 	if searchConfig != nil && searchConfig.IsAvailable() {

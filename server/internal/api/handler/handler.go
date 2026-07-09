@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -553,6 +555,150 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	workspace.RemoveWorkspace(sess.AgentID, id)
 	workspace.RemoveAac(sess.AgentID, id)
 	response.SuccessMessage(c, "Session deleted successfully", nil)
+}
+
+// receivedFileEntry represents a file in a delivery directory.
+type receivedFileEntry struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	LocalPath string `json:"local_path"`
+	Size      int64  `json:"size"`
+	IsDir     bool   `json:"is_dir"`
+}
+
+// receivedDeliveryEntry represents one delivery directory with its file tree.
+type receivedDeliveryEntry struct {
+	Name  string              `json:"name"`
+	Files []receivedFileEntry `json:"files"`
+}
+
+// GetReceivedDeliveries lists all delivery directories and their file trees
+// under the user's received/ directory for a given session.
+func (h *Handler) GetReceivedDeliveries(c *gin.Context) {
+	sessionID := getPathID(c)
+
+	var session model.Session
+	if err := database.DB.First(&session, sessionID).Error; err != nil {
+		response.NotFound(c, "Session not found")
+		return
+	}
+
+	// User's agent_id is always 0
+	receivedDir := workspace.GetReceivedDir(0, sessionID)
+
+	var deliveries []receivedDeliveryEntry
+
+	entries, err := os.ReadDir(receivedDir)
+	if err != nil {
+		// Directory doesn't exist yet — return empty list
+		response.Success(c, []receivedDeliveryEntry{})
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "delivery_") {
+			continue
+		}
+
+		deliveryPath := filepath.Join(receivedDir, entry.Name())
+		files := walkDeliveryFiles(deliveryPath)
+
+		deliveries = append(deliveries, receivedDeliveryEntry{
+			Name:  entry.Name(),
+			Files: files,
+		})
+	}
+
+	response.Success(c, deliveries)
+}
+
+// walkDeliveryFiles recursively walks a delivery directory and returns a flat list of file entries.
+func walkDeliveryFiles(dirPath string) []receivedFileEntry {
+	var files []receivedFileEntry
+
+	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(dirPath, path)
+		files = append(files, receivedFileEntry{
+			Name:      info.Name(),
+			Path:      filepath.ToSlash(relPath),
+			LocalPath: path,
+			Size:      info.Size(),
+			IsDir:     false,
+		})
+		return nil
+	})
+
+	return files
+}
+
+// GetReceivedFile returns the content of a file in the user's received/ directory.
+// Query params: delivery=N (required), path=xxx (required)
+func (h *Handler) GetReceivedFile(c *gin.Context) {
+	sessionID := getPathID(c)
+	delivery := c.Query("delivery")
+	filePath := c.Query("path")
+
+	if delivery == "" || filePath == "" {
+		response.BadRequest(c, "delivery and path query parameters are required")
+		return
+	}
+
+	var session model.Session
+	if err := database.DB.First(&session, sessionID).Error; err != nil {
+		response.NotFound(c, "Session not found")
+		return
+	}
+
+	// Security: only allow alphanumeric + underscore for delivery name
+	if !isSafeDeliveryName(delivery) {
+		response.BadRequest(c, "invalid delivery name")
+		return
+	}
+
+	receivedDir := workspace.GetReceivedDir(0, sessionID)
+	fullPath := filepath.Join(receivedDir, delivery, filepath.Clean(filePath))
+
+	// Security: ensure the resolved path is within the received/ directory
+	if !strings.HasPrefix(fullPath, receivedDir) {
+		response.BadRequest(c, "invalid file path")
+		return
+	}
+
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			response.NotFound(c, "File not found")
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(filePath)))
+	c.Data(200, "application/octet-stream", data)
+}
+
+// isSafeDeliveryName checks that the delivery directory name is safe
+// (matches pattern delivery_N where N is a positive integer).
+func isSafeDeliveryName(name string) bool {
+	if !strings.HasPrefix(name, "delivery_") {
+		return false
+	}
+	numStr := strings.TrimPrefix(name, "delivery_")
+	if numStr == "" {
+		return false
+	}
+	for _, c := range numStr {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) CreateMessage(c *gin.Context) {

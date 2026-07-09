@@ -205,3 +205,16 @@ export interface ActivityEvent {
   target?: string; // only for tool_call
   agent_id: number;
 }
+
+export interface ReceivedFileEntry {
+  name: string;
+  path: string;
+  local_path: string;
+  size: number;
+  is_dir: boolean;
+}
+
+export interface ReceivedDelivery {
+  name: string;
+  files: ReceivedFileEntry[];
+}

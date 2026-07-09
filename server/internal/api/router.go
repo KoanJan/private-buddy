@@ -83,6 +83,8 @@ func SetupRouter() *gin.Engine {
 			sessions.GET("", h.ListSessions)
 			sessions.GET("/:id", h.GetSession)
 			sessions.GET("/:id/activities", h.GetSessionActivities)
+			sessions.GET("/:id/received/deliveries", h.GetReceivedDeliveries)
+			sessions.GET("/:id/received/file", h.GetReceivedFile)
 			sessions.PUT("/:id", h.UpdateSession)
 			sessions.DELETE("/:id", h.DeleteSession)
 		}

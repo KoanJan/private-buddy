@@ -253,7 +253,8 @@
       "recall_my_experience": "Recall experience",
       "read_text_file": "Read file",
       "write_text_file": "Write file",
-      "edit_text_file": "Edit file"
+      "edit_text_file": "Edit file",
+      "deliver_to": "Deliver files"
     }
   },
   "publicExperience": {

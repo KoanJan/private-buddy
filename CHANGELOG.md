@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.28] - 2026-07-10
+
+### Added
+- **File Delivery**: agents can deliver output files to recipients via the `deliver_to` tool, with auto-versioned `delivery_N` subdirectories preventing overwrites across multiple deliveries; a new Received panel lists delivered files with one-click opening via the system default application and "Show in Finder" for each delivery batch
+- **View Tab Switcher**: Chat, Activities, and Received views are now three persistent tabs with a sliding pill indicator animation, replacing the previous toggle buttons
+
+### Changed
+- **COMPLETION OUTPUT Prompt**: task completion prompt now reminds agents that the recipient cannot see their `output/` directory, and to use `deliver_to` when files are needed; delivery of whole directories is preferred over individual files
+
 ## [0.0.27] - 2026-07-09
 
 ### Added
