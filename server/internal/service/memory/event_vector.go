@@ -31,7 +31,7 @@ func SubmitVectorization(task VectorizationTask) {
 	select {
 	case vectorizerCh <- task:
 	default:
-		applogger.Warn("Vectorization service queue full, task dropped",
+		applogger.Error("Vectorization service queue full, task dropped",
 			"message_id", task.MessageID)
 	}
 }

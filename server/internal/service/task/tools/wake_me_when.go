@@ -30,16 +30,16 @@ const triggerAtFormat = "2006-01-02 15:04:05"
 // a goroutine. This separation keeps the tool layer thin and avoids circular
 // dependencies (runtime → task → tools).
 type WakeMeWhenTool struct {
-	agentID          int64
+	personID         int64
 	sessionID        int64
 	triggerMessageID int64 // The user message that triggered this tool call
 }
 
-// NewWakeMeWhenTool creates a WakeMeWhenTool for the given agent, session,
+// NewWakeMeWhenTool creates a WakeMeWhenTool for the given person, session,
 // and the user message that triggered this tool call.
-func NewWakeMeWhenTool(agentID, sessionID, triggerMessageID int64) *WakeMeWhenTool {
+func NewWakeMeWhenTool(personID, sessionID, triggerMessageID int64) *WakeMeWhenTool {
 	return &WakeMeWhenTool{
-		agentID:          agentID,
+		personID:         personID,
 		sessionID:        sessionID,
 		triggerMessageID: triggerMessageID,
 	}
@@ -139,7 +139,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 
 	// Create a DB record for persistence and debugging
 	event := model.ScheduledEvent{
-		AgentID:          w.agentID,
+		AgentID:          w.personID,
 		SessionID:        w.sessionID,
 		TriggerMessageID: w.triggerMessageID,
 		TriggerAt:        triggerAt,
@@ -150,7 +150,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 	}
 	if err := database.DB.Create(&event).Error; err != nil {
 		applogger.Error("Failed to create scheduled event record",
-			"agent_id", w.agentID,
+			"agent_id", w.personID,
 			"session_id", w.sessionID,
 			"error", err,
 		)
@@ -160,7 +160,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 	// Notify runtime to register a goroutine for this alarm.
 	// The tool does NOT manage goroutines — it only creates the DB record
 	// and sends an event. The runtime is responsible for goroutine lifecycle.
-	eventqueue.SendEvent(w.agentID, &eventqueue.AgentEvent{
+	eventqueue.SendEvent(w.personID, &eventqueue.AgentEvent{
 		Type:      eventqueue.EventTypeAlarmCreated,
 		SessionID: w.sessionID,
 		Payload: &eventqueue.AlarmCreatedPayload{

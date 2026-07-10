@@ -58,7 +58,7 @@ func RecoverProcessingDocuments() {
 
 	var switchingKBs []model.KnowledgeBase
 	if err := database.DB.Where("index_type = ?", model.KnowledgeBaseIndexTypeSwitching).Find(&switchingKBs).Error; err != nil {
-		applogger.Warn("failed to load switching KBs for recovery", "error", err)
+		applogger.Error("failed to load switching KBs for recovery", "error", err)
 		return
 	}
 	for _, kb := range switchingKBs {
@@ -257,7 +257,7 @@ func processDocument(ctx context.Context, kbID, docID int64) {
 func addVectorsToIndex(kbID, docID int64) {
 	mgr, err := getOrCreateIndexManager(kbID)
 	if err != nil {
-		applogger.Warn("Failed to get index manager for vector update", "kb_id", kbID, "error", err)
+		applogger.Error("Failed to get index manager for vector update", "kb_id", kbID, "error", err)
 		return
 	}
 
@@ -270,14 +270,14 @@ func addVectorsToIndex(kbID, docID int64) {
 	for _, chunkID := range chunkIDs {
 		embedding, err := mgr.GetVector(chunkID)
 		if err != nil {
-			applogger.Warn("Failed to get embedding for index update", "chunk_id", chunkID, "error", err)
+			applogger.Error("Failed to get embedding for index update", "chunk_id", chunkID, "error", err)
 			continue
 		}
 		if embedding == nil {
 			continue
 		}
 		if err := mgr.AddToIndex(uint64(chunkID), embedding); err != nil {
-			applogger.Warn("Failed to add vector to index", "chunk_id", chunkID, "error", err)
+			applogger.Error("Failed to add vector to index", "chunk_id", chunkID, "error", err)
 		}
 	}
 }

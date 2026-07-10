@@ -9,6 +9,7 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -16,12 +17,11 @@ import (
 
 // Entity direction constants for density detection grouping.
 // Each observation can contribute to multiple entity directions (e.g., a
-// message belongs to both a session and a user, so it counts toward both
-// the session profile and the user profile).
+// message belongs to both a session and a person, so it counts toward both
+// the session profile and the person profile).
 const (
 	entityDirSession = iota + 1
-	entityDirUser
-	entityDirAgent
+	entityDirPerson
 )
 
 // Profile generation constants.
@@ -50,7 +50,7 @@ func checkDensity(ctx context.Context, agentID int64) int {
 	var observations []model.AgentObservation
 	if err := database.DB.Where("agent_id = ?", agentID).
 		Order("id").Find(&observations).Error; err != nil {
-		applogger.Warn("EntityProfile density check: failed to load observations",
+		applogger.Error("EntityProfile density check: failed to load observations",
 			"agent_id", agentID, "error", err)
 		return 0
 	}
@@ -108,7 +108,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 	}
 	if len(ids) > 0 {
 		if err := database.DB.Where("id IN ?", ids).Find(&events).Error; err != nil {
-			applogger.Warn("resolveEntityDirections: failed to load events", "error", err)
+			applogger.Error("resolveEntityDirections: failed to load events", "error", err)
 		}
 	}
 
@@ -136,7 +136,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 		return nil
 	}
 	if err := database.DB.Where("id IN ?", mids).Find(&messages).Error; err != nil {
-		applogger.Warn("resolveEntityDirections: failed to load messages", "error", err)
+		applogger.Error("resolveEntityDirections: failed to load messages", "error", err)
 		return nil
 	}
 	msgMap := make(map[int64]model.Message)
@@ -154,7 +154,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 	}
 	if len(sids) > 0 {
 		if err := database.DB.Where("id IN ?", sids).Find(&sessions).Error; err != nil {
-			applogger.Warn("resolveEntityDirections: failed to load sessions", "error", err)
+			applogger.Error("resolveEntityDirections: failed to load sessions", "error", err)
 		}
 	}
 	sessionMap := make(map[int64]model.Session)
@@ -162,20 +162,44 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 		sessionMap[s.ID] = s
 	}
 
-	// Batch-load participant sessions to find users
-	participantMap := make(map[int64]int64) // session_id → first user_id
+	// Batch-load participant sessions to find human person IDs
+	// Participants now use person_id directly (no participant_type).
 	var participants []model.ParticipantSession
 	if len(sids) > 0 {
-		if err := database.DB.Where("session_id IN ? AND participant_type = ?", sids, model.ParticipantTypeUser).
-			Find(&participants).Error; err != nil {
-			applogger.Warn("resolveEntityDirections: failed to load participants", "error", err)
+		var pErr error
+		participants, pErr = service.GetSessionParticipantsByPersonTypeMulti(sids, model.PersonTypeHuman)
+		if pErr != nil {
+			applogger.Error("resolveEntityDirections: failed to load participants", "error", pErr)
 		}
 	}
-	seenUsers := make(map[int64]bool)
+	participantMap := make(map[int64]int64) // session_id → person_id of the first human
+	humanPersonIDs := make(map[int64]bool)  // set of human person IDs
+	seenSessions := make(map[int64]bool)
 	for _, p := range participants {
-		if !seenUsers[p.SessionID] {
+		if !seenSessions[p.SessionID] {
 			participantMap[p.SessionID] = p.ParticipantID
-			seenUsers[p.SessionID] = true
+			seenSessions[p.SessionID] = true
+		}
+		humanPersonIDs[p.ParticipantID] = true
+	}
+
+	// Batch-load agents for sessions to map agent_id → person_id
+	agents := make(map[int64]int64) // agent_id → person_id
+	var agentIDs []int64
+	seenAgents := make(map[int64]bool)
+	for _, s := range sessions {
+		if !seenAgents[s.AgentID] {
+			agentIDs = append(agentIDs, s.AgentID)
+			seenAgents[s.AgentID] = true
+		}
+	}
+	if len(agentIDs) > 0 {
+		var agentRecords []model.Agent
+		if err := database.DB.Where("id IN ?", agentIDs).Find(&agentRecords).Error; err != nil {
+			applogger.Error("resolveEntityDirections: failed to load agents", "error", err)
+		}
+		for _, a := range agentRecords {
+			agents[a.ID] = a.PersonID
 		}
 	}
 
@@ -206,24 +230,9 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 			}
 		}
 
-		// Direction 2: User (who sent the message, if role=user)
-		if msg.Role == model.MessageRoleUser {
-			userID, ok := participantMap[msg.SessionID]
-			if ok {
-				dir := entityDirection{EntityType: model.EntityTypeUser, EntityID: userID}
-				if dedup[dir] == nil {
-					dedup[dir] = make(map[int64]bool)
-				}
-				if !dedup[dir][o.ID] {
-					dedup[dir][o.ID] = true
-					counts[dir]++
-				}
-			}
-		}
-
-		// Direction 3: Agent (the agent who owns the session)
-		if sess, ok := sessionMap[msg.SessionID]; ok {
-			dir := entityDirection{EntityType: model.EntityTypeAgent, EntityID: sess.AgentID}
+		// Direction 2: Person (sender of the message)
+		{
+			dir := entityDirection{EntityType: model.EntityTypePerson, EntityID: msg.PersonID}
 			if dedup[dir] == nil {
 				dedup[dir] = make(map[int64]bool)
 			}
@@ -277,7 +286,7 @@ func generateProfile(ctx context.Context, agentID int64, entityType int, entityI
 		applogger.Error("EntityProfile: agent not found", "agent_id", agentID)
 		return
 	}
-	agentName := agent.Name
+	agentName := service.GetAgentName(agentID)
 
 	// Load relevant observations with event content
 	evidences := loadProfileEvidences(agentID, entityType, entityID, agentName)
@@ -287,7 +296,7 @@ func generateProfile(ctx context.Context, agentID int64, entityType int, entityI
 	// name as the entity label to prevent the LLM from slipping into third-person.
 	entityDesc := entityName
 	extraDirective := ""
-	if entityType == model.EntityTypeAgent && entityID == agentID {
+	if entityType == model.EntityTypePerson && entityID == agent.PersonID {
 		entityDesc = "yourself"
 		extraDirective = " Write in first-person (use 'I', 'me', 'my')."
 	}
@@ -317,7 +326,7 @@ Key observations:
 	var existingProfile model.EntityProfile
 	if err := database.DB.Where("agent_id = ? AND entity_type = ? AND entity_id = ?",
 		agentID, entityType, entityID).First(&existingProfile).Error; err != nil {
-		applogger.Warn("EntityProfile: failed to check existing profile before generation",
+		applogger.Error("EntityProfile: failed to check existing profile before generation",
 			"agent_id", agentID, "entity_type", entityType, "entity_id", entityID, "error", err)
 	}
 
@@ -357,7 +366,7 @@ Key observations:
 
 	narrative = strings.TrimSpace(narrative)
 	if narrative == "" {
-		applogger.Warn("EntityProfile LLM returned empty narrative",
+		applogger.Error("EntityProfile LLM returned empty narrative",
 			"agent_id", agentID,
 		)
 		return
@@ -404,20 +413,13 @@ Key observations:
 // Returns (label, true) on success, ("", false) if the entity name cannot be resolved.
 func entityLabel(entityType int, entityID int64) (string, bool) {
 	switch entityType {
-	case model.EntityTypeUser:
-		var user model.User
-		if err := database.DB.Where("id = ?", entityID).Select("name").First(&user).Error; err != nil {
-			applogger.Error("entityLabel: failed to load user name", "entity_id", entityID, "error", err)
+	case model.EntityTypePerson:
+		var person model.Person
+		if err := database.DB.Where("id = ?", entityID).Select("name").First(&person).Error; err != nil {
+			applogger.Error("entityLabel: failed to load person name", "entity_id", entityID, "error", err)
 			return "", false
 		}
-		return user.Name, true
-	case model.EntityTypeAgent:
-		var agent model.Agent
-		if err := database.DB.Where("id = ?", entityID).Select("name").First(&agent).Error; err != nil {
-			applogger.Error("entityLabel: failed to load agent name", "entity_id", entityID, "error", err)
-			return "", false
-		}
-		return agent.Name, true
+		return person.Name, true
 	case model.EntityTypeSession:
 		return fmt.Sprintf("session #%d", entityID), true
 	default:
@@ -454,7 +456,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	// Load events (only message-type)
 	var events []model.Event
 	if err := database.DB.Where("id IN ? AND event_type = ?", eventIDs, model.EventTypeMessage).Find(&events).Error; err != nil {
-		applogger.Warn("loadProfileEvidences: failed to load events", "error", err)
+		applogger.Error("loadProfileEvidences: failed to load events", "error", err)
 	}
 	eventMap := make(map[int64]model.Event)
 	refIDs := make([]int64, 0, len(events))
@@ -469,7 +471,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	// Load messages
 	var messages []model.Message
 	if err := database.DB.Where("id IN ?", refIDs).Find(&messages).Error; err != nil {
-		applogger.Warn("loadProfileEvidences: failed to load messages", "error", err)
+		applogger.Error("loadProfileEvidences: failed to load messages", "error", err)
 		return nil
 	}
 	msgMap := make(map[int64]model.Message)
@@ -488,7 +490,7 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	var sessions []model.Session
 	if len(sids) > 0 {
 		if err := database.DB.Where("id IN ?", sids).Find(&sessions).Error; err != nil {
-			applogger.Warn("loadProfileEvidences: failed to load sessions", "error", err)
+			applogger.Error("loadProfileEvidences: failed to load sessions", "error", err)
 		}
 	}
 	sessionMap := make(map[int64]model.Session)
@@ -496,38 +498,24 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 		sessionMap[s.ID] = s
 	}
 
-	// Map session_id → user_id for resolving user names in evidence labels.
-	var psList []model.ParticipantSession
-	participantMap := make(map[int64]int64)
-	userIDSet := make(map[int64]bool)
-	if len(sids) > 0 {
-		if err := database.DB.Where("session_id IN ? AND participant_type = ?", sids, model.ParticipantTypeUser).
-			Find(&psList).Error; err != nil {
-			applogger.Warn("loadProfileEvidences: failed to load participants", "error", err)
-		}
+	// Map person_id → person name for resolving labels in evidence.
+	// Batch-load all persons referenced by messages.
+	personIDs := make(map[int64]bool)
+	for _, m := range messages {
+		personIDs[m.PersonID] = true
 	}
-	seen := make(map[int64]bool)
-	for _, p := range psList {
-		if !seen[p.SessionID] {
-			participantMap[p.SessionID] = p.ParticipantID
-			seen[p.SessionID] = true
-			userIDSet[p.ParticipantID] = true
+	personNameMap := make(map[int64]string)
+	if len(personIDs) > 0 {
+		var persons []model.Person
+		pids := make([]int64, 0, len(personIDs))
+		for pid := range personIDs {
+			pids = append(pids, pid)
 		}
-	}
-
-	// Map user_id → user name
-	userNameMap := make(map[int64]string)
-	if len(userIDSet) > 0 {
-		uids := make([]int64, 0, len(userIDSet))
-		for uid := range userIDSet {
-			uids = append(uids, uid)
+		if err := database.DB.Where("id IN ?", pids).Select("id, name").Find(&persons).Error; err != nil {
+			applogger.Error("loadProfileEvidences: failed to load person names", "error", err)
 		}
-		var users []model.User
-		if err := database.DB.Where("id IN ?", uids).Select("id, name").Find(&users).Error; err != nil {
-			applogger.Warn("loadProfileEvidences: failed to load user names", "error", err)
-		}
-		for _, u := range users {
-			userNameMap[u.ID] = u.Name
+		for _, p := range persons {
+			personNameMap[p.ID] = p.Name
 		}
 	}
 
@@ -547,25 +535,18 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 		switch entityType {
 		case model.EntityTypeSession:
 			matches = msg.SessionID == entityID
-		case model.EntityTypeUser:
-			userID, ok := participantMap[msg.SessionID]
-			matches = ok && userID == entityID
-		case model.EntityTypeAgent:
-			sess, ok := sessionMap[msg.SessionID]
-			matches = ok && sess.AgentID == entityID
+		case model.EntityTypePerson:
+			matches = msg.PersonID == entityID
 		}
 
 		if !matches {
 			continue
 		}
 
-		// Resolve the label for this message based on role.
+		// Resolve the label for this message based on who sent it.
 		roleLabel := agentName // default: this agent's message
-		if msg.Role == model.MessageRoleUser {
-			userID, hasUser := participantMap[msg.SessionID]
-			if hasUser {
-				roleLabel = userNameMap[userID]
-			}
+		if personName, ok := personNameMap[msg.PersonID]; ok && personName != agentName {
+			roleLabel = personName
 		}
 		evidences = append(evidences, fmt.Sprintf("[%s] %s", roleLabel, msg.Content))
 

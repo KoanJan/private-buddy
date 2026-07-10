@@ -68,7 +68,7 @@ type GuidanceDirective struct {
 type RunTaskParams struct {
 	LLMConfig  *model.LLMConfig
 	SessionID  int64
-	AgentID    int64
+	PersonID   int64 // Person ID of the executing agent
 	UserMsgID  int64
 	WorkID     int64
 	Guidance   string // Execution intent from Decide phase (replaces Rewrite)
@@ -106,7 +106,7 @@ func RunTask(params RunTaskParams) *TaskResult {
 	// Load search config for web search tool
 	var searchConfig model.SearchConfig
 	if err := database.DB.Where("is_active = ?", true).First(&searchConfig).Error; err != nil {
-		applogger.Warn("failed to load active search config, proceeding without search", "error", err)
+		applogger.Error("failed to load active search config, proceeding without search", "error", err)
 	}
 
 	return Execute(TaskParams{
@@ -115,7 +115,7 @@ func RunTask(params RunTaskParams) *TaskResult {
 		LLMConfig:       params.LLMConfig,
 		MaxIterations:   0,
 		SessionID:       params.SessionID,
-		AgentID:         params.AgentID,
+		PersonID:        params.PersonID,
 		UserMsgID:       params.UserMsgID,
 		WorkID:          params.WorkID,
 		SearchConfig:    &searchConfig,
@@ -131,7 +131,7 @@ type TaskParams struct {
 	LLMConfig       *model.LLMConfig         // LLM configuration for the task
 	MaxIterations   int                      // Override for max loop iterations (0 = use default)
 	SessionID       int64                    // Session ID for interaction records and workspace
-	AgentID         int64                    // Agent ID for tools that need agent context (e.g., wake_me_when)
+	PersonID        int64                    // Person ID for tools that need person context (e.g., wake_me_when)
 	UserMsgID       int64                    // User message ID that triggered execution
 	WorkID          int64                    // Work ID for interaction record association
 	SearchConfig    *model.SearchConfig      // Search configuration for web search tool
@@ -155,21 +155,21 @@ func Execute(params TaskParams) *TaskResult {
 		"max_iterations", maxIterations,
 	)
 
-	ws := workspace.InitWorkspace(params.AgentID, params.SessionID)
+	ws := workspace.InitWorkspace(params.PersonID, params.SessionID)
 
 	settings := config.Get()
 	iterationWindow := settings.ContextWindowIterations
 	notesMaxChars := settings.NotesMaxChars
 
-	metaDir := workspace.GetMetaDir(params.AgentID, params.SessionID)
+	metaDir := workspace.GetMetaDir(params.PersonID, params.SessionID)
 	writeNotesTool := tools.NewWriteNotesTool(metaDir, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	toolList := buildToolList(params.SessionID, params.AgentID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
+	toolList := buildToolList(params.SessionID, params.PersonID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
 
 	// Build the system prompt AFTER the tool list so that tool descriptions
 	// can be generated from the registered tools.
-	systemPrompt := buildSystemPrompt(params.AgentID, params.SessionID, params.Guidance, toolList)
+	systemPrompt := buildSystemPrompt(params.PersonID, params.SessionID, params.Guidance, toolList)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
@@ -248,9 +248,9 @@ func Execute(params TaskParams) *TaskResult {
 //
 // Dynamic content (iteration counts, notes length) is appended separately by
 // ContextManager at each iteration to preserve LLM prefix caching.
-func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []tools.Tool) string {
-	sessionDir := workspace.GetWorkspacePath(agentID, sessionID)
-	outputDir := workspace.GetOutputDir(agentID, sessionID)
+func buildSystemPrompt(personID, sessionID int64, guidance string, toolList []tools.Tool) string {
+	sessionDir := workspace.GetWorkspacePath(personID, sessionID)
+	outputDir := workspace.GetOutputDir(personID, sessionID)
 
 	// Generate tool descriptions from the registered tools.
 	toolLines := []string{"Available tools:"}
@@ -359,17 +359,17 @@ func buildSystemPrompt(agentID, sessionID int64, guidance string, toolList []too
 //
 // metaDir is the resolved .meta directory (caller-provided) so this function
 // stays decoupled from workspace layout details.
-func buildToolList(sessionID, agentID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
+func buildToolList(sessionID, personID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
-		tools.NewReadTextFileTool(agentID, sessionID),
-		tools.NewWriteTextFileTool(agentID, sessionID),
-		tools.NewEditTextFileTool(agentID, sessionID),
-		tools.NewBashTool(agentID, sessionID),
+		tools.NewReadTextFileTool(personID, sessionID),
+		tools.NewWriteTextFileTool(personID, sessionID),
+		tools.NewEditTextFileTool(personID, sessionID),
+		tools.NewBashTool(personID, sessionID),
 		tools.NewWriteNotesTool(metaDir, notesMaxChars),
-		tools.NewWakeMeWhenTool(agentID, sessionID, triggerMessageID),
-		tools.NewScanExperienceTool(agentID),
-		tools.NewRecallExperienceTool(agentID),
-		tools.NewDeliverToTool(agentID, sessionID),
+		tools.NewWakeMeWhenTool(personID, sessionID, triggerMessageID),
+		tools.NewScanExperienceTool(personID),
+		tools.NewRecallExperienceTool(personID),
+		tools.NewDeliverToTool(personID, sessionID),
 	}
 
 	if searchConfig != nil && searchConfig.IsAvailable() {

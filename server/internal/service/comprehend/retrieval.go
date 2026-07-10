@@ -34,7 +34,7 @@ func GetRecentMessages(sessionID int64, limit int, status int) []model.Message {
 
 	var messages []model.Message
 	if err := query.Order("id DESC").Limit(limit).Find(&messages).Error; err != nil {
-		applogger.Warn("GetRecentMessages: failed to load messages", "error", err)
+		applogger.Error("GetRecentMessages: failed to load messages", "error", err)
 		return nil
 	}
 

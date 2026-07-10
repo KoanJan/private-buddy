@@ -90,7 +90,7 @@ func (dp *documentProcessor) Process(ctx context.Context, kbID int64, doc *model
 	for i := range chunkModels {
 		if err := database.DB.Model(&model.DocumentChunk{}).Where("id = ?", chunkModels[i].ID).
 			Update("vector_id", 1).Error; err != nil {
-			applogger.Warn("failed to update vector_id for chunk", "chunk_id", chunkModels[i].ID, "error", err)
+			applogger.Error("failed to update vector_id for chunk", "chunk_id", chunkModels[i].ID, "error", err)
 		}
 	}
 
@@ -101,7 +101,7 @@ func (dp *documentProcessor) Process(ctx context.Context, kbID int64, doc *model
 
 	dp.updateStatus(doc.ID, model.DocumentStatusReady, "")
 	if err := database.DB.Model(&model.Document{}).Where("id = ?", doc.ID).Update("chunk_count", len(chunkModels)).Error; err != nil {
-		applogger.Warn("failed to update document chunk_count", "doc_id", doc.ID, "error", err)
+		applogger.Error("failed to update document chunk_count", "doc_id", doc.ID, "error", err)
 	}
 	if err := database.DB.Model(&model.KnowledgeBase{}).Where("id = ?", kbID).
 		Update("document_count", gorm.Expr("document_count + 1")).Error; err != nil {
@@ -163,7 +163,7 @@ func (dp *documentProcessor) updateStatus(docID int64, status int, errMsg string
 		updates["error_message"] = errMsg
 	}
 	if err := database.DB.Model(&model.Document{}).Where("id = ?", docID).Updates(updates).Error; err != nil {
-		applogger.Warn("failed to update document status", "doc_id", docID, "status", status, "error", err)
+		applogger.Error("failed to update document status", "doc_id", docID, "status", status, "error", err)
 	}
 }
 

@@ -1,11 +1,14 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
+
 	"private-buddy-server/internal/database"
+	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 
-	applogger "private-buddy-server/internal/logger"
+	"gorm.io/gorm"
 )
 
 // GetSession retrieves a session by ID. Returns nil if not found.
@@ -27,6 +30,41 @@ func GetAgent(agentID int64) (*model.Agent, error) {
 	return &agent, nil
 }
 
+// GetAgentWithPerson retrieves an agent with its associated Person.
+func GetAgentWithPerson(agentID int64) (*model.Agent, *model.Person, error) {
+	agent, err := GetAgent(agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	person, err := GetPerson(agent.PersonID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return agent, person, nil
+}
+
+// GetAgentName returns the name of an agent via its Person record.
+func GetAgentName(agentID int64) string {
+	agent, err := GetAgent(agentID)
+	if err != nil {
+		return ""
+	}
+	person, err := GetPerson(agent.PersonID)
+	if err != nil {
+		return ""
+	}
+	return person.Name
+}
+
+// GetAgentPersonID returns the PersonID associated with an agent.
+func GetAgentPersonID(agentID int64) int64 {
+	agent, err := GetAgent(agentID)
+	if err != nil {
+		return 0
+	}
+	return agent.PersonID
+}
+
 // GetLLMConfig retrieves an LLM config by ID.
 func GetLLMConfig(llmConfigID int64) (*model.LLMConfig, error) {
 	var config model.LLMConfig
@@ -40,7 +78,7 @@ func GetLLMConfig(llmConfigID int64) (*model.LLMConfig, error) {
 func GetSearchConfig() *model.SearchConfig {
 	var config model.SearchConfig
 	if err := database.DB.Where("id = ?", 1).First(&config).Error; err != nil {
-		applogger.Warn("SearchConfig not found, creating default")
+		applogger.Error("SearchConfig not found, creating default")
 		config = model.SearchConfig{
 			Provider:    "tavily",
 			APIKey:      "",
@@ -77,7 +115,7 @@ func UpdateSearchConfig(provider, apiKey, description *string, isActive *bool) *
 			applogger.Error("failed to update search config", "error", err)
 		}
 		if err := database.DB.First(config, 1).Error; err != nil {
-			applogger.Warn("failed to refresh search config after update", "error", err)
+			applogger.Error("failed to refresh search config after update", "error", err)
 		}
 	}
 
@@ -94,7 +132,7 @@ func UpdateSearchConfig(provider, apiKey, description *string, isActive *bool) *
 func GetEmbeddingConfig() *model.EmbeddingConfig {
 	var config model.EmbeddingConfig
 	if err := database.DB.Order("id ASC").First(&config).Error; err != nil {
-		applogger.Warn("No embedding config found, embedding-dependent features unavailable")
+		applogger.Error("No embedding config found, embedding-dependent features unavailable")
 		return nil
 	}
 	return &config
@@ -123,7 +161,7 @@ func UpdateEmbeddingConfig(req model.EmbeddingConfig) *model.EmbeddingConfig {
 			return nil
 		}
 		if err := database.DB.First(config, config.ID).Error; err != nil {
-			applogger.Warn("failed to refresh embedding config after update", "id", config.ID, "error", err)
+			applogger.Error("failed to refresh embedding config after update", "id", config.ID, "error", err)
 		}
 	}
 
@@ -134,25 +172,53 @@ func UpdateEmbeddingConfig(req model.EmbeddingConfig) *model.EmbeddingConfig {
 	return config
 }
 
-// GetUserProfile retrieves the user profile for the primary user (id=1).
-// Returns nil if the user has not been set up yet.
-func GetUserProfile() *model.User {
-	var user model.User
-	if err := database.DB.Where("id = ?", 1).First(&user).Error; err != nil {
-		return nil
+// Person
+
+// GetPerson retrieves a person by ID.
+func GetPerson(personID int64) (*model.Person, error) {
+	var person model.Person
+	if err := database.DB.First(&person, personID).Error; err != nil {
+		return nil, fmt.Errorf("person %d: %w", personID, err)
 	}
-	return &user
+	return &person, nil
 }
 
-// CreateUser creates the initial user profile.
-// Name is immutable once set. Returns error on duplicate.
-func CreateUser(name, bio string) (*model.User, error) {
-	user := model.User{Name: name, Bio: bio}
-	if err := database.DB.Create(&user).Error; err != nil {
+// GetPersonByName retrieves a person by name.
+func GetPersonByName(name string) (*model.Person, error) {
+	var person model.Person
+	if err := database.DB.Where("name = ?", name).First(&person).Error; err != nil {
+		return nil, fmt.Errorf("person %q: %w", name, err)
+	}
+	return &person, nil
+}
+
+// GetCurrentUserPerson returns the current human user's Person record.
+// In the current single-user design, this returns the unique type=2 person.
+func GetCurrentUserPerson() (*model.Person, error) {
+	var person model.Person
+	if err := database.DB.Where("type = ?", model.PersonTypeHuman).First(&person).Error; err != nil {
 		return nil, err
 	}
-	applogger.Info("User profile created", "name", name)
-	return &user, nil
+	return &person, nil
+}
+
+// GetCurrentUserPersonID returns the current human user's PersonID.
+func GetCurrentUserPersonID() (int64, error) {
+	person, err := GetCurrentUserPerson()
+	if err != nil {
+		return 0, err
+	}
+	return person.ID, nil
+}
+
+// GetUserName returns the primary human user's name.
+func GetUserName() string {
+	person, err := GetCurrentUserPerson()
+	if err != nil {
+		applogger.Error("failed to load current user person", "error", err)
+		return ""
+	}
+	return person.Name
 }
 
 // GetSystemLLMConfig returns the system-level LLM config (id=1 row).
@@ -160,7 +226,7 @@ func CreateUser(name, bio string) (*model.User, error) {
 func GetSystemLLMConfig() *model.LLMConfig {
 	var sysCfg model.SystemLLMConfig
 	if err := database.DB.Where("id = ?", 1).First(&sysCfg).Error; err != nil {
-		applogger.Warn("System LLM config not configured, system-level LLM operations unavailable")
+		applogger.Error("System LLM config not configured, system-level LLM operations unavailable")
 		return nil
 	}
 
@@ -187,7 +253,6 @@ func UpdateSystemLLMConfig(llmConfigID int64) error {
 	var sysCfg model.SystemLLMConfig
 	err := database.DB.Where("id = ?", 1).First(&sysCfg).Error
 	if err != nil {
-		// Create the row if it doesn't exist
 		sysCfg = model.SystemLLMConfig{
 			LLMConfigID: llmConfigID,
 		}
@@ -204,12 +269,188 @@ func UpdateSystemLLMConfig(llmConfigID int64) error {
 	return nil
 }
 
-// GetUserName returns the primary user's name (id=1).
-func GetUserName() string {
-	var user model.User
-	if err := database.DB.Where("id = ?", 1).Select("name").First(&user).Error; err != nil {
-		applogger.Warn("failed to load user name", "error", err)
-		return ""
+// ---- Transactional composite operations ----
+
+// CreateAgentWithPerson creates a Person (type=AI) and an Agent in a single transaction.
+// Returns the created Agent and Person.
+func CreateAgentWithPerson(name, bio string, characterSettings string, llmConfigID int64, avatar string, knowledgeBaseIDs []int64) (*model.Agent, *model.Person, error) {
+	var agent *model.Agent
+	var person *model.Person
+
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		p := model.Person{
+			Name: name,
+			Bio:  bio,
+			Type: model.PersonTypeAI,
+		}
+		if err := tx.Select("Name", "Bio", "Type").Create(&p).Error; err != nil {
+			return fmt.Errorf("create person: %w", err)
+		}
+
+		kbIDsJSON := "[]"
+		if len(knowledgeBaseIDs) > 0 {
+			data, _ := json.Marshal(knowledgeBaseIDs)
+			kbIDsJSON = string(data)
+		}
+
+		a := model.Agent{
+			PersonID:          p.ID,
+			CharacterSettings: characterSettings,
+			LLMConfigID:       llmConfigID,
+			Avatar:            avatar,
+			KnowledgeBaseIDs:  kbIDsJSON,
+		}
+		if err := tx.Select("PersonID", "CharacterSettings", "LLMConfigID", "Avatar", "KnowledgeBaseIDs").Create(&a).Error; err != nil {
+			return fmt.Errorf("create agent: %w", err)
+		}
+
+		agent = &a
+		person = &p
+		return nil
+	})
+
+	return agent, person, err
+}
+
+// DeleteAgentCascade deletes an agent and all associated data in a single transaction.
+// Workspace cleanup (filesystem) remains the caller's responsibility.
+func DeleteAgentCascade(agentID int64) (personID int64, sessionIDs []int64, err error) {
+	err = database.DB.Transaction(func(tx *gorm.DB) error {
+		// Get the agent's PersonID for caller's workspace cleanup
+		var agent model.Agent
+		if err := tx.First(&agent, agentID).Error; err != nil {
+			return fmt.Errorf("agent %d not found: %w", agentID, err)
+		}
+		personID = agent.PersonID
+
+		// Collect session IDs
+		if err := tx.Model(&model.Session{}).Where("agent_id = ?", agentID).Pluck("id", &sessionIDs).Error; err != nil {
+			return fmt.Errorf("pluck sessions: %w", err)
+		}
+
+		if len(sessionIDs) > 0 {
+			// NOTE: This logic assumes 1v1 (one agent per session).
+			// In multi-agent/group chat, deleting one agent should NOT cascade delete the entire session.
+			tables := []interface{}{
+				&model.Work{}, &model.MessageDraft{}, &model.Interaction{},
+				&model.AgentNarrative{}, &model.Summary{},
+				&model.ParticipantSession{}, &model.Message{},
+			}
+			for _, table := range tables {
+				if err := tx.Where("session_id IN ?", sessionIDs).Delete(table).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Where("agent_id = ?", agentID).Delete(&model.Session{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("session_id IN ?", sessionIDs).Delete(&model.ScheduledEvent{}).Error; err != nil {
+				return err
+			}
+		}
+
+		// Agent-level memory and cognition
+		if err := tx.Where("agent_id = ?", agentID).Delete(&model.AgentObservation{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("agent_id = ?", agentID).Delete(&model.EntityProfile{}).Error; err != nil {
+			return err
+		}
+
+		// Delete agent and person
+		if err := tx.Delete(&model.Agent{}, agentID).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.Person{}, personID).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return personID, sessionIDs, err
+}
+
+// DeleteSessionCascade deletes a session and all associated data in a transaction.
+// Returns the agent's PersonID and the session's AgentID for caller's workspace cleanup.
+func DeleteSessionCascade(sessionID int64) (personID int64, agentID int64, err error) {
+	err = database.DB.Transaction(func(tx *gorm.DB) error {
+		var sess model.Session
+		if err := tx.First(&sess, sessionID).Error; err != nil {
+			return fmt.Errorf("session %d not found: %w", sessionID, err)
+		}
+		agentID = sess.AgentID
+
+		// Look up agent's PersonID for workspace path
+		var agent model.Agent
+		if err := tx.First(&agent, sess.AgentID).Error; err != nil {
+			personID = 0
+		} else {
+			personID = agent.PersonID
+		}
+
+		tables := []interface{}{
+			&model.Work{}, &model.MessageDraft{}, &model.Interaction{},
+			&model.AgentNarrative{}, &model.Summary{},
+			&model.ParticipantSession{}, &model.Message{},
+		}
+		for _, table := range tables {
+			if err := tx.Where("session_id = ?", sessionID).Delete(table).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Delete(&sess).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return personID, agentID, err
+}
+
+// ---- Query helpers ----
+
+// GetSessionParticipantsByPersonType returns participant_sessions joined with persons filtered by type.
+func GetSessionParticipantsByPersonType(sessionID int64, personType int) ([]model.ParticipantSession, error) {
+	var p []model.ParticipantSession
+	err := database.DB.Where(
+		"session_id = ? AND participant_id IN (SELECT id FROM persons WHERE type = ?)",
+		sessionID, personType,
+	).Find(&p).Error
+	return p, err
+}
+
+// GetSessionParticipantsByPersonTypeMulti is like GetSessionParticipantsByPersonType but for multiple sessions.
+func GetSessionParticipantsByPersonTypeMulti(sessionIDs []int64, personType int) ([]model.ParticipantSession, error) {
+	if len(sessionIDs) == 0 {
+		return nil, nil
 	}
-	return user.Name
+	var p []model.ParticipantSession
+	err := database.DB.Where(
+		"session_id IN ? AND participant_id IN (SELECT id FROM persons WHERE type = ?)",
+		sessionIDs, personType,
+	).Find(&p).Error
+	return p, err
+}
+
+// GetSessionAIParticipantIDs returns the person IDs of all AI participants in a session.
+func GetSessionAIParticipantIDs(sessionID int64) ([]int64, error) {
+	var ids []int64
+	err := database.DB.Model(&model.ParticipantSession{}).
+		Where("session_id = ? AND participant_id IN (SELECT id FROM persons WHERE type = ?)", sessionID, model.PersonTypeAI).
+		Pluck("participant_id", &ids).Error
+	return ids, err
+}
+
+// GetSessionAIParticipantIDsMulti is like GetSessionAIParticipantIDs but for multiple sessions.
+func GetSessionAIParticipantIDsMulti(sessionIDs []int64) ([]int64, error) {
+	if len(sessionIDs) == 0 {
+		return nil, nil
+	}
+	var ids []int64
+	err := database.DB.Model(&model.ParticipantSession{}).
+		Where("session_id IN ? AND participant_id IN (SELECT id FROM persons WHERE type = ?)", sessionIDs, model.PersonTypeAI).
+		Pluck("participant_id", &ids).Error
+	return ids, err
 }

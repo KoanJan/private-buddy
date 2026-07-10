@@ -250,7 +250,7 @@ skip: true only if the log contains nothing transferable.
 // causes a redundant re-reflection on the next heartbeat, which is safe.
 func writeFingerprint(fpFile, fingerprint string) {
 	if err := os.WriteFile(fpFile, []byte(fingerprint), 0644); err != nil {
-		applogger.Warn("Reflection: failed to write fingerprint file",
+		applogger.Error("Reflection: failed to write fingerprint file",
 			"file", fpFile,
 			"error", err,
 		)

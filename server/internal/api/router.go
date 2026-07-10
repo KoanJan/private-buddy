@@ -67,6 +67,11 @@ func SetupRouter() *gin.Engine {
 			userProfile.PUT("", h.CreateOrUpdateUserProfile)
 		}
 
+		persons := api.Group("/persons")
+		{
+			persons.GET("/me", h.GetCurrentPerson)
+		}
+
 		agents := api.Group("/agents")
 		{
 			agents.POST("", middleware.RequireEmbedding, h.CreateAgent)

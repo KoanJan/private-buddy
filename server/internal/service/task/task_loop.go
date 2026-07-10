@@ -261,7 +261,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			tl.contextManager.AddIteration(assistantMsg, toolResults)
 
 		case "length":
-			applogger.Warn("TaskLoop finish_reason=length", "iteration", iteration)
+			applogger.Error("TaskLoop finish_reason=length", "iteration", iteration)
 
 			assistantMsg := llm.Message{
 				Role:    "assistant",
@@ -282,7 +282,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 			)
 
 		default:
-			applogger.Warn("TaskLoop unexpected finish_reason", "finish_reason", finishReason, "iteration", iteration)
+			applogger.Error("TaskLoop unexpected finish_reason", "finish_reason", finishReason, "iteration", iteration)
 		}
 	}
 
@@ -461,7 +461,7 @@ After writing notes, you will regain access to all tools.`
 			toolCallID := tc.ID
 
 			if tc.Function.Name != string(tools.ToolNameWriteNotes) {
-				applogger.Warn("Notes iteration: unexpected tool call", "tool", tc.Function.Name)
+				applogger.Error("Notes iteration: unexpected tool call", "tool", tc.Function.Name)
 				toolResults = append(toolResults, llm.Message{
 					Role:       "tool",
 					ToolCallID: toolCallID,
@@ -612,7 +612,7 @@ func (tl *TaskLoop) executeToolCall(tc llm.ToolCall) llm.Message {
 	// abnormally large, discard the content entirely and notify. Do not attempt
 	// semantic truncation here — the tool is responsible for that before marshalling.
 	if len(result) > hardOutputLimit {
-		applogger.Warn("Tool output exceeds hard limit, discarded",
+		applogger.Error("Tool output exceeds hard limit, discarded",
 			"tool", toolName, "bytes", len(result))
 		result = fmt.Sprintf(
 			"[OUTPUT TOO LARGE: %d bytes. This tool did not truncate its own output. "+

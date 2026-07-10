@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
@@ -25,14 +25,14 @@ const ToolNameDeliverTo ToolName = "deliver_to"
 // subdirectory (delivery_1, delivery_2, ...) to avoid conflicts between
 // multiple deliveries in the same session.
 type DeliverToTool struct {
-	agentID   int64
+	personID  int64
 	sessionID int64
 }
 
-// NewDeliverToTool creates a DeliverToTool for the given agent and session.
-func NewDeliverToTool(agentID, sessionID int64) *DeliverToTool {
+// NewDeliverToTool creates a DeliverToTool for the given person and session.
+func NewDeliverToTool(personID, sessionID int64) *DeliverToTool {
 	return &DeliverToTool{
-		agentID:   agentID,
+		personID:  personID,
 		sessionID: sessionID,
 	}
 }
@@ -74,23 +74,13 @@ func (d *DeliverToTool) Schema() llm.FunctionDefinition {
 	}
 }
 
-// resolveReceiver looks up the receiver name in agents and users tables
-// and returns the workspace agent_id. agent names and user names form
-// a unique union, so at most one entity will match.
-// User delivery targets agent_id=0 regardless of the user's DB ID,
-// because the workspace root is always {agent_id=0}/... for the user.
-func resolveReceiver(name string) (int64, error) {
-	var agent model.Agent
-	if err := database.DB.Where("name = ?", name).First(&agent).Error; err == nil {
-		return agent.ID, nil
+// resolveReceiver looks up the receiver name in the persons table and returns the person_id.
+func resolveReceiver(name string) (personID int64, err error) {
+	var person model.Person
+	if err := database.DB.Where("name = ?", name).First(&person).Error; err != nil {
+		return 0, fmt.Errorf("recipient '%s' not found", name)
 	}
-
-	var user model.User
-	if err := database.DB.Where("name = ?", name).First(&user).Error; err == nil {
-		return 0, nil // User workspace always at agent_id=0
-	}
-
-	return 0, fmt.Errorf("recipient '%s' not found", name)
+	return person.ID, nil
 }
 
 func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
@@ -100,7 +90,7 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("receiver_name must be a non-empty string")
 	}
 
-	targetAgentID, err := resolveReceiver(receiverName)
+	targetPersonID, err := resolveReceiver(receiverName)
 	if err != nil {
 		return "", err
 	}
@@ -130,10 +120,10 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 	}
 
 	// Validate each source path exists and is within output/
-	outputDir := workspace.GetOutputDir(d.agentID, d.sessionID)
+	outputDir := workspace.GetOutputDir(d.personID, d.sessionID)
 	var validatedPaths []string
 	for _, p := range paths {
-		resolved, err := resolvePath(p, d.agentID, d.sessionID)
+		resolved, err := resolvePath(p, d.personID, d.sessionID)
 		if err != nil {
 			return "", fmt.Errorf("invalid path '%s': %w", p, err)
 		}
@@ -149,13 +139,20 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 	}
 
 	// Determine delivery number by scanning existing delivery_* directories
-	receivedDir := workspace.GetReceivedDir(targetAgentID, d.sessionID)
+	receivedDir := workspace.GetReceivedDir(targetPersonID, d.sessionID)
 	if err := os.MkdirAll(receivedDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create received directory: %w", err)
 	}
 
-	deliveryNum := nextDeliveryNum(receivedDir)
-	deliveryDir := filepath.Join(receivedDir, "delivery_"+strconv.Itoa(deliveryNum))
+	// Generate delivery directory name: {senderName}_{yyyyMMddhhmmssSSS}
+	var senderName string
+	if err := database.DB.Model(&model.Person{}).Where("id = ?", d.personID).Select("name").Scan(&senderName).Error; err != nil {
+		senderName = fmt.Sprintf("person_%d", d.personID)
+	}
+	now := time.Now()
+	ts := now.Format("20060102150405") + "_" + fmt.Sprintf("%06d", now.Nanosecond()/1e3)
+	deliveryName := fmt.Sprintf("%s_%s", senderName, ts)
+	deliveryDir := filepath.Join(receivedDir, deliveryName)
 	if err := os.MkdirAll(deliveryDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create delivery directory: %w", err)
 	}
@@ -183,8 +180,8 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 	}
 
 	record := model.AgentDelivery{
-		FromAgentID: d.agentID,
-		ToAgentID:   targetAgentID,
+		FromAgentID: d.personID,
+		ToPersonID:  targetPersonID,
 		SessionID:   d.sessionID,
 		Paths:       string(pathsJSON),
 		Remark:      remark,
@@ -196,34 +193,10 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 
 	// Build result message
 	pathList := strings.Join(validatedPaths, ", ")
-	result := fmt.Sprintf("Delivered %d file(s) to user (delivery #%d): %s",
-		len(validatedPaths), deliveryNum, pathList)
+	result := fmt.Sprintf("Delivered %d file(s) to user (delivery %s): %s",
+		len(validatedPaths), deliveryName, pathList)
 
 	return result, nil
-}
-
-// nextDeliveryNum scans the received/ directory for existing delivery_N
-// subdirectories and returns the next available number (max + 1).
-func nextDeliveryNum(receivedDir string) int {
-	entries, err := os.ReadDir(receivedDir)
-	if err != nil {
-		return 1
-	}
-
-	maxNum := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasPrefix(name, "delivery_") {
-			numStr := strings.TrimPrefix(name, "delivery_")
-			if n, err := strconv.Atoi(numStr); err == nil && n > maxNum {
-				maxNum = n
-			}
-		}
-	}
-	return maxNum + 1
 }
 
 // copyPath copies a file or directory tree from src to dst.

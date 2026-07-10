@@ -81,7 +81,7 @@ func (m *indexManager) Load() error {
 
 	if m.indexType == indexTypeHNSW {
 		if err := m.loadHNSWGraph(); err != nil {
-			applogger.Warn("Failed to load HNSW graph, falling back to flat", "kb_id", m.kbID, "error", err)
+			applogger.Error("Failed to load HNSW graph, falling back to flat", "kb_id", m.kbID, "error", err)
 			m.indexType = indexTypeFlat
 		}
 	}

@@ -1,59 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { Form, Input, Select, Switch, Button, message, Spin } from 'antd';
+import React from 'react';
+import { Form, Input, Select, Switch, Button, Spin } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { SearchConfig } from '../types';
 import { searchConfigApi } from '../services/api';
-import { logger } from '../logger';
+import { useConfigForm } from '../hooks/useConfigForm';
 
 const { TextArea } = Input;
 
 const SearchConfigForm: React.FC = () => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [config, setConfig] = useState<SearchConfig | null>(null);
-  const [dirty, setDirty] = useState(false);
-
-  useEffect(() => {
-    loadConfig();
-  }, []);
-
-  const loadConfig = async () => {
-    setLoading(true);
-    try {
-      const response = await searchConfigApi.get();
-      setConfig(response.data);
-      form.setFieldsValue(response.data);
-      setDirty(false);
-    } catch (error) {
-      logger.error('Failed to load search config:', error);
-      message.error(t('searchConfig.loadError'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSave = async (values: Partial<SearchConfig>) => {
-    if (values.is_active && !values.api_key) {
-      message.error(t('searchConfig.apiKeyRequired'));
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const response = await searchConfigApi.update(values);
-      setConfig(response.data);
-      setDirty(false);
-      message.success(t('searchConfig.saveSuccess'));
-    } catch (error) {
-      logger.error('Failed to save search config:', error);
-      message.error(t('searchConfig.saveError'));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const { loading, saving, dirty, config, handleSave, markDirty } = useConfigForm<SearchConfig>({
+    loadApi: searchConfigApi.get,
+    saveApi: searchConfigApi.update,
+    i18nPrefix: 'searchConfig',
+    beforeSave: (values) => {
+      if (values.is_active && !values.api_key) return t('searchConfig.apiKeyRequired');
+      return null;
+    },
+    onLoaded: (data) => form.setFieldsValue(data),
+  });
 
   if (loading) {
     return (
@@ -70,7 +37,7 @@ const SearchConfigForm: React.FC = () => {
         layout="vertical"
         onFinish={handleSave}
         initialValues={config || undefined}
-        onValuesChange={() => setDirty(true)}
+        onValuesChange={markDirty}
       >
         <Form.Item
           name="provider"

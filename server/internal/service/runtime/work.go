@@ -142,7 +142,7 @@ func (w *work) runTask(ctx context.Context) {
 	w.taskResult = task.RunTask(task.RunTaskParams{
 		LLMConfig:  llmConfig,
 		SessionID:  w.sessionID,
-		AgentID:    agent.ID,
+		PersonID:   agent.PersonID,
 		UserMsgID:  triggerMessageID,
 		WorkID:     w.ID,
 		Guidance:   w.plan.Guidance,
@@ -168,7 +168,7 @@ func (w *work) discardDraft() {
 	if w.draft != nil {
 		if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", w.draft.ID).
 			Update("status", model.DraftStatusDiscarded).Error; err != nil {
-			applogger.Warn("work: failed to discard draft", "draft_id", w.draft.ID, "error", err)
+			applogger.Error("work: failed to discard draft", "draft_id", w.draft.ID, "error", err)
 		}
 	}
 }
@@ -183,7 +183,7 @@ func (w *work) discardDraft() {
 // decides how to wrap up — this is "appealable" cancellation, not forceful kill.
 func (w *work) FeedGuidance(directive task.GuidanceDirective) {
 	if w.guidanceCh == nil {
-		applogger.Warn("FeedGuidance called on work with nil guidanceCh",
+		applogger.Error("FeedGuidance called on work with nil guidanceCh",
 			"work_id", w.ID,
 		)
 		return
@@ -196,7 +196,7 @@ func (w *work) FeedGuidance(directive task.GuidanceDirective) {
 			"reason", directive.Reason,
 		)
 	default:
-		applogger.Warn("work guidanceCh full, dropping guidance",
+		applogger.Error("work guidanceCh full, dropping guidance",
 			"work_id", w.ID,
 			"guidance", directive.Guidance,
 		)
@@ -290,7 +290,7 @@ func (w *work) updateDraftContent(content string) {
 	w.draft.Content = content
 	if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", w.draft.ID).
 		Update("content", content).Error; err != nil {
-		applogger.Warn("work: failed to update draft content", "draft_id", w.draft.ID, "error", err)
+		applogger.Error("work: failed to update draft content", "draft_id", w.draft.ID, "error", err)
 	}
 }
 
@@ -311,7 +311,7 @@ func (w *work) abandon() {
 	if w.draft != nil {
 		if err := database.DB.Model(&model.MessageDraft{}).Where("id = ?", w.draft.ID).
 			Update("status", model.DraftStatusDiscarded).Error; err != nil {
-			applogger.Warn("work: failed to discard draft on abandon", "draft_id", w.draft.ID, "error", err)
+			applogger.Error("work: failed to discard draft on abandon", "draft_id", w.draft.ID, "error", err)
 		}
 	}
 }
@@ -404,8 +404,8 @@ func recoverActiveWorks(agentID int64) []*work {
 
 		// Reset participant status to idle so the frontend doesn't show stuck "responding"
 		if err := database.DB.Model(&model.ParticipantSession{}).
-			Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-				wr.SessionID, model.ParticipantTypeAgent, agentID).
+			Where("session_id = ? AND participant_id = ?",
+				wr.SessionID, service.GetAgentPersonID(agentID)).
 			Update("status", model.ParticipantStatusIdle).Error; err != nil {
 			applogger.Error("recoverActiveWorks: failed to reset participant status",
 				"session_id", wr.SessionID, "agent_id", agentID, "error", err)

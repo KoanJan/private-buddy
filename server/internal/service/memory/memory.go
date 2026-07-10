@@ -10,6 +10,7 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/vectorstore"
 
@@ -79,17 +80,19 @@ func ingestMessage(ctx context.Context, messageID, sessionID int64, content stri
 		return
 	}
 
-	// Create observations for all agents participating in this session
+	// Create observations for all agents participating in this session.
+	// Agents are identified by Person type=AI via join with persons table.
 	var participants []model.ParticipantSession
-	if err := database.DB.Where("session_id = ? AND participant_type = ?", sessionID, model.ParticipantTypeAgent).
-		Find(&participants).Error; err != nil {
-		applogger.Error("failed to load participants for observation creation", "session_id", sessionID, "error", err)
+	var partErr error
+	participants, partErr = service.GetSessionParticipantsByPersonType(sessionID, model.PersonTypeAI)
+	if partErr != nil {
+		applogger.Error("failed to load participants for observation creation", "session_id", sessionID, "error", partErr)
 		return
 	}
 
 	for _, p := range participants {
 		if err := createObservation(ctx, p.ParticipantID, eventID); err != nil {
-			applogger.Warn("Failed to create observation for agent",
+			applogger.Error("Failed to create observation for agent",
 				"agent_id", p.ParticipantID,
 				"event_id", eventID,
 				"error", err,
@@ -122,7 +125,7 @@ func onRAGHit(agentID int64, messageIDs []int64) {
 	var events []model.Event
 	if err := database.DB.Where("event_type = ? AND ref_id IN ?", model.EventTypeMessage, messageIDs).
 		Find(&events).Error; err != nil {
-		applogger.Warn("processRAGHit: failed to load events", "error", err)
+		applogger.Error("processRAGHit: failed to load events", "error", err)
 		return
 	}
 
@@ -139,7 +142,7 @@ func onRAGHit(agentID int64, messageIDs []int64) {
 	var observations []model.AgentObservation
 	if err := database.DB.Where("agent_id = ? AND event_id IN ?", agentID, eventIDs).
 		Find(&observations).Error; err != nil {
-		applogger.Warn("processRAGHit: failed to load observations", "error", err)
+		applogger.Error("processRAGHit: failed to load observations", "error", err)
 		return
 	}
 
@@ -190,7 +193,7 @@ func propagateRAGHit(obs *model.AgentObservation, delta float64) {
 	if err := database.DB.Where("agent_id = ? AND event_id IN (SELECT id FROM events WHERE event_type = ? AND ref_id IN (SELECT id FROM messages WHERE session_id = ?))",
 		obs.AgentID, model.EventTypeMessage, sessionID).
 		Find(&sessionObservations).Error; err != nil {
-		applogger.Warn("propagateRelevanceForHit: failed to load session observations", "agent_id", obs.AgentID, "session_id", sessionID, "error", err)
+		applogger.Error("propagateRelevanceForHit: failed to load session observations", "agent_id", obs.AgentID, "session_id", sessionID, "error", err)
 		return
 	}
 
@@ -388,7 +391,10 @@ func loadEventContent(eventID int64) (content, role string) {
 			return "", ""
 		}
 		role = "user"
-		if msg.Role == model.MessageRoleAssistant {
+		userPersonID, err := service.GetCurrentUserPersonID()
+		if err != nil {
+			applogger.Error("loadEventContent: failed to get current user person ID", "error", err)
+		} else if msg.PersonID != userPersonID {
 			role = "assistant"
 		}
 		return msg.Content, role

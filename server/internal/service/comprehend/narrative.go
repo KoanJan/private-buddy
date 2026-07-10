@@ -8,6 +8,7 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -195,7 +196,7 @@ func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfi
 	if agent.CharacterSettings == "" {
 		identityLine = ""
 	}
-	prompt := fmt.Sprintf(cachedNarrativePrompt, agent.Name, identityLine, summaryContent)
+	prompt := fmt.Sprintf(cachedNarrativePrompt, service.GetAgentName(agent.ID), identityLine, summaryContent)
 
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 

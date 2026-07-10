@@ -32,19 +32,19 @@ func checkDarwinSandbox() bool {
 		const probePolicy = "(version 1)\n(allow default)\n"
 		f, err := os.CreateTemp("", "pbsb-check-*.sb")
 		if err != nil {
-			applogger.Warn("sandbox: cannot create temp policy for probe, Seatbelt unavailable", "error", err)
+			applogger.Error("sandbox: cannot create temp policy for probe, Seatbelt unavailable", "error", err)
 			return
 		}
 		defer os.Remove(f.Name())
 		if _, err := f.WriteString(probePolicy); err != nil {
 			f.Close()
-			applogger.Warn("sandbox: cannot write probe policy, Seatbelt unavailable", "error", err)
+			applogger.Error("sandbox: cannot write probe policy, Seatbelt unavailable", "error", err)
 			return
 		}
 		f.Close()
 		cmd := exec.Command("/usr/bin/sandbox-exec", "-f", f.Name(), "--", "true")
 		if out, err := cmd.CombinedOutput(); err != nil {
-			applogger.Warn("sandbox: Seatbelt unavailable, falling back to plain exec",
+			applogger.Error("sandbox: Seatbelt unavailable, falling back to plain exec",
 				"error", err, "output", string(out))
 			return
 		}
@@ -65,17 +65,17 @@ func checkDarwinSandbox() bool {
 
 // runDarwin executes the command inside macOS sandbox-exec with a Seatbelt policy.
 //
-// Policy files are stored in {DATA_ROOT}/aac/{agentID}/{sessionID}/sandbox.sb
-// (outside the agent-writable workspace, preventing tampering). The policy is
+// Policy files are stored in {DATA_ROOT}/aac/{personID}/{sessionID}/sandbox.sb
+// (outside the person-writable workspace, preventing tampering). The policy is
 // generated once per session and reused for subsequent calls.
-func runDarwin(workspace string, agentID, sessionID int64, cmd []string) (*exec.Cmd, bool, error) {
+func runDarwin(workspace string, personID, sessionID int64, cmd []string) (*exec.Cmd, bool, error) {
 	// One-time check: if sandbox-exec cannot apply policies (SIP block, etc.), fall back
 	if !checkDarwinSandbox() {
 		return fallbackExec(cmd), false, nil
 	}
 
 	policyDir := filepath.Join(config.Get().GetDataRoot(), "aac",
-		strconv.FormatInt(agentID, 10), strconv.FormatInt(sessionID, 10))
+		strconv.FormatInt(personID, 10), strconv.FormatInt(sessionID, 10))
 	policyPath := filepath.Join(policyDir, "sandbox.sb")
 
 	// Generate policy file once per session

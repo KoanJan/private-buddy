@@ -115,7 +115,7 @@ func CheckLearning(ctx context.Context, agentID int64) {
 	for _, pubID := range learnIDs {
 		pub, ok := candidateMap[pubID]
 		if !ok {
-			applogger.Warn("CheckLearning: LLM returned unknown public experience ID",
+			applogger.Error("CheckLearning: LLM returned unknown public experience ID",
 				"agent_id", agentID, "public_experience_id", pubID)
 			continue
 		}

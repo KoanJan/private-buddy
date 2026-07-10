@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,7 @@ const (
 type agentRuntime struct {
 	activeWorks        []*work
 	agentID            int64
+	agentPersonID      int64                         // Agent's PersonID for participant_session queries
 	eventCh            <-chan *eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
 	draftCommitCh      chan *draftCommitRequest
 	heartbeatInterval  time.Duration                              // Base heartbeat interval (adaptive)
@@ -168,20 +170,20 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			case eventqueue.EventTypeNewPrivateChatMessage:
 				if payload, ok := event.Payload.(*eventqueue.NewMessagePayload); ok && payload.MessageID > 0 {
 					if err := database.DB.Model(&model.ParticipantSession{}).
-						Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-							event.SessionID, model.ParticipantTypeAgent, r.agentID).
+						Where("session_id = ? AND participant_id = ?",
+							event.SessionID, r.agentPersonID).
 						Update("last_read_message_id", payload.MessageID).Error; err != nil {
-						applogger.Warn("failed to advance last_read_message_id on new message event", "error", err)
+						applogger.Error("failed to advance last_read_message_id on new message event", "error", err)
 					}
 				}
 
 			case eventqueue.EventTypeScheduled:
 				if payload, ok := event.Payload.(*eventqueue.ScheduledEventPayload); ok && payload.TriggerMessageID > 0 {
 					if err := database.DB.Model(&model.ParticipantSession{}).
-						Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
-							event.SessionID, model.ParticipantTypeAgent, r.agentID, payload.TriggerMessageID).
+						Where("session_id = ? AND participant_id = ? AND last_read_message_id < ?",
+							event.SessionID, r.agentPersonID, payload.TriggerMessageID).
 						Update("last_read_message_id", payload.TriggerMessageID).Error; err != nil {
-						applogger.Warn("failed to advance last_read_message_id on scheduled event", "error", err)
+						applogger.Error("failed to advance last_read_message_id on scheduled event", "error", err)
 					}
 				}
 				// Fast path for scheduled events with action=send_message.
@@ -392,8 +394,8 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 
 	if plan.Type == model.WorkTypeChat {
 		// create MessageDraft only creating chat work
-		if err := tx.Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-			event.SessionID, model.ParticipantTypeAgent, r.agentID).First(ps).Error; err == nil {
+		if err := tx.Where("session_id = ? AND participant_id = ?",
+			event.SessionID, r.agentPersonID).First(ps).Error; err == nil {
 			agentLastReadID = ps.LastReadMessageID
 		}
 
@@ -474,8 +476,8 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 	// Get agent's current read position
 	var agentLastReadID int64
 	var ps model.ParticipantSession
-	if err := database.DB.Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-		sessionID, model.ParticipantTypeAgent, r.agentID).First(&ps).Error; err == nil {
+	if err := database.DB.Where("session_id = ? AND participant_id = ?",
+		sessionID, r.agentPersonID).First(&ps).Error; err == nil {
 		agentLastReadID = ps.LastReadMessageID
 	}
 
@@ -529,8 +531,8 @@ func (r *agentRuntime) weakUpdateAgentStatusInSession(sessionID int64, status in
 	// Read current status from DB to detect changes
 	var ps model.ParticipantSession
 	err := database.DB.Where(
-		"session_id = ? AND participant_type = ? AND participant_id = ?",
-		sessionID, model.ParticipantTypeAgent, r.agentID,
+		"session_id = ? AND participant_id = ?",
+		sessionID, r.agentPersonID,
 	).First(&ps).Error
 
 	if err != nil {
@@ -545,8 +547,8 @@ func (r *agentRuntime) weakUpdateAgentStatusInSession(sessionID int64, status in
 
 	// Persist new status to database
 	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-			sessionID, model.ParticipantTypeAgent, r.agentID).
+		Where("session_id = ? AND participant_id = ?",
+			sessionID, r.agentPersonID).
 		Update("status", status).Error; err != nil {
 		applogger.Error("Failed to update participant status",
 			"agent_id", r.agentID, "session_id", sessionID, "error", err)
@@ -618,13 +620,20 @@ func (r *agentRuntime) adjustHeartbeatInterval() time.Duration {
 //
 // This is the public entry point for creating a new agent runtime — positioned
 // at the bottom because it depends on recoverActiveWorks (defined just above).
-func createAgentRuntime(agentID int64, onStatusChange func(agentID, sessionID int64, status int)) *agentRuntime {
+func createAgentRuntime(agentID int64, onStatusChange func(agentID, sessionID int64, status int)) (*agentRuntime, error) {
 	eventCh := eventqueue.Subscribe(agentID)
 
 	runtime := newAgentRuntime(agentID, eventCh, 30*time.Second, onStatusChange)
 
+	// Resolve agent's PersonID for participant_session queries
+	agent, err := service.GetAgent(agentID)
+	if err != nil {
+		return nil, fmt.Errorf("createAgentRuntime: failed to load agent %d: %w", agentID, err)
+	}
+	runtime.agentPersonID = agent.PersonID
+
 	// Recover any abandoned works from previous run
 	recoverActiveWorks(agentID)
 
-	return runtime
+	return runtime, nil
 }

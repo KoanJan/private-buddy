@@ -16,7 +16,18 @@
     "me": "Me",
     "yesterday": "Yesterday",
     "chatView": "Back to Chat",
-    "activityLog": "View Activity"
+    "activityLog": "View Activity",
+    "justNow": "just now",
+    "minutesAgo": "{{n}}m ago",
+    "hoursAgo": "{{n}}h ago",
+    "daysAgo": "{{n}}d ago",
+    "monthsAgo": "{{n}}mo ago",
+    "yearsAgo": "{{n}}y ago"
+  },
+  "viewTabs": {
+    "chat": "Chat",
+    "activities": "Activities",
+    "received": "Received"
   },
   "agent": {
     "title": "Agent",

@@ -34,16 +34,16 @@ const (
 //   - Sandbox enforces filesystem write isolation at the kernel level
 //   - Falls back to plain exec if the sandbox is unavailable (availability over security)
 type BashTool struct {
-	agentID   int64 // Agent ID for workspace path derivation and sandbox policy generation
+	personID  int64 // Person ID for workspace path derivation and sandbox policy generation
 	sessionID int64 // Session ID for workspace path derivation and sandbox policy generation
 }
 
 // NewBashTool creates a BashTool with the given session context.
 // Workspace paths (session root, output dir) are derived internally from
-// agentID/sessionID via the workspace package — the single source of truth
+// personID/sessionID via the workspace package — the single source of truth
 // for path layout.
-func NewBashTool(agentID, sessionID int64) *BashTool {
-	return &BashTool{agentID: agentID, sessionID: sessionID}
+func NewBashTool(personID, sessionID int64) *BashTool {
+	return &BashTool{personID: personID, sessionID: sessionID}
 }
 
 // ToolNameBash is the type-safe name constant for BashTool.
@@ -54,7 +54,7 @@ func (b *BashTool) Name() ToolName { return ToolNameBash }
 func (b *BashTool) Description() string { return "Execute shell commands in your working directory" }
 
 func (b *BashTool) Schema() llm.FunctionDefinition {
-	sessionRoot := workspace.GetWorkspacePath(b.agentID, b.sessionID)
+	sessionRoot := workspace.GetWorkspacePath(b.personID, b.sessionID)
 	workspaceHint := fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", sessionRoot)
 	return llm.FunctionDefinition{
 		Name:        string(b.Name()),
@@ -98,12 +98,12 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	}
 
 	// Build sandbox command: sandbox.Run handles platform dispatch internally
-	sessionRoot := workspace.GetWorkspacePath(b.agentID, b.sessionID)
-	cmd, sandboxed, err := sandbox.Run(sessionRoot, b.agentID, b.sessionID, []string{"bash", "-c", command})
+	sessionRoot := workspace.GetWorkspacePath(b.personID, b.sessionID)
+	cmd, sandboxed, err := sandbox.Run(sessionRoot, b.personID, b.sessionID, []string{"bash", "-c", command})
 	if err != nil {
 		return "", fmt.Errorf("failed to create sandbox command: %s", err.Error())
 	}
-	cmd.Dir = workspace.GetOutputDir(b.agentID, b.sessionID)
+	cmd.Dir = workspace.GetOutputDir(b.personID, b.sessionID)
 
 	applogger.Info("BashTool executing", "command", command, "timeout_ms", timeoutMs, "sandbox", sandboxed)
 

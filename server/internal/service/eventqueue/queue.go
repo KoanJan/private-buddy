@@ -120,7 +120,7 @@ func (q *eventQueue) Unsubscribe(agentID int64) {
 func (q *eventQueue) SendEvent(agentID int64, event *AgentEvent) {
 	defer func() {
 		if r := recover(); r != nil {
-			applogger.Warn("SendEvent recovered from panic (channel likely closed during shutdown)",
+			applogger.Error("SendEvent recovered from panic (channel likely closed during shutdown)",
 				"agent_id", agentID, "event_type", event.Type, "panic", r)
 		}
 	}()
@@ -130,7 +130,7 @@ func (q *eventQueue) SendEvent(agentID int64, event *AgentEvent) {
 	q.mu.RUnlock()
 
 	if !ok {
-		applogger.Warn("No subscriber for agent event, dropping",
+		applogger.Error("No subscriber for agent event, dropping",
 			"agent_id", agentID,
 			"event_type", event.Type,
 			"session_id", event.SessionID,
@@ -141,7 +141,7 @@ func (q *eventQueue) SendEvent(agentID int64, event *AgentEvent) {
 	select {
 	case ch <- event:
 	default:
-		applogger.Warn("Agent event channel full, dropping event",
+		applogger.Error("Agent event channel full, dropping event",
 			"agent_id", agentID,
 			"event_type", event.Type,
 			"session_id", event.SessionID,

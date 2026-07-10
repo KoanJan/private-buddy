@@ -1346,6 +1346,39 @@
   padding: 4px 0;
 }
 
+.received-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 0;
+  font-size: 13px;
+  transition: background-color 0.1s;
+}
+
+.received-tree-dir-row {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+.received-tree-dir-row:hover {
+  background-color: #f9fafb;
+}
+
+.received-tree-file-row {
+}
+
+.received-tree-file-row:hover {
+  background-color: #f9fafb;
+}
+
+.tree-caret {
+  font-size: 10px;
+  color: var(--color-text-placeholder);
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
 .received-file-item {
   display: flex;
   align-items: center;

@@ -152,7 +152,7 @@ func Comprehend(
 				agent.CharacterSettings,
 				sessionInfo.WindowSize,
 				sessionInfo.UserName,
-				agent.Name,
+				service.GetAgentName(agent.ID),
 			)
 			// Extract preprocessing results
 			result.ProcessedQuery = preprocessingResult.ProcessedQuery
@@ -204,7 +204,7 @@ func Comprehend(
 			llmConfig,
 			recentMessagesForState,
 			sessionInfo.UserName,
-			agent.Name,
+			service.GetAgentName(agent.ID),
 			agent.CharacterSettings,
 			result.ActiveWorksSummary,
 		)
@@ -237,7 +237,7 @@ func getPreprocessingHistory(sessionID int64, limit int) []llm.Message {
 	var messages []model.Message
 	if err := database.DB.Where("session_id = ?", sessionID).
 		Order("id DESC").Limit(limit).Find(&messages).Error; err != nil {
-		applogger.Warn("getPreprocessingHistory: failed to load messages",
+		applogger.Error("getPreprocessingHistory: failed to load messages",
 			"session_id", sessionID, "error", err,
 		)
 		return nil
@@ -248,10 +248,15 @@ func getPreprocessingHistory(sessionID int64, limit int) []llm.Message {
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		applogger.Error("getPreprocessingHistory: failed to get current user person ID", "error", err)
+	}
+
 	history := make([]llm.Message, 0, len(messages))
 	for _, msg := range messages {
 		role := "user"
-		if msg.Role == model.MessageRoleAssistant {
+		if userPersonID != 0 && msg.PersonID != userPersonID {
 			role = "assistant"
 		}
 		history = append(history, llm.Message{
@@ -276,7 +281,7 @@ func buildSessionInfo(sessionID int64, agent *model.Agent) *SessionInfo {
 	if err := database.DB.Model(&model.Message{}).
 		Where("session_id = ? AND status = ?", sessionID, model.MessageStatusCompleted).
 		Count(&messageCount).Error; err != nil {
-		applogger.Warn("buildSessionInfo: failed to count messages",
+		applogger.Error("buildSessionInfo: failed to count messages",
 			"session_id", sessionID, "error", err,
 		)
 	}

@@ -88,19 +88,19 @@ func BwrapAvailable() (bool, error) {
 func runLinux(workspace string, cmd []string) (*exec.Cmd, bool, error) {
 	path, err := bwrapLookup()
 	if err != nil {
-		applogger.Warn("sandbox: bwrap unavailable, falling back to plain exec",
+		applogger.Error("sandbox: bwrap unavailable, falling back to plain exec",
 			"error", err)
 		return fallbackExec(cmd), false, nil
 	}
 
 	available, err := BwrapAvailable()
 	if err != nil {
-		applogger.Warn("sandbox: bwrap unavailable, falling back to plain exec",
+		applogger.Error("sandbox: bwrap unavailable, falling back to plain exec",
 			"error", err)
 		return fallbackExec(cmd), false, nil
 	}
 	if !available {
-		applogger.Warn("sandbox: bwrap not available, falling back to plain exec")
+		applogger.Error("sandbox: bwrap not available, falling back to plain exec")
 		return fallbackExec(cmd), false, nil
 	}
 
@@ -132,14 +132,14 @@ func runLinux(workspace string, cmd []string) (*exec.Cmd, bool, error) {
 				if _, statErr := os.Stat(p.path); statErr == nil {
 					args = append(args, "--ro-bind", p.path, p.path)
 				} else if !os.IsNotExist(statErr) {
-					applogger.Warn("sandbox: stat %s failed: %v (skipped)", p.path, statErr)
+					applogger.Error("sandbox: stat %s failed: %v (skipped)", p.path, statErr)
 				}
 			}
 		} else if _, statErr := os.Stat(p.path); statErr == nil {
 			// Real directory: read-only bind
 			args = append(args, "--ro-bind", p.path, p.path)
 		} else if !os.IsNotExist(statErr) {
-			applogger.Warn("sandbox: stat %s failed: %v (skipped)", p.path, statErr)
+			applogger.Error("sandbox: stat %s failed: %v (skipped)", p.path, statErr)
 		}
 	}
 
@@ -160,7 +160,7 @@ func runLinux(workspace string, cmd []string) (*exec.Cmd, bool, error) {
 		if _, err := os.Stat(p); err == nil {
 			args = append(args, "--ro-bind", p, p)
 		} else if !os.IsNotExist(err) {
-			applogger.Warn("sandbox: stat %s failed: %v (skipped)", p, err)
+			applogger.Error("sandbox: stat %s failed: %v (skipped)", p, err)
 		}
 	}
 

@@ -269,181 +269,172 @@ function App() {
     </PanelDetail>
   );
 
+  const renderUserPanel = () => (
+    <PanelDetail title={t('settings.userProfile')}>
+      <UserProfileForm />
+    </PanelDetail>
+  );
+
+  const renderAgentPanel = () => (
+    <PanelDetail
+      title={t('settings.agentConfig')}
+      onAdd={() => setShowCreateAgent(true)}
+    >
+      <AgentConfig
+        showCreate={showCreateAgent}
+        onCreateClose={() => setShowCreateAgent(false)}
+        onAgentCreated={handleAgentCreated}
+      />
+    </PanelDetail>
+  );
+
+  const renderLibraryPanel = () => (
+    <PanelDetail title={t('library.title')}>
+      <div className="library-tab-cards">
+        <button
+          type="button"
+          className={`library-tab-card${libraryTab === 'kb' ? ' active' : ''}`}
+          onClick={() => setLibraryTab('kb')}
+        >
+          <ConfigIcon type="kb" size={30} iconSize={13} borderRadius="6px" marginBottom={0} />
+          <span>{t('settings.kbConfig')}</span>
+        </button>
+        <button
+          type="button"
+          className={`library-tab-card${libraryTab === 'public-experience' ? ' active' : ''}`}
+          onClick={() => setLibraryTab('public-experience')}
+        >
+          <ConfigIcon type="exp" size={30} iconSize={13} borderRadius="6px" marginBottom={0} />
+          <span>{t('settings.publicExperience')}</span>
+        </button>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        {libraryTab === 'kb' ? (
+          <Button type="primary" onClick={() => setShowCreateKB(true)}>
+            {t('kb.create')}
+          </Button>
+        ) : (
+          <Tooltip title={!systemLLMReady ? t('systemLLMRequired.message_1') : undefined}>
+            <Button
+              type="primary"
+              disabled={!systemLLMReady}
+              onClick={() => setShowIngestExp(true)}
+            >
+              {t('publicExperience.ingest')}
+            </Button>
+          </Tooltip>
+        )}
+      </div>
+      <div style={{ marginTop: 16 }}>
+        {libraryTab === 'kb' ? (
+          <KnowledgeBaseList
+            showCreate={showCreateKB}
+            onCreateClose={() => setShowCreateKB(false)}
+            onSelectKB={(kb) => {
+              setSelectedKB(kb);
+              setSettingsSubview('kb-detail');
+            }}
+          />
+        ) : (
+          <PublicExperienceList
+            showIngest={showIngestExp}
+            onIngestClose={() => setShowIngestExp(false)}
+            onSelectExp={(exp) => {
+              setSelectedExp(exp);
+              setSettingsSubview('exp-detail');
+            }}
+          />
+        )}
+      </div>
+    </PanelDetail>
+  );
+
+  const renderKBDetailPanel = () =>
+    selectedKB ? (
+      <PanelDetail
+        onBack={() => {
+          setSelectedKB(null);
+          setShowCreateKB(false);
+          setSettingsSubview('library');
+        }}
+      >
+        <KnowledgeBaseDetail kb={selectedKB} />
+      </PanelDetail>
+    ) : null;
+
+  const renderExpDetailPanel = () =>
+    selectedExp ? (
+      <PanelDetail
+        onBack={() => {
+          setSelectedExp(null);
+          setSettingsSubview('library');
+        }}
+      >
+        <PublicExperienceDetail
+          exp={selectedExp}
+          onRedistilled={() => {
+            setSelectedExp(null);
+            setSettingsSubview('library');
+          }}
+        />
+      </PanelDetail>
+    ) : null;
+
+  const renderLLMPanel = () => (
+    <PanelDetail
+      title={t('settings.llmConfig')}
+      onAdd={() => setShowCreateLLM(true)}
+    >
+      <LLMConfigList
+        onSelectConfig={handleSelectLLMConfig}
+        showCreate={showCreateLLM}
+        onCreateClose={() => setShowCreateLLM(false)}
+        onConfigChanged={() => setSystemLLMRefreshKey(k => k + 1)}
+        beforeDelete={async (id) => {
+          try {
+            const sysRes = await systemLLMConfigApi.get();
+            if (sysRes.data?.llm_config_id === id) {
+              message.error(t('llmConfig.inUseError'));
+              return false;
+            }
+          } catch { /* proceed with deletion if we can't check */ }
+          return true;
+        }}
+      />
+      <div style={{ borderTop: '1px solid var(--color-border)', marginTop: 32, paddingTop: 24 }}>
+        <h4 style={{ marginBottom: 16 }}>{t('systemLLMConfig.title')}</h4>
+        <SystemLLMConfigForm onSaved={() => setSystemLLMReady(true)} refreshKey={systemLLMRefreshKey} />
+      </div>
+    </PanelDetail>
+  );
+
+  const renderEmbeddingPanel = () => (
+    <PanelDetail title={t('settings.embeddingConfig')}>
+      <EmbeddingConfigForm onCreated={() => setEmbeddingReady(true)} />
+    </PanelDetail>
+  );
+
+  const renderSearchPanel = () => (
+    <PanelDetail title={t('settings.searchConfig')}>
+      <SearchConfigForm />
+    </PanelDetail>
+  );
+
+  const settingsPanelMap: Record<string, () => React.ReactNode> = {
+    user: renderUserPanel,
+    agent: renderAgentPanel,
+    library: renderLibraryPanel,
+    'kb-detail': renderKBDetailPanel,
+    'exp-detail': renderExpDetailPanel,
+    llm: renderLLMPanel,
+    embedding: renderEmbeddingPanel,
+    search: renderSearchPanel,
+    language: renderLanguagePanel,
+  };
+
   const renderSettingsPanel = () => {
-    switch (settingsSubview) {
-      case 'user':
-        return (
-          <PanelDetail title={t('settings.userProfile')}>
-            <UserProfileForm />
-          </PanelDetail>
-        );
-
-      case 'agent':
-        return (
-          <PanelDetail
-            title={t('settings.agentConfig')}
-            onAdd={() => setShowCreateAgent(true)}
-          >
-            <AgentConfig
-              showCreate={showCreateAgent}
-              onCreateClose={() => setShowCreateAgent(false)}
-              onAgentCreated={handleAgentCreated}
-            />
-          </PanelDetail>
-        );
-
-      case 'library':
-        return (
-          <PanelDetail title={t('library.title')}
-          >
-            {/* Tab bar: small card-style selectors with icons, 6-column grid. */}
-            <div className="library-tab-cards">
-              <button
-                type="button"
-                className={`library-tab-card${libraryTab === 'kb' ? ' active' : ''}`}
-                onClick={() => setLibraryTab('kb')}
-              >
-                <ConfigIcon type="kb" size={30} iconSize={13} borderRadius="6px" marginBottom={0} />
-                <span>{t('settings.kbConfig')}</span>
-              </button>
-              <button
-                type="button"
-                className={`library-tab-card${libraryTab === 'public-experience' ? ' active' : ''}`}
-                onClick={() => setLibraryTab('public-experience')}
-              >
-                <ConfigIcon type="exp" size={30} iconSize={13} borderRadius="6px" marginBottom={0} />
-                <span>{t('settings.publicExperience')}</span>
-              </button>
-            </div>
-
-            {/* Contextual action row below the tabs — the "New" / "Ingest"
-                affordance changes with the active sub-tab. */}
-            <div style={{ marginBottom: 12 }}>
-              {libraryTab === 'kb' ? (
-                <Button
-                  type="primary"
-                  onClick={() => setShowCreateKB(true)}
-                >
-                  {t('kb.create')}
-                </Button>
-              ) : (
-                <Tooltip title={!systemLLMReady ? t('systemLLMRequired.message_1') : undefined}>
-                  <Button
-                    type="primary"
-                    disabled={!systemLLMReady}
-                    onClick={() => setShowIngestExp(true)}
-                  >
-                    {t('publicExperience.ingest')}
-                  </Button>
-                </Tooltip>
-              )}
-            </div>
-            <div style={{ marginTop: 16 }}>
-              {libraryTab === 'kb' ? (
-                <KnowledgeBaseList
-                  showCreate={showCreateKB}
-                  onCreateClose={() => setShowCreateKB(false)}
-                  onSelectKB={(kb) => {
-                    setSelectedKB(kb);
-                    setSettingsSubview('kb-detail');
-                  }}
-                />
-              ) : (
-                <PublicExperienceList
-                  showIngest={showIngestExp}
-                  onIngestClose={() => setShowIngestExp(false)}
-                  onSelectExp={(exp) => {
-                    setSelectedExp(exp);
-                    setSettingsSubview('exp-detail');
-                  }}
-                />
-              )}
-            </div>
-          </PanelDetail>
-        );
-
-      case 'kb-detail':
-        return selectedKB ? (
-          <PanelDetail
-            onBack={() => {
-              setSelectedKB(null);
-              setShowCreateKB(false);
-              setSettingsSubview('library');
-            }}
-          >
-            <KnowledgeBaseDetail
-              kb={selectedKB}
-            />
-          </PanelDetail>
-        ) : null;
-
-      case 'exp-detail':
-        return selectedExp ? (
-          <PanelDetail
-            onBack={() => {
-              setSelectedExp(null);
-              setSettingsSubview('library');
-            }}
-          >
-            <PublicExperienceDetail
-              exp={selectedExp}
-              onRedistilled={() => {
-                setSelectedExp(null);
-                setSettingsSubview('library');
-              }}
-            />
-          </PanelDetail>
-        ) : null;
-
-      case 'llm':
-        return (
-          <PanelDetail
-            title={t('settings.llmConfig')}
-            onAdd={() => setShowCreateLLM(true)}
-          >
-            <LLMConfigList
-              onSelectConfig={handleSelectLLMConfig}
-              showCreate={showCreateLLM}
-              onCreateClose={() => setShowCreateLLM(false)}
-              onConfigChanged={() => setSystemLLMRefreshKey(k => k + 1)}
-              beforeDelete={async (id) => {
-                try {
-                  const sysRes = await systemLLMConfigApi.get();
-                  if (sysRes.data?.llm_config_id === id) {
-                    message.error(t('llmConfig.inUseError'));
-                    return false;
-                  }
-                } catch { /* proceed with deletion if we can't check */ }
-                return true;
-              }}
-            />
-            <div style={{ borderTop: '1px solid var(--color-border)', marginTop: 32, paddingTop: 24 }}>
-              <h4 style={{ marginBottom: 16 }}>{t('systemLLMConfig.title')}</h4>
-              <SystemLLMConfigForm onSaved={() => setSystemLLMReady(true)} refreshKey={systemLLMRefreshKey} />
-            </div>
-          </PanelDetail>
-        );
-
-      case 'embedding':
-        return (
-          <PanelDetail title={t('settings.embeddingConfig')}>
-            <EmbeddingConfigForm onCreated={() => setEmbeddingReady(true)} />
-          </PanelDetail>
-        );
-
-      case 'search':
-        return (
-          <PanelDetail title={t('settings.searchConfig')}>
-            <SearchConfigForm />
-          </PanelDetail>
-        );
-
-      case 'language':
-        return renderLanguagePanel();
-
-      default:
-        return null;
-    }
+    const renderer = settingsPanelMap[settingsSubview];
+    return renderer ? renderer() : null;
   };
 
   // If user profile is still being checked, show full-screen loading.

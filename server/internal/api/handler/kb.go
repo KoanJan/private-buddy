@@ -70,7 +70,7 @@ func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
 	for _, entity := range entities {
 		var count int64
 		if err := database.DB.Model(&model.Document{}).Where("knowledge_base_id = ?", entity.ID).Count(&count).Error; err != nil {
-			applogger.Warn("failed to count documents for KB list", "kb_id", entity.ID, "error", err)
+			applogger.Error("failed to count documents for KB list", "kb_id", entity.ID, "error", err)
 		}
 		results = append(results, kbWithStats{
 			KnowledgeBase: entity,
@@ -222,7 +222,7 @@ func (h *KBHandler) DeleteDocument(c *gin.Context) {
 		}
 		if err := database.DB.Model(&model.KnowledgeBase{}).Where("id = ?", doc.KnowledgeBaseID).
 			Update("deleted_count", gorm.Expr("deleted_count + ?", chunkCount)).Error; err != nil {
-			applogger.Warn("failed to update KB deleted_count after document delete", "kb_id", doc.KnowledgeBaseID, "error", err)
+			applogger.Error("failed to update KB deleted_count after document delete", "kb_id", doc.KnowledgeBaseID, "error", err)
 		}
 	}
 

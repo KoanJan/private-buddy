@@ -4,6 +4,7 @@ import { DeleteOutlined, UploadOutlined, ReloadOutlined } from '@ant-design/icon
 import type { UploadFile } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { confirmDelete } from '../utils/confirm';
+import { experienceSourceLabel, experienceStatusInfo, experienceDisplayTitle } from '../utils/experience';
 import type { PublicExperience } from '../types';
 import {
   PUBLIC_EXPERIENCE_STATUS_GENERATING,
@@ -147,32 +148,21 @@ const PublicExperienceList: React.FC<PublicExperienceListProps> = ({ showIngest,
   };
 
   const sourceLabel = (sourceType: number) =>
-    sourceType === 1 ? t('publicExperience.sourceIngestion') : t('publicExperience.sourceShare');
+    experienceSourceLabel(sourceType, t);
 
   // Render a status tag for non-Active experiences. Active records show no tag
   // (the normal case) to avoid visual noise.
   const renderStatusTag = (status: number) => {
-    if (status === PUBLIC_EXPERIENCE_STATUS_GENERATING) {
-      return <Tag color="processing">{t('publicExperience.statusGenerating')}</Tag>;
-    }
-    if (status === PUBLIC_EXPERIENCE_STATUS_ERROR) {
-      return <Tag color="error">{t('publicExperience.statusError')}</Tag>;
-    }
-    return null;
+    const info = experienceStatusInfo(status, t);
+    if (!info) return null;
+    return <Tag color={info.color}>{info.label}</Tag>;
   };
 
   // Dynamic title: for non-Active statuses, prepend/append status text around
   // the placeholder title (derived from the uploaded skill). For Active, show
   // the LLM-generated title as-is.
-  const displayTitle = (exp: PublicExperience): string => {
-    if (exp.status === PUBLIC_EXPERIENCE_STATUS_GENERATING) {
-      return t('publicExperience.statusGeneratingTitle', { title: exp.title });
-    }
-    if (exp.status === PUBLIC_EXPERIENCE_STATUS_ERROR) {
-      return t('publicExperience.statusErrorTitle', { title: exp.title });
-    }
-    return exp.title;
-  };
+  const displayTitle = (exp: PublicExperience): string =>
+    experienceDisplayTitle(exp, t);
 
   return (
     <>

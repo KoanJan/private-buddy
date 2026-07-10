@@ -7,6 +7,7 @@ import {
   PUBLIC_EXPERIENCE_STATUS_GENERATING,
   PUBLIC_EXPERIENCE_STATUS_ERROR,
 } from '../types';
+import { experienceSourceLabel, experienceStatusInfo, experienceDisplayTitle } from '../utils/experience';
 import { uploadedSkillApi, publicExperienceApi } from '../services/api';
 
 interface PublicExperienceDetailProps {
@@ -61,28 +62,18 @@ const PublicExperienceDetail: React.FC<PublicExperienceDetailProps> = ({ exp, on
     }
   };
 
-  const sourceLabel = exp.source_type === 1
-    ? t('publicExperience.sourceIngestion')
-    : t('publicExperience.sourceShare');
+  const sourceLabel = experienceSourceLabel(exp.source_type, t);
   const formattedDate = new Date(exp.created_at).toLocaleString('sv-SE').replace('T', ' ');
 
   const renderStatusTag = () => {
-    if (isGenerating) return <Tag color="processing">{t('publicExperience.statusGenerating')}</Tag>;
-    if (isError) return <Tag color="error">{t('publicExperience.statusError')}</Tag>;
-    return null;
+    const info = experienceStatusInfo(exp.status, t);
+    if (!info) return null;
+    return <Tag color={info.color}>{info.label}</Tag>;
   };
 
   // Dynamic title: for non-Active statuses, prepend/append status text around
   // the placeholder title. For Active, show the LLM-generated title as-is.
-  const displayTitle = () => {
-    if (isGenerating) {
-      return t('publicExperience.statusGeneratingTitle', { title: exp.title });
-    }
-    if (isError) {
-      return t('publicExperience.statusErrorTitle', { title: exp.title });
-    }
-    return exp.title;
-  };
+  const displayTitle = () => experienceDisplayTitle(exp, t);
 
   return (
     <div>

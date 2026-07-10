@@ -8,6 +8,7 @@ import { kbApi } from '../services/api';
 import { logger } from '../logger';
 import { confirmDelete } from '../utils/confirm';
 import { formatRelativeTime } from '../utils/time';
+import { formatFileSize } from '../utils/format';
 import { isAllowedFileExtension } from '../constants/fileTypes';
 
 /**
@@ -28,17 +29,6 @@ const DOC_STATUS_MAP: Record<number, { color: string; labelKey: string }> = {
   3: { color: 'error', labelKey: 'kb.docStatusFailed' },
   4: { color: 'default', labelKey: 'kb.docStatusDeleted' },
 };
-
-/**
- * Formats file size from bytes to human-readable string.
- * @param bytes - File size in bytes
- * @returns Formatted string (e.g., "1.5 MB")
- */
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
 
 /**
  * KnowledgeBaseDetail component displays the detail view of a knowledge base.

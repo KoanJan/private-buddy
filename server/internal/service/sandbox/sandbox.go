@@ -2,7 +2,7 @@
 //
 // The single external entry point is:
 //
-//	Run(workspace string, agentID, sessionID int64, cmd []string) (*exec.Cmd, bool, error)
+//	Run(workspace string, personID, sessionID int64, cmd []string) (*exec.Cmd, bool, error)
 //
 // Internally dispatches to platform-native mechanisms:
 //   - macOS: sandbox-exec (Seatbelt MACF)
@@ -31,23 +31,23 @@ import (
 // platform sandbox, false for plain exec fallback), and any error.
 //
 // workspace is the session workspace absolute path, used as the writable area.
-// agentID and sessionID are used for policy file naming (macOS AAC directory,
+// personID and sessionID are used for policy file naming (macOS AAC directory,
 // Windows AppContainer profile name).
 // cmd is the command and its arguments.
-func Run(workspace string, agentID, sessionID int64, cmd []string) (*exec.Cmd, bool, error) {
+func Run(workspace string, personID, sessionID int64, cmd []string) (*exec.Cmd, bool, error) {
 	if len(cmd) == 0 {
 		return nil, false, fmt.Errorf("sandbox: cmd is empty")
 	}
 
 	switch runtime.GOOS {
 	case "darwin":
-		return runDarwin(workspace, agentID, sessionID, cmd)
+		return runDarwin(workspace, personID, sessionID, cmd)
 	case "linux":
 		return runLinux(workspace, cmd)
 	case "windows":
-		return runWindows(agentID, sessionID, cmd)
+		return runWindows(personID, sessionID, cmd)
 	default:
-		applogger.Warn("sandbox: unsupported platform, plain exec",
+		applogger.Error("sandbox: unsupported platform, plain exec",
 			"goos", runtime.GOOS)
 		return exec.Command(cmd[0], cmd[1:]...), false, nil
 	}

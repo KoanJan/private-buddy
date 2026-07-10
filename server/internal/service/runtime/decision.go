@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/llm"
@@ -239,11 +240,12 @@ func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, agent *mod
 	activeWorksContext := buildActiveWorksContext(sameSessionWorks)
 
 	agentDescription := agent.CharacterSettings
-	if agent.Description != "" {
-		agentDescription = agent.Description
+	person, err := service.GetPerson(agent.PersonID)
+	if err == nil && person.Bio != "" {
+		agentDescription = person.Bio
 	}
 
-	prompt := fmt.Sprintf(decidePromptTemplate, agent.Name, agentDescription, eventDescription, comprehensionContext, activeWorksContext)
+	prompt := fmt.Sprintf(decidePromptTemplate, service.GetAgentName(agent.ID), agentDescription, eventDescription, comprehensionContext, activeWorksContext)
 
 	// Active work IDs are listed in the prompt via buildActiveWorksContext so the
 	// LLM knows which values are valid for target_work_id. We do NOT use schema enum

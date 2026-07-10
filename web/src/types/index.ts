@@ -6,14 +6,10 @@ export interface Session {
   updated_at: string | null;
 }
 
-// Message role constants (must match backend model.MessageRole*)
-export const MESSAGE_ROLE_USER = 1;
-export const MESSAGE_ROLE_ASSISTANT = 2;
-
 export interface Message {
   id: number;
   session_id: number;
-  role: number; // 1=user, 2=assistant
+  person_id: number;
   content: string;
   status: number;
   created_at: string;
@@ -44,10 +40,11 @@ export interface EmbeddingConfig {
 
 export interface Agent {
   id: number;
+  person_id: number;
   name: string;
+  bio: string;
   character_settings: string;
   llm_config_id: number;
-  description: string;
   avatar: string;
   knowledge_base_ids: number[];
   created_at: string;
@@ -152,6 +149,7 @@ export interface UserProfile {
   id: number;
   name: string;
   bio: string;
+  type: number;
   created_at: string;
   updated_at: string;
 }
@@ -209,9 +207,10 @@ export interface ActivityEvent {
 export interface ReceivedFileEntry {
   name: string;
   path: string;
-  local_path: string;
+  local_path?: string;
   size: number;
   is_dir: boolean;
+  children: ReceivedFileEntry[];
 }
 
 export interface ReceivedDelivery {

@@ -28,12 +28,12 @@ const (
 // This replaces the old approach of injecting all experiences into the
 // system prompt, which polluted the context and could not be self-corrected.
 type ScanExperienceTool struct {
-	agentID int64
+	personID int64
 }
 
-// NewScanExperienceTool creates a ScanExperienceTool for the given agent.
-func NewScanExperienceTool(agentID int64) *ScanExperienceTool {
-	return &ScanExperienceTool{agentID: agentID}
+// NewScanExperienceTool creates a ScanExperienceTool for the given person.
+func NewScanExperienceTool(personID int64) *ScanExperienceTool {
+	return &ScanExperienceTool{personID: personID}
 }
 
 // ToolNameScanMyExperience is the type-safe name constant for ScanExperienceTool.
@@ -87,12 +87,12 @@ func (s *ScanExperienceTool) Execute(args map[string]interface{}) (string, error
 	}
 
 	results, err := experience.SearchExperiences(
-		context.Background(), s.agentID, keyword,
+		context.Background(), s.personID, keyword,
 		scanExperienceTopN, scanExperienceMinScore,
 	)
 	if err != nil {
-		applogger.Warn("scan_my_experience failed",
-			"agent_id", s.agentID,
+		applogger.Error("scan_my_experience failed",
+			"agent_id", s.personID,
 			"keyword", keyword,
 			"error", err,
 		)

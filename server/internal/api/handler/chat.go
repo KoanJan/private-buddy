@@ -33,6 +33,7 @@ import (
 	"private-buddy-server/internal/api/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // userFriendlyErrorMessage is the default error message shown to users on internal errors.
@@ -149,6 +150,20 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		agentID = defaultAgent.ID
 	}
 
+	// Load the full agent record to get PersonID
+	agent, err := service.GetAgent(agentID)
+	if err != nil {
+		response.InternalError(c, "Agent not found")
+		return
+	}
+	agentPersonID := agent.PersonID
+
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		response.BadRequest(c, "No user profile found. Please set up your profile in Settings first.")
+		return
+	}
+
 	title := c.Query("title")
 	if title == "" {
 		runes := []rune(message)
@@ -163,38 +178,51 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		Title:   title,
 		AgentID: agentID,
 	}
-	if err := database.DB.Create(&session).Error; err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	// Create participant_sessions records for user and agent
-	if err := database.DB.Create(&model.ParticipantSession{
-		SessionID:       session.ID,
-		ParticipantType: model.ParticipantTypeUser,
-		ParticipantID:   1, // TODO: replace with actual user ID from auth context
-		Role:            model.ParticipantRoleOwner,
-		Status:          model.ParticipantStatusIdle,
-	}).Error; err != nil {
-		applogger.Error("failed to create user participant for session", "session_id", session.ID, "error", err)
-	}
-	if err := database.DB.Create(&model.ParticipantSession{
-		SessionID:       session.ID,
-		ParticipantType: model.ParticipantTypeAgent,
-		ParticipantID:   agentID,
-		Role:            model.ParticipantRoleMember,
-		Status:          model.ParticipantStatusIdle,
-	}).Error; err != nil {
-		applogger.Error("failed to create agent participant for session", "session_id", session.ID, "error", err)
-	}
-
 	userMsg := model.Message{
 		SessionID: session.ID,
-		Role:      model.MessageRoleUser,
+		PersonID:  userPersonID,
 		Content:   message,
 		Status:    model.MessageStatusCompleted,
 	}
-	if err := database.DB.Select("SessionID", "Role", "Content", "Status").Create(&userMsg).Error; err != nil {
+
+	// Create all session resources in a single transaction
+	err = database.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&session).Error; err != nil {
+			return err
+		}
+		userMsg.SessionID = session.ID
+
+		if err := tx.Create(&model.ParticipantSession{
+			SessionID:     session.ID,
+			ParticipantID: userPersonID,
+			Role:          model.ParticipantRoleOwner,
+			Status:        model.ParticipantStatusIdle,
+		}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Create(&model.ParticipantSession{
+			SessionID:     session.ID,
+			ParticipantID: agentPersonID,
+			Role:          model.ParticipantRoleMember,
+			Status:        model.ParticipantStatusIdle,
+		}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Select("SessionID", "PersonID", "Content", "Status").Create(&userMsg).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&model.ParticipantSession{}).
+			Where("session_id = ? AND participant_id = ?", session.ID, userPersonID).
+			Update("last_read_message_id", userMsg.ID).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -205,14 +233,6 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		SessionID: userMsg.SessionID,
 		Content:   userMsg.Content,
 	})
-
-	// Update user's last_read_message_id — user has seen all messages up to this point
-	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-			session.ID, model.ParticipantTypeUser, 1).
-		Update("last_read_message_id", userMsg.ID).Error; err != nil {
-		applogger.Warn("failed to update last_read_message_id on session create", "session_id", session.ID, "error", err)
-	}
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
 	h.sendEventToRuntime(agentID, session.ID, userMsg.ID, message)
@@ -250,18 +270,23 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		return
 	}
 
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		response.BadRequest(c, "No user profile found. Please set up your profile in Settings first.")
+		return
+	}
+
 	userMsg := model.Message{
 		SessionID: sessionID,
-		Role:      model.MessageRoleUser,
+		PersonID:  userPersonID,
 		Content:   message,
 		Status:    model.MessageStatusCompleted,
 	}
-	if err := database.DB.Select("SessionID", "Role", "Content", "Status").Create(&userMsg).Error; err != nil {
+	if err := database.DB.Select("SessionID", "PersonID", "Content", "Status").Create(&userMsg).Error; err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
 
-	// Submit to the event vectorization service for embedding + observation.
 	memory.SubmitVectorization(memory.VectorizationTask{
 		MessageID: userMsg.ID,
 		SessionID: userMsg.SessionID,
@@ -270,10 +295,9 @@ func (h *Handler) SendMessage(c *gin.Context) {
 
 	// Update user's last_read_message_id — user has seen all messages up to this point
 	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ? AND participant_id = ?",
-			sessionID, model.ParticipantTypeUser, 1).
+		Where("session_id = ? AND participant_id = ?", sessionID, userPersonID).
 		Update("last_read_message_id", userMsg.ID).Error; err != nil {
-		applogger.Warn("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
+		applogger.Error("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
 	}
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
@@ -371,10 +395,11 @@ func (h *Handler) GetSessionAgents(c *gin.Context) {
 		return
 	}
 
-	// Find all agent participants in this session
+	// Find all AI participants in this session by joining persons table (type=1)
 	var participants []model.ParticipantSession
-	if err := database.DB.Where("session_id = ? AND participant_type = ?",
-		sessionID, model.ParticipantTypeAgent).
+	if err := database.DB.
+		Joins("JOIN persons ON persons.id = participant_sessions.participant_id AND persons.type = ?", model.PersonTypeAI).
+		Where("participant_sessions.session_id = ?", sessionID).
 		Find(&participants).Error; err != nil {
 		response.InternalError(c, "failed to query participants")
 		return
@@ -382,14 +407,15 @@ func (h *Handler) GetSessionAgents(c *gin.Context) {
 
 	result := make([]sessionAgentStatus, 0, len(participants))
 	for _, p := range participants {
+		// Find agent by PersonID
 		var agent model.Agent
-		if err := database.DB.First(&agent, p.ParticipantID).Error; err != nil {
+		if err := database.DB.Where("person_id = ?", p.ParticipantID).First(&agent).Error; err != nil {
 			continue
 		}
 
 		result = append(result, sessionAgentStatus{
 			AgentID: agent.ID,
-			Name:    agent.Name,
+			Name:    service.GetAgentName(agent.ID),
 			Avatar:  agent.Avatar,
 			Status:  p.Status, // Read directly from ParticipantSession.Status
 		})

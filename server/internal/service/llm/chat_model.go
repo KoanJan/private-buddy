@@ -368,7 +368,7 @@ func (cm *ChatModel) ChatWithJSONSchema(ctx context.Context, messages []Message,
 	}
 
 	if isResponseFormatError(err) {
-		applogger.Warn("json_schema not supported, caching and falling back to function_call",
+		applogger.Error("json_schema not supported, caching and falling back to function_call",
 			"model", cm.modelID, "base_url", cm.baseURL)
 		cm.saveCapability(0)
 		return cm.tryFunctionCallJSON(ctx, messages, schemaDef)

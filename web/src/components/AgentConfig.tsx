@@ -30,6 +30,15 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editAvatarPreview, setEditAvatarPreview] = useState<string>('');
 
+  // Revoke object URLs on change to prevent memory leaks
+  useEffect(() => () => {
+    if (createAvatarPreview) URL.revokeObjectURL(createAvatarPreview);
+  }, [createAvatarPreview]);
+
+  useEffect(() => () => {
+    if (editAvatarPreview) URL.revokeObjectURL(editAvatarPreview);
+  }, [editAvatarPreview]);
+
   const loadAgents = async () => {
     setLoading(true);
     try {
@@ -174,7 +183,6 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
     setEditAvatarPreview('');
     editForm.setFieldsValue({
       character_settings: agent.character_settings || '',
-      description: agent.description || '',
       llm_config_id: agent.llm_config_id,
       knowledge_base_ids: agent.knowledge_base_ids || [],
     });
@@ -250,7 +258,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
             >
               <AgentAvatar avatar={agent.avatar} size={44} iconSize={20} borderRadius="10px" />
               <div className="item-card-block-name">{agent.name}</div>
-              <div className="item-card-block-desc">{agent.description || t('agent.noDescription')}</div>
+              <div className="item-card-block-desc">{agent.bio || t('agent.noDescription')}</div>
               <div className="item-actions item-card-block-actions">
                 <Button
                   type="text"
@@ -311,16 +319,6 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
             <Input.TextArea
               placeholder={t('agent.characterSettingsPlaceholder')}
               rows={4}
-            />
-          </Form.Item>
-
-          <Form.Item
-            label={t('agent.description')}
-            name="description"
-          >
-            <Input.TextArea
-              placeholder={t('agent.descriptionPlaceholder')}
-              rows={2}
             />
           </Form.Item>
 
@@ -407,16 +405,6 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
             <Input.TextArea
               placeholder={t('agent.characterSettingsPlaceholder')}
               rows={4}
-            />
-          </Form.Item>
-
-          <Form.Item
-            label={t('agent.description')}
-            name="description"
-          >
-            <Input.TextArea
-              placeholder={t('agent.descriptionPlaceholder')}
-              rows={2}
             />
           </Form.Item>
 

@@ -7,6 +7,9 @@ import (
 
 	"private-buddy-server/internal/api/response"
 	"private-buddy-server/internal/config"
+	"private-buddy-server/internal/database"
+	applogger "private-buddy-server/internal/logger"
+	"private-buddy-server/internal/model"
 
 	"github.com/gin-gonic/gin"
 )
@@ -57,4 +60,25 @@ func osRemoveIfExists(path string) {
 // handleNotFound returns a not-found response via business code.
 func handleNotFound(c *gin.Context, entityName string, id int64) {
 	response.NotFound(c, fmt.Sprintf("%s %d not found", entityName, id))
+}
+
+// loadAgentPersons loads Person records for each agent and returns a map keyed by PersonID.
+func loadAgentPersons(agents []model.Agent) map[int64]*model.Person {
+	personIDs := make([]int64, 0, len(agents))
+	for i := range agents {
+		personIDs = append(personIDs, agents[i].PersonID)
+	}
+	if len(personIDs) == 0 {
+		return nil
+	}
+	var persons []model.Person
+	if err := database.DB.Where("id IN ?", personIDs).Find(&persons).Error; err != nil {
+		applogger.Error("loadAgentPersons: failed to load persons", "error", err)
+		return nil
+	}
+	personsMap := make(map[int64]*model.Person, len(persons))
+	for i := range persons {
+		personsMap[persons[i].ID] = &persons[i]
+	}
+	return personsMap
 }

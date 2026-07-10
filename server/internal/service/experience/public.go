@@ -110,7 +110,7 @@ func SearchPublicExperiences(ctx context.Context, query string, topN int, minSco
 		return nil, fmt.Errorf("embed search query: %w", err)
 	}
 	if len(queryVec) == 0 {
-		applogger.Warn("empty queryVec")
+		applogger.Error("empty queryVec")
 		return nil, nil
 	}
 

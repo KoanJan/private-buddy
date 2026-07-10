@@ -24,13 +24,13 @@ import (
 // The overwrite mode uses atomic write (temp file + rename) to ensure
 // the file is never in a half-written state.
 type WriteTextFileTool struct {
-	agentID   int64
+	personID  int64
 	sessionID int64
 }
 
-// NewWriteTextFileTool creates a WriteTextFileTool bound to the given agent and session.
-func NewWriteTextFileTool(agentID, sessionID int64) *WriteTextFileTool {
-	return &WriteTextFileTool{agentID: agentID, sessionID: sessionID}
+// NewWriteTextFileTool creates a WriteTextFileTool bound to the given person and session.
+func NewWriteTextFileTool(personID, sessionID int64) *WriteTextFileTool {
+	return &WriteTextFileTool{personID: personID, sessionID: sessionID}
 }
 
 // ToolNameWriteTextFile is the type-safe name constant for WriteTextFileTool.
@@ -90,7 +90,7 @@ func (w *WriteTextFileTool) Execute(args map[string]interface{}) (string, error)
 		return "", fmt.Errorf("mode must be 'overwrite' or 'append'")
 	}
 
-	absPath, err := resolvePath(filePath, w.agentID, w.sessionID)
+	absPath, err := resolvePath(filePath, w.personID, w.sessionID)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}

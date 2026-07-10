@@ -41,7 +41,7 @@ func createEventWithEmbedding(ctx context.Context, eventType int, refID int64, c
 
 	if embeddingSvc != nil {
 		if err := storeEventEmbedding(ctx, eventID, content); err != nil {
-			applogger.Warn("Failed to store event embedding, event created without vector",
+			applogger.Error("Failed to store event embedding, event created without vector",
 				"event_id", eventID, "error", err)
 		}
 	}

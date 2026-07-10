@@ -151,12 +151,12 @@ func IndexMessages(ctx context.Context, sessionID int64, messageIDs []int64) boo
 
 	var messages []model.Message
 	if err := database.DB.Where("id IN ? AND session_id = ?", messageIDs, sessionID).Find(&messages).Error; err != nil {
-		applogger.Warn("IndexMessages: failed to load messages", "session_id", sessionID, "error", err)
+		applogger.Error("IndexMessages: failed to load messages", "session_id", sessionID, "error", err)
 		return false
 	}
 
 	if len(messages) == 0 {
-		applogger.Warn("No messages found for indexing", "session_id", sessionID)
+		applogger.Error("No messages found for indexing", "session_id", sessionID)
 		return false
 	}
 
@@ -174,7 +174,10 @@ func IndexMessages(ctx context.Context, sessionID int64, messageIDs []int64) boo
 
 	for i, msg := range messages {
 		role := "user"
-		if msg.Role == model.MessageRoleAssistant {
+		userPersonID, err := service.GetCurrentUserPersonID()
+		if err != nil {
+			applogger.Error("IndexMessages: failed to get current user person ID", "error", err)
+		} else if msg.PersonID != userPersonID {
 			role = "assistant"
 		}
 		contents[i] = msg.Content

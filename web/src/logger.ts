@@ -1,3 +1,5 @@
+import { storage } from './services/storage';
+
 const LOG_KEY = 'private_buddy_logs';
 const MAX_LOGS = 1000;
 
@@ -24,14 +26,14 @@ const saveLog = (level: string, ...args: unknown[]): string => {
   const logEntry = `[${timestamp}] [${level}] ${message}`;
   
   try {
-    const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+    const logs: string[] = storage.get<string[]>(LOG_KEY) || [];
     logs.push(logEntry);
     
     if (logs.length > MAX_LOGS) {
       logs.splice(0, logs.length - MAX_LOGS);
     }
     
-    localStorage.setItem(LOG_KEY, JSON.stringify(logs));
+    storage.set(LOG_KEY, logs);
   } catch (error) {
     console.error('Failed to save log:', error);
   }
@@ -61,15 +63,11 @@ export const logger = {
   },
   
   getLogs: () => {
-    try {
-      return JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
-    } catch {
-      return [];
-    }
+    return storage.get<string[]>(LOG_KEY) || [];
   },
   
   clearLogs: () => {
-    localStorage.removeItem(LOG_KEY);
+    storage.remove(LOG_KEY);
     console.log('Logs cleared');
   },
   

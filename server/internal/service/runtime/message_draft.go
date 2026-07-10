@@ -44,7 +44,7 @@ func (r *agentRuntime) commitDraft(req *draftCommitRequest) {
 	// Create the message from the draft content
 	msg := model.Message{
 		SessionID: draft.SessionID,
-		Role:      model.MessageRoleAssistant,
+		PersonID:  r.agentPersonID,
 		Content:   req.content,
 		Status:    model.MessageStatusCompleted,
 		DraftID:   &draft.ID,
@@ -71,8 +71,8 @@ func (r *agentRuntime) commitDraft(req *draftCommitRequest) {
 	// The agent has "read" everything up to and including its own message,
 	// since it produced it based on all prior context.
 	if err := tx.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ? AND participant_id = ? AND last_read_message_id < ?",
-			draft.SessionID, model.ParticipantTypeAgent, r.agentID, msg.ID).
+		Where("session_id = ? AND participant_id = ? AND last_read_message_id < ?",
+			draft.SessionID, r.agentPersonID, msg.ID).
 		Updates(map[string]interface{}{
 			"last_active_at":       time.Now(),
 			"last_read_message_id": msg.ID,

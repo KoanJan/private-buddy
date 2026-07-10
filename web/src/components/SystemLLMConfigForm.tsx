@@ -5,53 +5,48 @@ import { useTranslation } from 'react-i18next';
 import type { LLMConfig } from '../types';
 import { systemLLMConfigApi, llmConfigApi } from '../services/api';
 import { logger } from '../logger';
+import { useConfigForm } from '../hooks/useConfigForm';
+
+interface SystemLLMConfig { llm_config_id: number }
 
 const SystemLLMConfigForm: React.FC<{ onSaved?: () => void; refreshKey?: number }> = ({ onSaved, refreshKey }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([]);
-  const [dirty, setDirty] = useState(false);
+
+  const { loading, saving, dirty, handleSave, markDirty } = useConfigForm<SystemLLMConfig>({
+    // loadApi is a no-op here — we do parallel loading below
+    loadApi: async () => null,
+    saveApi: (v) => systemLLMConfigApi.update(v as { llm_config_id: number }),
+    i18nPrefix: 'systemLLMConfig',
+    skipInitialLoad: true,
+    onSaved,
+    onLoaded: (data) => form.setFieldsValue(data),
+  });
 
   useEffect(() => {
-    loadData();
-  }, [refreshKey]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [sysRes, llmRes] = await Promise.all([
-        systemLLMConfigApi.get(),
-        llmConfigApi.list(),
-      ]);
-      setLlmConfigs(llmRes.data);
-      if (sysRes.data?.llm_config_id) {
-        form.setFieldsValue({ llm_config_id: sysRes.data.llm_config_id });
-        setDirty(false);
+    let cancelled = false;
+    const loadData = async () => {
+      setLlmConfigs([]);
+      try {
+        const [sysRes, llmRes] = await Promise.all([
+          systemLLMConfigApi.get(),
+          llmConfigApi.list(),
+        ]);
+        if (cancelled) return;
+        setLlmConfigs(llmRes.data);
+        if (sysRes.data?.llm_config_id) {
+          form.setFieldsValue({ llm_config_id: sysRes.data.llm_config_id });
+        }
+      } catch (error) {
+        if (cancelled) return;
+        logger.error('Failed to load system LLM config:', error);
+        message.error(t('systemLLMConfig.loadError'));
       }
-    } catch (error) {
-      logger.error('Failed to load system LLM config:', error);
-      message.error(t('systemLLMConfig.loadError'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSave = async (values: { llm_config_id: number }) => {
-    setSaving(true);
-    try {
-      await systemLLMConfigApi.update(values);
-      setDirty(false);
-      message.success(t('systemLLMConfig.saveSuccess'));
-      onSaved?.();
-    } catch (error) {
-      logger.error('Failed to save system LLM config:', error);
-      message.error(t('systemLLMConfig.saveError'));
-    } finally {
-      setSaving(false);
-    }
-  };
+    };
+    loadData();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
   if (loading) {
     return (
@@ -70,7 +65,7 @@ const SystemLLMConfigForm: React.FC<{ onSaved?: () => void; refreshKey?: number 
         form={form}
         layout="vertical"
         onFinish={handleSave}
-        onValuesChange={() => setDirty(true)}
+        onValuesChange={markDirty}
       >
         <Form.Item
           name="llm_config_id"

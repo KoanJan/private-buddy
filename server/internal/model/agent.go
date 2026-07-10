@@ -7,12 +7,12 @@ import "time"
 // An agent defines the behavior and capabilities of an AI assistant,
 // including its character settings (personality, style, identity)
 // and the LLM/embedding configurations to use.
+// Identity (name, bio) is stored in the persons table via PersonID.
 type Agent struct {
 	ID                int64     `gorm:"primaryKey;autoIncrement;type:INTEGER PRIMARY KEY AUTOINCREMENT" json:"id"`
-	Name              string    `gorm:"type:varchar(255);not null;uniqueIndex" json:"name"`                                // Immutable identity key
+	PersonID          int64     `gorm:"not null;uniqueIndex;column:person_id;default:0" json:"person_id"`
 	CharacterSettings string    `gorm:"type:text;not null;default:'';column:character_settings" json:"character_settings"` // Agent's personality, style, identity
 	LLMConfigID       int64     `gorm:"not null;index;column:llm_config_id" json:"llm_config_id"`
-	Description       string    `gorm:"type:text;not null;default:''" json:"description"`
 	Avatar            string    `gorm:"type:varchar(500);not null;default:''" json:"avatar"`       // Relative path under PrivateBuddyData/avatars/
 	KnowledgeBaseIDs  string    `gorm:"type:text;not null;default:'[]'" json:"knowledge_base_ids"` // JSON array of knowledge base IDs
 	CreatedAt         time.Time `gorm:"not null;autoCreateTime" json:"created_at"`

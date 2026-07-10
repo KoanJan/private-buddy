@@ -118,7 +118,7 @@ type VectorMetadata struct {
 func (vss *VectorStoreService) AddMessages(ctx context.Context, sessionID int64, messageIDs []int64, contents []string, metadatas []VectorMetadata) error {
 	// Skip if embedding service is not configured
 	if vss.embeddingSvc == nil {
-		applogger.Warn("Embedding service not available, skipping vector store add")
+		applogger.Error("Embedding service not available, skipping vector store add")
 		return nil
 	}
 

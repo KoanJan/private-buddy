@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -30,17 +31,18 @@ func TestDeliverToTool_Execute(t *testing.T) {
 	database.Init()
 	database.AutoMigrate()
 
-	// Create a test user for receiver resolution
-	database.DB.Create(&model.User{Name: "Alice"})
+	// Create test persons — Alice (human user) and sender
+	alicePerson := model.Person{Name: "Alice", Type: model.PersonTypeHuman}
+	database.DB.Create(&alicePerson)
 
-	agentID := int64(1)
+	personID := int64(1)
 	sessionID := int64(100)
 
 	// Initialize workspace with received/ directory
-	workspace.InitWorkspace(agentID, sessionID)
+	workspace.InitWorkspace(personID, sessionID)
 
 	// Create test files in output/
-	outputDir := workspace.GetOutputDir(agentID, sessionID)
+	outputDir := workspace.GetOutputDir(personID, sessionID)
 	testFile := filepath.Join(outputDir, "report.txt")
 	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
@@ -56,7 +58,27 @@ func TestDeliverToTool_Execute(t *testing.T) {
 		t.Fatalf("failed to create sub file: %v", err)
 	}
 
-	tool := NewDeliverToTool(agentID, sessionID)
+	tool := NewDeliverToTool(personID, sessionID)
+
+	// findDeliveryDir returns the n-th (1-based) delivery directory name in receivedDir.
+	// Delivery dirs are sorted alphabetically (timestamp in name gives chronological order).
+	findDeliveryDir := func(receivedDir string, n int) string {
+		entries, err := os.ReadDir(receivedDir)
+		if err != nil {
+			return ""
+		}
+		var names []string
+		for _, e := range entries {
+			if e.IsDir() {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		if n < 1 || n > len(names) {
+			return ""
+		}
+		return names[n-1]
+	}
 
 	t.Run("deliver single file to user", func(t *testing.T) {
 		result, err := tool.Execute(map[string]interface{}{
@@ -67,16 +89,17 @@ func TestDeliverToTool_Execute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(result, "delivery #1") {
-			t.Errorf("expected delivery #1 in result, got: %s", result)
+		if !strings.Contains(result, "delivery") {
+			t.Errorf("expected 'delivery' in result, got: %s", result)
 		}
 		if !strings.Contains(result, "report.txt") {
 			t.Errorf("expected report.txt in result, got: %s", result)
 		}
 
 		// Verify file was copied to user's received/ directory
-		userReceived := workspace.GetReceivedDir(0, sessionID)
-		copiedFile := filepath.Join(userReceived, "delivery_1", "report.txt")
+		userReceived := workspace.GetReceivedDir(alicePerson.ID, sessionID)
+		dir1 := findDeliveryDir(userReceived, 1)
+		copiedFile := filepath.Join(userReceived, dir1, "report.txt")
 		data, err := os.ReadFile(copiedFile)
 		if err != nil {
 			t.Fatalf("copied file not found: %v", err)
@@ -94,13 +117,14 @@ func TestDeliverToTool_Execute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(result, "delivery #2") {
-			t.Errorf("expected delivery #2 in result, got: %s", result)
+		if !strings.Contains(result, "delivery") {
+			t.Errorf("expected 'delivery' in result, got: %s", result)
 		}
 
 		// Verify directory was copied
-		userReceived := workspace.GetReceivedDir(0, sessionID)
-		copiedFile := filepath.Join(userReceived, "delivery_2", "dist", "app.js")
+		userReceived := workspace.GetReceivedDir(alicePerson.ID, sessionID)
+		dir2 := findDeliveryDir(userReceived, 2)
+		copiedFile := filepath.Join(userReceived, dir2, "dist", "app.js")
 		data, err := os.ReadFile(copiedFile)
 		if err != nil {
 			t.Fatalf("copied file not found: %v", err)
@@ -111,14 +135,16 @@ func TestDeliverToTool_Execute(t *testing.T) {
 	})
 
 	t.Run("multiple deliveries don't overwrite", func(t *testing.T) {
-		userReceived := workspace.GetReceivedDir(0, sessionID)
+		userReceived := workspace.GetReceivedDir(alicePerson.ID, sessionID)
+		dir1 := findDeliveryDir(userReceived, 1)
+		dir2 := findDeliveryDir(userReceived, 2)
 
-		// delivery_1 and delivery_2 should both exist
-		if _, err := os.Stat(filepath.Join(userReceived, "delivery_1", "report.txt")); err != nil {
-			t.Errorf("delivery_1 should still exist: %v", err)
+		// delivery dirs should both exist
+		if _, err := os.Stat(filepath.Join(userReceived, dir1, "report.txt")); err != nil {
+			t.Errorf("delivery 1 should still exist: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(userReceived, "delivery_2", "dist", "app.js")); err != nil {
-			t.Errorf("delivery_2 should still exist: %v", err)
+		if _, err := os.Stat(filepath.Join(userReceived, dir2, "dist", "app.js")); err != nil {
+			t.Errorf("delivery 2 should still exist: %v", err)
 		}
 	})
 

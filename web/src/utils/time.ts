@@ -52,16 +52,17 @@ export function formatRelativeTime(isoStr: string): string {
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
+  const t = i18n.t;
 
-  if (diffSec < 60) return 'just now';
+  if (diffSec < 60) return t('chat.justNow');
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return t('chat.minutesAgo', { n: diffMin });
   const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour}h ago`;
+  if (diffHour < 24) return t('chat.hoursAgo', { n: diffHour });
   const diffDay = Math.floor(diffHour / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
+  if (diffDay < 30) return t('chat.daysAgo', { n: diffDay });
   const diffMonth = Math.floor(diffDay / 30);
-  if (diffMonth < 12) return `${diffMonth}mo ago`;
+  if (diffMonth < 12) return t('chat.monthsAgo', { n: diffMonth });
   const diffYear = Math.floor(diffMonth / 12);
-  return `${diffYear}y ago`;
+  return t('chat.yearsAgo', { n: diffYear });
 }

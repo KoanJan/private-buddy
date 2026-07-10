@@ -17,12 +17,12 @@ import (
 // content of only the experiences it judges relevant. The full content is
 // returned without truncation — a truncated experience is unusable.
 type RecallExperienceTool struct {
-	agentID int64
+	personID int64
 }
 
-// NewRecallExperienceTool creates a RecallExperienceTool for the given agent.
-func NewRecallExperienceTool(agentID int64) *RecallExperienceTool {
-	return &RecallExperienceTool{agentID: agentID}
+// NewRecallExperienceTool creates a RecallExperienceTool for the given person.
+func NewRecallExperienceTool(personID int64) *RecallExperienceTool {
+	return &RecallExperienceTool{personID: personID}
 }
 
 // ToolNameRecallMyExperience is the type-safe name constant for RecallExperienceTool.
@@ -73,7 +73,7 @@ func (r *RecallExperienceTool) Execute(args map[string]interface{}) (string, err
 	}
 
 	var exp model.AgentExperience
-	if err := database.DB.Where("id = ? AND agent_id = ?", expID, r.agentID).First(&exp).Error; err != nil {
+	if err := database.DB.Where("id = ? AND agent_id = ?", expID, r.personID).First(&exp).Error; err != nil {
 		return "", fmt.Errorf("experience not found")
 	}
 

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.29] - 2026-07-10
+
+### Added
+- **Unified Identity**: agents and users now share a common Person profile with name and bio, replacing the separate agent name/description fields and user profile; agent cards in settings now display the bio
+
+### Changed
+- **Delivery Files**: received files are organized by sender name and delivery time (e.g. `Alice_20260710211000_000000`), with collapsible folder tree navigation replacing the flat list and "xx delivery" header
+- **View Tabs**: Chat / Activities / Received tab labels now follow the app language setting instead of hardcoded English; app defaults to English on first launch
+
+### Removed
+- **Agent Description Field**: the separate description input on the agent configuration form has been removed, superseded by the Person bio
+
 ## [0.0.28] - 2026-07-10
 
 ### Added

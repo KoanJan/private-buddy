@@ -1,18 +1,17 @@
-// Package workspace manages agent session workspace paths and directory lifecycle.
+// Package workspace manages session workspace paths and directory lifecycle.
 //
 // The workspace layout is:
 //
-//	{workspaceRoot}/{agent_id}/{session_id}/
+//	{workspaceRoot}/{person_id}/{session_id}/
 //	  ├── .meta/       — system-managed files (notes.md, fingerprint.txt)
 //	  ├── output/      — agent's working output directory (read-write)
-//	  └── received/    — files delivered from other agents/user (read-only copies)
+//	  └── received/    — files delivered from other persons (read-only copies)
 //	      ├── delivery_1/
 //	      ├── delivery_2/
 //	      └── ...
 //
-// The {agent_id} layer provides structural preparation for future multi-agent
-// isolation (Actor model). In single-agent mode it is purely organizational —
-// read/write permissions and user visibility are unchanged.
+// Using person_id instead of agent_id unifies the user and agent directory
+// hierarchy under the Person model — no more special "0" value for users.
 package workspace
 
 import (
@@ -33,35 +32,35 @@ func getRoot() string {
 	return root
 }
 
-// GetWorkspacePath returns the workspace directory for a specific agent and session.
-// Path: {workspaceRoot}/{agent_id}/{session_id}
-func GetWorkspacePath(agentID, sessionID int64) string {
-	return filepath.Join(getRoot(), strconv.FormatInt(agentID, 10), strconv.FormatInt(sessionID, 10))
+// GetWorkspacePath returns the workspace directory for a specific person and session.
+// Path: {workspaceRoot}/{person_id}/{session_id}
+func GetWorkspacePath(personID, sessionID int64) string {
+	return filepath.Join(getRoot(), strconv.FormatInt(personID, 10), strconv.FormatInt(sessionID, 10))
 }
 
 // GetMetaDir returns the .meta directory path for system-managed files.
-// Path: {workspaceRoot}/{agent_id}/{session_id}/.meta
-func GetMetaDir(agentID, sessionID int64) string {
-	return filepath.Join(GetWorkspacePath(agentID, sessionID), ".meta")
+// Path: {workspaceRoot}/{person_id}/{session_id}/.meta
+func GetMetaDir(personID, sessionID int64) string {
+	return filepath.Join(GetWorkspacePath(personID, sessionID), ".meta")
 }
 
 // GetOutputDir returns the output directory path for agent working files.
-// Path: {workspaceRoot}/{agent_id}/{session_id}/output
-func GetOutputDir(agentID, sessionID int64) string {
-	return filepath.Join(GetWorkspacePath(agentID, sessionID), "output")
+// Path: {workspaceRoot}/{person_id}/{session_id}/output
+func GetOutputDir(personID, sessionID int64) string {
+	return filepath.Join(GetWorkspacePath(personID, sessionID), "output")
 }
 
 // GetReceivedDir returns the received directory path for files delivered
-// by other agents or users.
-// Path: {workspaceRoot}/{agent_id}/{session_id}/received
-func GetReceivedDir(agentID, sessionID int64) string {
-	return filepath.Join(GetWorkspacePath(agentID, sessionID), "received")
+// by other persons.
+// Path: {workspaceRoot}/{person_id}/{session_id}/received
+func GetReceivedDir(personID, sessionID int64) string {
+	return filepath.Join(GetWorkspacePath(personID, sessionID), "received")
 }
 
 // InitWorkspace creates the workspace directory structure for a session and
 // initializes notes.md if it doesn't exist. Returns the workspace path.
-func InitWorkspace(agentID, sessionID int64) string {
-	ws := GetWorkspacePath(agentID, sessionID)
+func InitWorkspace(personID, sessionID int64) string {
+	ws := GetWorkspacePath(personID, sessionID)
 	metaDir := filepath.Join(ws, ".meta")
 	os.MkdirAll(metaDir, 0755)
 
@@ -70,16 +69,16 @@ func InitWorkspace(agentID, sessionID int64) string {
 		os.WriteFile(notesFile, []byte("# Agent Notes\n\nStructured log of agent's work progress.\n\n"), 0644)
 	}
 
-	outputDir := GetOutputDir(agentID, sessionID)
+	outputDir := GetOutputDir(personID, sessionID)
 	os.MkdirAll(outputDir, 0755)
 
-	receivedDir := GetReceivedDir(agentID, sessionID)
+	receivedDir := GetReceivedDir(personID, sessionID)
 	os.MkdirAll(receivedDir, 0755)
 
 	return ws
 }
 
 // RemoveWorkspace removes the entire workspace directory for a session.
-func RemoveWorkspace(agentID, sessionID int64) {
-	os.RemoveAll(GetWorkspacePath(agentID, sessionID))
+func RemoveWorkspace(personID, sessionID int64) {
+	os.RemoveAll(GetWorkspacePath(personID, sessionID))
 }

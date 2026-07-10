@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/llm"
 
@@ -204,10 +205,15 @@ func AssembleContext(
 
 	userRole := userName
 
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		applogger.Error("AssembleContext: failed to get current user person ID", "error", err)
+	}
+
 	var dialogLines []string
 	for _, msg := range recentMessages {
 		role := userRole
-		if msg.Role != model.MessageRoleUser {
+		if userPersonID != 0 && msg.PersonID != userPersonID {
 			role = "You"
 		}
 		dialogLines = append(dialogLines, fmt.Sprintf("%s [%s]: %s", role, msg.CreatedAt.Format("2006-01-02 15:04:05"), msg.Content))

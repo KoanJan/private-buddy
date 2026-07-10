@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"private-buddy-server/internal/api/response"
+	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
@@ -42,7 +43,7 @@ func (h *Handler) Root(c *gin.Context) {
 func (h *Handler) GetVersion(c *gin.Context) {
 	var versionRecord model.DBVersion
 	err := database.DB.Order("id DESC").First(&versionRecord).Error
-	version := "0.0.0"
+	version := config.AppVersion
 	if err == nil {
 		version = versionRecord.Version
 	}
@@ -107,7 +108,7 @@ func (h *Handler) UpdateLLMConfig(c *gin.Context) {
 	if len(updates) > 0 {
 		h.crudLLM.Update(entity, updates)
 		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.Warn("failed to refresh LLM config after update", "id", id, "error", err)
+			applogger.Error("failed to refresh LLM config after update", "id", id, "error", err)
 		}
 	}
 	response.Success(c, schema.NewLLMConfigResponse(entity))
@@ -122,12 +123,12 @@ func (h *Handler) DeleteLLMConfig(c *gin.Context) {
 	}
 	var referencingAgents []model.Agent
 	if err := database.DB.Where("llm_config_id = ?", id).Find(&referencingAgents).Error; err != nil {
-		applogger.Warn("failed to check referencing agents for LLM config", "id", id, "error", err)
+		applogger.Error("failed to check referencing agents for LLM config", "id", id, "error", err)
 	}
 	if len(referencingAgents) > 0 {
 		names := make([]string, len(referencingAgents))
 		for i, a := range referencingAgents {
-			names[i] = a.Name
+			names[i] = service.GetAgentName(a.ID)
 		}
 		response.BadRequest(c, "Cannot delete LLM config: it is referenced by "+strconv.Itoa(len(referencingAgents))+" agent(s): "+strings.Join(names, ", "))
 		return
@@ -200,18 +201,23 @@ func (h *Handler) UpdateEmbeddingConfig(c *gin.Context) {
 	response.Success(c, schema.NewEmbeddingConfigResponse(config))
 }
 
-// GetUserProfile returns the current user's profile.
+// GetUserProfile returns the current user's person profile.
 // Returns zero-value response if user hasn't been set up yet.
 func (h *Handler) GetUserProfile(c *gin.Context) {
-	user := service.GetUserProfile()
-	if user == nil {
-		response.Success(c, schema.UserProfileResponse{})
+	person, err := service.GetCurrentUserPerson()
+	if err != nil {
+		response.Success(c, gin.H{})
 		return
 	}
-	response.Success(c, schema.NewUserProfileResponse(user))
+	response.Success(c, gin.H{
+		"id":   person.ID,
+		"name": person.Name,
+		"bio":  person.Bio,
+		"type": person.Type,
+	})
 }
 
-// CreateOrUpdateUserProfile creates or updates the user profile.
+// CreateOrUpdateUserProfile creates or updates the user's person profile.
 // Name is immutable once set (controlled via UNIQUE constraint on name column).
 // Bio can be updated at any time.
 func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
@@ -224,7 +230,7 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 		return
 	}
 
-	existing := service.GetUserProfile()
+	existing, _ := service.GetCurrentUserPerson()
 	if existing != nil {
 		// Update bio only (name is immutable)
 		updates := map[string]interface{}{"bio": req.Bio}
@@ -233,14 +239,23 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 			return
 		}
 		if err := database.DB.First(existing, existing.ID).Error; err != nil {
-			applogger.Warn("failed to refresh user profile after update", "id", existing.ID, "error", err)
+			applogger.Error("failed to refresh user profile after update", "id", existing.ID, "error", err)
 		}
-		response.Success(c, schema.NewUserProfileResponse(existing))
+		response.Success(c, gin.H{
+			"id":   existing.ID,
+			"name": existing.Name,
+			"bio":  existing.Bio,
+			"type": existing.Type,
+		})
 		return
 	}
 
-	user, err := service.CreateUser(req.Name, req.Bio)
-	if err != nil {
+	person := model.Person{
+		Name: req.Name,
+		Bio:  req.Bio,
+		Type: model.PersonTypeHuman,
+	}
+	if err := database.DB.Create(&person).Error; err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			response.BadRequest(c, fmt.Sprintf("User name '%s' already exists", req.Name))
 			return
@@ -248,7 +263,12 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
-	response.Success(c, schema.NewUserProfileResponse(user))
+	response.Success(c, gin.H{
+		"id":   person.ID,
+		"name": person.Name,
+		"bio":  person.Bio,
+		"type": person.Type,
+	})
 }
 
 func (h *Handler) CreateAgent(c *gin.Context) {
@@ -257,22 +277,12 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	kbIDsJSON := "[]"
-	if len(req.KnowledgeBaseIDs) > 0 {
-		data, _ := json.Marshal(req.KnowledgeBaseIDs)
-		kbIDsJSON = string(data)
-	}
-	entity := model.Agent{
-		Name:              req.Name,
-		CharacterSettings: req.CharacterSettings,
-		LLMConfigID:       req.LLMConfigID,
-		Description:       req.Description,
-		Avatar:            req.Avatar,
-		KnowledgeBaseIDs:  kbIDsJSON,
-	}
-	if err := database.DB.Select(
-		"Name", "CharacterSettings", "LLMConfigID", "Description", "Avatar", "KnowledgeBaseIDs",
-	).Create(&entity).Error; err != nil {
+
+	entity, person, err := service.CreateAgentWithPerson(
+		req.Name, req.Description, req.CharacterSettings,
+		req.LLMConfigID, req.Avatar, req.KnowledgeBaseIDs,
+	)
+	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			response.BadRequest(c, fmt.Sprintf("Agent name '%s' already exists", req.Name))
 			return
@@ -284,7 +294,7 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 	// Register and start the agent's runtime so it can receive events immediately.
 	runtime.StartRuntime(entity.ID)
 
-	response.Success(c, schema.NewAgentResponse(&entity))
+	response.Success(c, schema.NewAgentResponse(entity, person))
 }
 
 func (h *Handler) ListAgents(c *gin.Context) {
@@ -294,7 +304,9 @@ func (h *Handler) ListAgents(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
-	response.Success(c, schema.NewAgentResponseList(entities))
+	// Load all associated persons for names and bios
+	personsMap := loadAgentPersons(entities)
+	response.Success(c, schema.NewAgentResponseList(entities, personsMap))
 }
 
 func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
@@ -317,7 +329,7 @@ func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 
 	var allSessions []model.Session
 	if err := database.DB.Where("agent_id IN ?", agentIDs).Order("updated_at DESC").Find(&allSessions).Error; err != nil {
-		applogger.Warn("failed to load sessions for agent list, returning without sessions", "error", err)
+		applogger.Error("failed to load sessions for agent list, returning without sessions", "error", err)
 	}
 
 	sessionsByAgent := make(map[int64][]model.Session)
@@ -325,14 +337,16 @@ func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 		sessionsByAgent[s.AgentID] = append(sessionsByAgent[s.AgentID], s)
 	}
 
+	personsMap := loadAgentPersons(agents)
+
 	result := make([]schema.AgentWithSessions, 0, len(agents))
-	for _, agent := range agents {
-		sessions := sessionsByAgent[agent.ID]
+	for i := range agents {
+		sessions := sessionsByAgent[agents[i].ID]
 		if sessions == nil {
 			sessions = []model.Session{}
 		}
 		result = append(result, schema.AgentWithSessions{
-			AgentResponse: *schema.NewAgentResponse(&agent),
+			AgentResponse: *schema.NewAgentResponse(&agents[i], personsMap[agents[i].PersonID]),
 			Sessions:      schema.NewSessionBriefList(sessions),
 		})
 	}
@@ -341,12 +355,12 @@ func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 
 func (h *Handler) GetAgent(c *gin.Context) {
 	id := getPathID(c)
-	entity, err := h.crudAgent.Get(id)
+	agent, person, err := service.GetAgentWithPerson(id)
 	if err != nil {
 		handleNotFound(c, "Agent", id)
 		return
 	}
-	response.Success(c, schema.NewAgentResponse(entity))
+	response.Success(c, schema.NewAgentResponse(agent, person))
 }
 
 func (h *Handler) UpdateAgent(c *gin.Context) {
@@ -361,14 +375,52 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	updates := req.BuildUpdates()
-	if len(updates) > 0 {
-		h.crudAgent.Update(entity, updates)
-		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.Warn("failed to refresh agent after update", "id", id, "error", err)
+
+	// Wrap agent + person updates in a transaction
+	err = database.DB.Transaction(func(tx *gorm.DB) error {
+		// Update agent-level fields
+		updates := req.BuildUpdates()
+		if len(updates) > 0 {
+			if err := tx.Model(entity).Updates(updates).Error; err != nil {
+				return err
+			}
 		}
+
+		// Update person-level fields (name and bio) if provided
+		if req.Name != nil || req.Bio != nil {
+			person, err := service.GetPerson(entity.PersonID)
+			if err != nil {
+				return err
+			}
+			personUpdates := make(map[string]interface{})
+			if req.Name != nil {
+				personUpdates["name"] = *req.Name
+			}
+			if req.Bio != nil {
+				personUpdates["bio"] = *req.Bio
+			}
+			if len(personUpdates) > 0 {
+				if err := tx.Model(person).Updates(personUpdates).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		applogger.Error("UpdateAgent: transaction failed", "id", id, "error", err)
+		response.InternalError(c, "Failed to update agent")
+		return
 	}
-	response.Success(c, schema.NewAgentResponse(entity))
+
+	// Reload for response
+	agent, person, err := service.GetAgentWithPerson(id)
+	if err != nil {
+		applogger.Error("UpdateAgent: failed to reload agent with person", "id", id, "error", err)
+		response.Success(c, schema.NewAgentResponse(entity, nil))
+		return
+	}
+	response.Success(c, schema.NewAgentResponse(agent, person))
 }
 
 func (h *Handler) DeleteAgent(c *gin.Context) {
@@ -384,69 +436,19 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		osRemoveIfExists(avatarPath)
 	}
 
-	var sessionIDs []int64
-	if err := database.DB.Model(&model.Session{}).Where("agent_id = ?", id).Pluck("id", &sessionIDs).Error; err != nil {
-		applogger.Warn("failed to pluck session IDs for agent deletion", "agent_id", id, "error", err)
+	personID, sessionIDs, err := service.DeleteAgentCascade(id)
+	if err != nil {
+		applogger.Error("DeleteAgent: cascade delete failed", "agent_id", id, "error", err)
+		response.InternalError(c, "Failed to delete agent")
+		return
 	}
 
-	if len(sessionIDs) > 0 {
-		// NOTE: This logic assumes 1v1 (one agent per session).
-		// In multi-agent/group chat, deleting one agent should NOT cascade delete the entire session.
-		// This will need to be revisited when group chat is implemented.
-
-		// Delete all agent-related resources in dependency order.
-		// Each delete is checked independently — one failure should not block the rest.
-		// 1. Works (may reference drafts)
-		// 2. Message drafts
-		// 3. Interactions
-		// 4. Agent narratives + session summaries
-		// 5. Participant sessions
-		// 6. Messages
-		// 7. Sessions
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Work{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete works", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.MessageDraft{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete message drafts", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Interaction{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete interactions", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.AgentNarrative{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete agent narratives", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Summary{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete session summaries", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.ParticipantSession{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete participant sessions", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.Message{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete messages", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("agent_id = ?", id).Delete(&model.Session{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete sessions", "agent_id", id, "error", err)
-		}
-		if err := database.DB.Where("session_id IN ?", sessionIDs).Delete(&model.ScheduledEvent{}).Error; err != nil {
-			applogger.Error("DeleteAgent: failed to delete scheduled events", "agent_id", id, "error", err)
-		}
-
-		for _, sid := range sessionIDs {
-			// id is the agentID; sid is each session owned by this agent.
-			workspace.RemoveWorkspace(id, sid)
-			workspace.RemoveAac(id, sid)
-		}
+	// Filesystem cleanup (not transactional)
+	for _, sid := range sessionIDs {
+		workspace.RemoveWorkspace(personID, sid)
+		workspace.RemoveAac(personID, sid)
 	}
 
-	// Delete agent-level memory and cognition (not session-scoped)
-	if err := database.DB.Where("agent_id = ?", id).Delete(&model.AgentObservation{}).Error; err != nil {
-		applogger.Error("DeleteAgent: failed to delete agent observations", "agent_id", id, "error", err)
-	}
-	if err := database.DB.Where("agent_id = ?", id).Delete(&model.EntityProfile{}).Error; err != nil {
-		applogger.Error("DeleteAgent: failed to delete entity profiles", "agent_id", id, "error", err)
-	}
-
-	h.crudAgent.Delete(id)
 	response.SuccessMessage(c, "Agent deleted successfully", nil)
 }
 
@@ -507,7 +509,7 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 	if len(updates) > 0 {
 		h.crudSession.Update(entity, updates)
 		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.Warn("failed to refresh session after update", "id", id, "error", err)
+			applogger.Error("failed to refresh session after update", "id", id, "error", err)
 		}
 	}
 	response.Success(c, schema.NewSessionResponse(entity))
@@ -515,55 +517,30 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 
 func (h *Handler) DeleteSession(c *gin.Context) {
 	id := getPathID(c)
-	// Capture the session so we can read its AgentID for workspace cleanup.
-	sess, err := h.crudSession.Get(id)
+
+	personID, _, err := service.DeleteSessionCascade(id)
 	if err != nil {
-		handleNotFound(c, "Session", id)
+		applogger.Error("DeleteSession: cascade delete failed", "session_id", id, "error", err)
+		response.InternalError(c, "Failed to delete session")
 		return
 	}
 
-	// Delete all session-related resources in dependency order:
-	// 1. Works (may reference drafts)
-	// 2. Message drafts
-	// 3. Interactions
-	// 4. Agent narratives + session summaries
-	// 5. Participant sessions
-	// 6. Messages
-	// 7. Session itself
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.Work{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete works", "session_id", id, "error", err)
+	// Filesystem cleanup
+	if personID > 0 {
+		workspace.RemoveWorkspace(personID, id)
+		workspace.RemoveAac(personID, id)
 	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.MessageDraft{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete message drafts", "session_id", id, "error", err)
-	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.Interaction{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete interactions", "session_id", id, "error", err)
-	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.AgentNarrative{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete agent narratives", "session_id", id, "error", err)
-	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.Summary{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete session summaries", "session_id", id, "error", err)
-	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.ParticipantSession{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete participant sessions", "session_id", id, "error", err)
-	}
-	if err := database.DB.Where("session_id = ?", id).Delete(&model.Message{}).Error; err != nil {
-		applogger.Error("DeleteSession: failed to delete messages", "session_id", id, "error", err)
-	}
-	h.crudSession.Delete(id)
-	workspace.RemoveWorkspace(sess.AgentID, id)
-	workspace.RemoveAac(sess.AgentID, id)
 	response.SuccessMessage(c, "Session deleted successfully", nil)
 }
 
-// receivedFileEntry represents a file in a delivery directory.
+// receivedFileEntry represents a file or directory in a delivery tree.
 type receivedFileEntry struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	LocalPath string `json:"local_path"`
-	Size      int64  `json:"size"`
-	IsDir     bool   `json:"is_dir"`
+	Name      string              `json:"name"`
+	Path      string              `json:"path"`
+	LocalPath string              `json:"local_path,omitempty"`
+	Size      int64               `json:"size"`
+	IsDir     bool                `json:"is_dir"`
+	Children  []receivedFileEntry `json:"children"`
 }
 
 // receivedDeliveryEntry represents one delivery directory with its file tree.
@@ -583,8 +560,14 @@ func (h *Handler) GetReceivedDeliveries(c *gin.Context) {
 		return
 	}
 
-	// User's agent_id is always 0
-	receivedDir := workspace.GetReceivedDir(0, sessionID)
+	// Get current user's PersonID for received directory
+	userPerson, err := service.GetCurrentUserPerson()
+	if err != nil {
+		response.BadRequest(c, "No user profile found")
+		return
+	}
+
+	receivedDir := workspace.GetReceivedDir(userPerson.ID, sessionID)
 
 	var deliveries []receivedDeliveryEntry
 
@@ -596,7 +579,7 @@ func (h *Handler) GetReceivedDeliveries(c *gin.Context) {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "delivery_") {
+		if !entry.IsDir() {
 			continue
 		}
 
@@ -612,27 +595,78 @@ func (h *Handler) GetReceivedDeliveries(c *gin.Context) {
 	response.Success(c, deliveries)
 }
 
-// walkDeliveryFiles recursively walks a delivery directory and returns a flat list of file entries.
+// walkDeliveryFiles builds a directory tree from the delivery directory.
 func walkDeliveryFiles(dirPath string) []receivedFileEntry {
-	var files []receivedFileEntry
+	var root []receivedFileEntry
 
 	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return nil
+		}
+		// Skip the root dir itself
+		if path == dirPath {
 			return nil
 		}
 
 		relPath, _ := filepath.Rel(dirPath, path)
-		files = append(files, receivedFileEntry{
-			Name:      info.Name(),
-			Path:      filepath.ToSlash(relPath),
-			LocalPath: path,
-			Size:      info.Size(),
-			IsDir:     false,
-		})
+		parts := strings.Split(filepath.ToSlash(relPath), "/")
+		node := receivedFileEntry{
+			Name:  info.Name(),
+			Path:  filepath.ToSlash(relPath),
+			IsDir: info.IsDir(),
+		}
+		if info.IsDir() {
+			node.Children = []receivedFileEntry{}
+		} else {
+			node.LocalPath = path
+			node.Size = info.Size()
+		}
+
+		// Find or create parent directory nodes along the path
+		current := &root
+		for i := 0; i < len(parts)-1; i++ {
+			dirName := parts[i]
+			// Find existing dir or create one
+			found := false
+			for j := range *current {
+				if (*current)[j].Name == dirName && (*current)[j].IsDir {
+					current = &(*current)[j].Children
+					found = true
+					break
+				}
+			}
+			if !found {
+				dirPath := strings.Join(parts[:i+1], "/")
+				newDir := receivedFileEntry{
+					Name:     dirName,
+					Path:     dirPath,
+					IsDir:    true,
+					Children: []receivedFileEntry{},
+				}
+				*current = append(*current, newDir)
+				current = &(*current)[len(*current)-1].Children
+			}
+		}
+
+		// Add the node itself (file or leaf directory)
+		if !info.IsDir() || len(parts) > 0 {
+			// Only append if not already added as intermediate dir
+			alreadyAdded := false
+			for _, c := range *current {
+				if c.Name == node.Name && c.IsDir == node.IsDir {
+					alreadyAdded = true
+					break
+				}
+			}
+			if !alreadyAdded {
+				*current = append(*current, node)
+			}
+		}
+
 		return nil
 	})
 
-	return files
+	return root
 }
 
 // GetReceivedFile returns the content of a file in the user's received/ directory.
@@ -653,13 +687,21 @@ func (h *Handler) GetReceivedFile(c *gin.Context) {
 		return
 	}
 
-	// Security: only allow alphanumeric + underscore for delivery name
-	if !isSafeDeliveryName(delivery) {
-		response.BadRequest(c, "invalid delivery name")
+	userPerson, err := service.GetCurrentUserPerson()
+	if err != nil {
+		response.BadRequest(c, "No user profile found")
 		return
 	}
 
-	receivedDir := workspace.GetReceivedDir(0, sessionID)
+	// Security: validate delivery name contains only safe characters
+	for _, ch := range delivery {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+			response.BadRequest(c, "invalid delivery name")
+			return
+		}
+	}
+
+	receivedDir := workspace.GetReceivedDir(userPerson.ID, sessionID)
 	fullPath := filepath.Join(receivedDir, delivery, filepath.Clean(filePath))
 
 	// Security: ensure the resolved path is within the received/ directory
@@ -683,24 +725,6 @@ func (h *Handler) GetReceivedFile(c *gin.Context) {
 	c.Data(200, "application/octet-stream", data)
 }
 
-// isSafeDeliveryName checks that the delivery directory name is safe
-// (matches pattern delivery_N where N is a positive integer).
-func isSafeDeliveryName(name string) bool {
-	if !strings.HasPrefix(name, "delivery_") {
-		return false
-	}
-	numStr := strings.TrimPrefix(name, "delivery_")
-	if numStr == "" {
-		return false
-	}
-	for _, c := range numStr {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 func (h *Handler) CreateMessage(c *gin.Context) {
 	sessionID := getPathID(c)
 	var session model.Session
@@ -713,9 +737,15 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		applogger.Error("CreateMessage: failed to get current user person ID", "error", err)
+		response.InternalError(c, "Failed to identify current user")
+		return
+	}
 	entity := model.Message{
 		SessionID: sessionID,
-		Role:      model.MessageRoleUser,
+		PersonID:  userPersonID,
 		Content:   req.Content,
 		Status:    model.MessageStatusCompleted,
 	}
@@ -763,4 +793,19 @@ func (h *Handler) UpdateSearchConfig(c *gin.Context) {
 	}
 	config := service.UpdateSearchConfig(req.Provider, req.APIKey, req.Description, req.IsActive)
 	response.Success(c, schema.NewSearchConfigResponse(config))
+}
+
+// GetCurrentPerson returns the current user's person record.
+// GET /api/persons/me
+func (h *Handler) GetCurrentPerson(c *gin.Context) {
+	person, err := service.GetCurrentUserPerson()
+	if err != nil {
+		response.NotFound(c, "No user person record found. Please create a user profile first.")
+		return
+	}
+	response.Success(c, gin.H{
+		"id":   person.ID,
+		"name": person.Name,
+		"type": person.Type,
+	})
 }

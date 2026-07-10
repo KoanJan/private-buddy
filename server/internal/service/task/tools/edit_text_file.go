@@ -26,13 +26,13 @@ import (
 //   - If old_str matches multiple locations and replace_all is false, returns an error
 //   - If replace_all is true, replaces all occurrences
 type EditTextFileTool struct {
-	agentID   int64
+	personID  int64
 	sessionID int64
 }
 
-// NewEditTextFileTool creates an EditTextFileTool bound to the given agent and session.
-func NewEditTextFileTool(agentID, sessionID int64) *EditTextFileTool {
-	return &EditTextFileTool{agentID: agentID, sessionID: sessionID}
+// NewEditTextFileTool creates an EditTextFileTool bound to the given person and session.
+func NewEditTextFileTool(personID, sessionID int64) *EditTextFileTool {
+	return &EditTextFileTool{personID: personID, sessionID: sessionID}
 }
 
 // ToolNameEditTextFile is the type-safe name constant for EditTextFileTool.
@@ -104,7 +104,7 @@ func (e *EditTextFileTool) Execute(args map[string]interface{}) (string, error) 
 		replaceAll = v
 	}
 
-	absPath, err := resolvePath(filePath, e.agentID, e.sessionID)
+	absPath, err := resolvePath(filePath, e.personID, e.sessionID)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}

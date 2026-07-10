@@ -114,7 +114,7 @@ func registerAlarmGoroutine(event *model.ScheduledEvent) {
 		// cancelled in the database while we were waiting.
 		var currentEvent model.ScheduledEvent
 		if err := database.DB.First(&currentEvent, event.ID).Error; err != nil {
-			applogger.Warn("Scheduled event not found, skipping",
+			applogger.Error("Scheduled event not found, skipping",
 				"event_id", event.ID, "error", err)
 			return
 		}

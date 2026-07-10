@@ -21,14 +21,14 @@ import (
 //   - Binary files are rejected (extension blacklist + null-byte sniffing)
 //   - Files larger than 10MB are rejected
 type ReadTextFileTool struct {
-	agentID   int64
+	personID  int64
 	sessionID int64
 }
 
-// NewReadTextFileTool creates a ReadTextFileTool bound to the given agent and session.
-// The agentID and sessionID are used to resolve the session workspace for path validation.
-func NewReadTextFileTool(agentID, sessionID int64) *ReadTextFileTool {
-	return &ReadTextFileTool{agentID: agentID, sessionID: sessionID}
+// NewReadTextFileTool creates a ReadTextFileTool bound to the given person and session.
+// The personID and sessionID are used to resolve the session workspace for path validation.
+func NewReadTextFileTool(personID, sessionID int64) *ReadTextFileTool {
+	return &ReadTextFileTool{personID: personID, sessionID: sessionID}
 }
 
 // readResultDefaults defines pagination bounds for read_text_file.
@@ -107,7 +107,7 @@ func (r *ReadTextFileTool) Execute(args map[string]interface{}) (string, error) 
 		limit = maxReadLimit
 	}
 
-	absPath, err := resolvePath(filePath, r.agentID, r.sessionID)
+	absPath, err := resolvePath(filePath, r.personID, r.sessionID)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}

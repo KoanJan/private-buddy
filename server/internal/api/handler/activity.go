@@ -52,13 +52,25 @@ func (h *Handler) GetSessionActivities(c *gin.Context) {
 		return
 	}
 
-	// Get the agent participant for this session
-	var agentID int64
+	// Get the agent participant for this session by joining persons table (type=1=AI)
+	var agentPersonID int64
 	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_type = ?", sessionID, model.ParticipantTypeAgent).
-		Pluck("participant_id", &agentID).Error; err != nil {
+		Joins("JOIN persons ON persons.id = participant_sessions.participant_id AND persons.type = ?", model.PersonTypeAI).
+		Where("participant_sessions.session_id = ?", sessionID).
+		Pluck("participant_sessions.participant_id", &agentPersonID).Error; err != nil {
 		applogger.Error("GetSessionActivities: failed to query agent participant",
 			"session_id", sessionID, "error", err)
+		response.InternalError(c, "Failed to query activities")
+		return
+	}
+
+	// Find the actual agent ID from the person_id
+	var agentID int64
+	if err := database.DB.Model(&model.Agent{}).
+		Where("person_id = ?", agentPersonID).
+		Pluck("id", &agentID).Error; err != nil {
+		applogger.Error("GetSessionActivities: failed to find agent for person",
+			"person_id", agentPersonID, "error", err)
 		response.InternalError(c, "Failed to query activities")
 		return
 	}

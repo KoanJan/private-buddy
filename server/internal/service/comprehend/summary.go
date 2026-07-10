@@ -144,7 +144,7 @@ func generateSummaryRange(ctx context.Context, sessionID int64, llmConfig *model
 		// Full summary: no baseline exists, summarize all messages 1..endSeq
 		messages := getMessagesByRange(sessionID, 1, endSeq)
 		if len(messages) == 0 {
-			applogger.Warn("No messages found for summary", "session_id", sessionID, "range", fmt.Sprintf("1-%d", endSeq))
+			applogger.Error("No messages found for summary", "session_id", sessionID, "range", fmt.Sprintf("1-%d", endSeq))
 			return nil
 		}
 		messagesText := formatMessagesForSummaryGeneric(messages)
@@ -153,12 +153,12 @@ func generateSummaryRange(ctx context.Context, sessionID int64, llmConfig *model
 		// Incremental summary: baseline = summary at (startSeq-1), recent = startSeq..endSeq
 		baseline := getSessionSummary(sessionID, startSeq-1)
 		if baseline == nil {
-			applogger.Warn("Baseline summary not found", "session_id", sessionID, "baseline_version", startSeq-1)
+			applogger.Error("Baseline summary not found", "session_id", sessionID, "baseline_version", startSeq-1)
 			return nil
 		}
 		messages := getMessagesByRange(sessionID, startSeq, endSeq)
 		if len(messages) == 0 {
-			applogger.Warn("No messages found for summary", "session_id", sessionID, "range", fmt.Sprintf("%d-%d", startSeq, endSeq))
+			applogger.Error("No messages found for summary", "session_id", sessionID, "range", fmt.Sprintf("%d-%d", startSeq, endSeq))
 			return nil
 		}
 		messagesText := formatMessagesForSummaryGeneric(messages)
@@ -240,7 +240,7 @@ func getMessagesByRange(sessionID int64, startSeq, endSeq int) []*model.Message 
 		Offset(startSeq - 1).
 		Limit(endSeq - startSeq + 1).
 		Find(&messages).Error; err != nil {
-		applogger.Warn("getMessagesByRange: failed to load messages", "session_id", sessionID, "error", err)
+		applogger.Error("getMessagesByRange: failed to load messages", "session_id", sessionID, "error", err)
 		return nil
 	}
 	return messages
@@ -251,11 +251,15 @@ func getMessagesByRange(sessionID int64, startSeq, endSeq int) []*model.Message 
 // userName is the actual name of the other party, agentName is the agent's own name.
 // Kept for backward compatibility with narrative generation which needs named roles.
 func formatMessagesForSummary(messages []model.Message, personName, agentName string) string {
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		applogger.Error("formatMessagesForSummary: failed to get current user person ID", "error", err)
+	}
 	personRole := personName
 	var formatted []string
 	for _, msg := range messages {
 		role := personRole
-		if msg.Role != model.MessageRoleUser {
+		if userPersonID != 0 && msg.PersonID != userPersonID {
 			role = agentName
 		}
 		formatted = append(formatted, fmt.Sprintf("%s: %s", role, msg.Content))
@@ -273,11 +277,15 @@ func formatMessagesForSummary(messages []model.Message, personName, agentName st
 // formatMessagesForSummaryGeneric formats messages using role-based labels
 // (User/Assistant) suitable for a session-level factual summary.
 func formatMessagesForSummaryGeneric(messages []*model.Message) string {
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		applogger.Error("formatMessagesForSummaryGeneric: failed to get current user person ID", "error", err)
+	}
 	userName := service.GetUserName()
 	var formatted []string
 	for _, msg := range messages {
 		role := userName
-		if msg.Role != model.MessageRoleUser {
+		if userPersonID != 0 && msg.PersonID != userPersonID {
 			role = "Assistant"
 		}
 		formatted = append(formatted, fmt.Sprintf("%s: %s", role, msg.Content))

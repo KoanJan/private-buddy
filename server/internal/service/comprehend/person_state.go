@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"private-buddy-server/internal/model"
+	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -105,11 +106,15 @@ func (ps *PersonState) ToNaturalLanguage(personName string) string {
 // formatRecentMessages formats recent messages into text for the inference prompt.
 // personName is the actual name of the other party, agentName is the agent's own name.
 func formatRecentMessages(recentMessages []model.Message, personName, agentName string) string {
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		applogger.Error("formatRecentMessages: failed to get current user person ID", "error", err)
+	}
 	personRole := personName
 	var lines []string
 	for _, msg := range recentMessages {
 		role := personRole
-		if msg.Role != model.MessageRoleUser {
+		if userPersonID != 0 && msg.PersonID != userPersonID {
 			role = agentName
 		}
 		lines = append(lines, fmt.Sprintf("%s: %s", role, msg.Content))

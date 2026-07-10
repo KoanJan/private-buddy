@@ -56,7 +56,11 @@ func (rm *runtimeManager) StartRuntime(agentID int64) {
 		return
 	}
 
-	rt := createAgentRuntime(agentID, rm.onStatusChange)
+	rt, err := createAgentRuntime(agentID, rm.onStatusChange)
+	if err != nil {
+		applogger.Error("StartRuntime: failed to create agent runtime", "agent_id", agentID, "error", err)
+		return
+	}
 	rm.wg.Add(1)
 	go func() {
 		defer rm.wg.Done()
@@ -108,7 +112,7 @@ func (rm *runtimeManager) Shutdown(timeout time.Duration) {
 	case <-done:
 		applogger.Info("All agent runtimes exited cleanly")
 	case <-time.After(timeout):
-		applogger.Warn("Agent runtimes shutdown timed out", "timeout", timeout)
+		applogger.Error("Agent runtimes shutdown timed out", "timeout", timeout)
 	}
 
 	// Phase 3: Safe to clean up channels.
@@ -169,7 +173,7 @@ func Start(
 	// but this global sweep covers the edge case where setStatus(working) was called
 	// and a crash occurred before the work record was persisted.
 	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("participant_type = ? AND status = ?", model.ParticipantTypeAgent, model.ParticipantStatusWorking).
+		Where("participant_id IN (SELECT id FROM persons WHERE type = ?) AND status = ?", model.PersonTypeAI, model.ParticipantStatusWorking).
 		Update("status", model.ParticipantStatusIdle).Error; err != nil {
 		applogger.Error("Failed to reset stale participant statuses on startup", "error", err)
 	}

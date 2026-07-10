@@ -241,7 +241,7 @@ func (p *pipeline) loadMessages() error {
 
 	p.sessionID = p.session.ID
 	if err := database.DB.Model(&model.Message{}).Where("session_id = ?", p.sessionID).Count(&p.messageCount).Error; err != nil {
-		applogger.Warn("failed to count messages for chat pipeline", "session_id", p.sessionID, "error", err)
+		applogger.Error("failed to count messages for chat pipeline", "session_id", p.sessionID, "error", err)
 	}
 	p.windowSize = config.Get().SummaryWindowSize
 	p.kbIDs = getKnowledgeBaseIDs(p.agent)
@@ -287,7 +287,7 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 	characterSettings := p.agent.CharacterSettings
 
 	entityProfileSection := chatcontext.FormatEntityProfileSection(
-		memory.LoadProfileForEntity(p.agent.ID, model.EntityTypeUser, 1),
+		memory.LoadProfileForEntity(p.agent.ID, model.EntityTypePerson, 1),
 		p.userName,
 	)
 
@@ -395,7 +395,7 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	}
 
 	entityProfileSection := chatcontext.FormatEntityProfileSection(
-		memory.LoadProfileForEntity(p.agent.ID, model.EntityTypeUser, 1),
+		memory.LoadProfileForEntity(p.agent.ID, model.EntityTypePerson, 1),
 		p.userName,
 	)
 
@@ -481,7 +481,7 @@ func getKnowledgeBaseIDs(agent *model.Agent) []int64 {
 		if err := database.DB.First(&kb, id).Error; err == nil {
 			validIDs = append(validIDs, id)
 		} else {
-			applogger.Warn("KB ID not found in database", "agent_id", agent.ID, "kb_id", id, "error", err)
+			applogger.Error("KB ID not found in database", "agent_id", agent.ID, "kb_id", id, "error", err)
 		}
 	}
 

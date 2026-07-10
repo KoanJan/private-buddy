@@ -4,13 +4,12 @@ import "time"
 
 // Entity type constants for entity_profiles.entity_type.
 const (
-	EntityTypeUser    = 1 // Profile about a user
-	EntityTypeAgent   = 2 // Profile about another agent (or self)
-	EntityTypeSession = 3 // Profile about a session
+	EntityTypePerson  = 1 // Profile about a person (AI or human)
+	EntityTypeSession = 2 // Profile about a session
 )
 
 // EntityProfile represents a directional narrative that one agent has formed
-// about a specific entity (user, agent, or session).
+// about a specific entity (person or session).
 //
 // Unlike observations (which are mechanical event recordings), EntityProfile
 // is an LLM-generated reflective narrative: "What do I think about X?"

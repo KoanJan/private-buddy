@@ -58,9 +58,9 @@ var binaryFileExtensions = map[string]bool{
 // Symlinks are resolved and their targets must be within the session workspace.
 //
 // Returns the resolved absolute path, or an error if the path violates security constraints.
-func resolvePath(filePath string, agentID, sessionID int64) (string, error) {
-	sessionRoot := workspace.GetWorkspacePath(agentID, sessionID)
-	outputDir := workspace.GetOutputDir(agentID, sessionID)
+func resolvePath(filePath string, personID, sessionID int64) (string, error) {
+	sessionRoot := workspace.GetWorkspacePath(personID, sessionID)
+	outputDir := workspace.GetOutputDir(personID, sessionID)
 
 	var absPath string
 	if filepath.IsAbs(filePath) {

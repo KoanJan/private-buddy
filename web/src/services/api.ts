@@ -172,6 +172,10 @@ export const userProfileApi = {
   upsert: (data: { name: string; bio?: string }) => api.put<UserProfile>('/user-profile', data),
 };
 
+export const personApi = {
+  me: () => api.get<{ id: number; name: string; type: number }>('/persons/me'),
+};
+
 export const uploadApi = {
   uploadAvatar: (file: File) => {
     const formData = new FormData();
