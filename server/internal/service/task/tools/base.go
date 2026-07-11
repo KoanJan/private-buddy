@@ -35,20 +35,22 @@ const (
 	ToolNameDeliverTo                          // deliver_to
 	ToolNameScanMyExperience                   // scan_my_experience
 	ToolNameRecallMyExperience                 // recall_my_experience
+	ToolNameSearchChatHistories                // search_chat_histories
 )
 
 // nameStrings maps ToolName values to their string representation for LLM function calling.
 var nameStrings = map[ToolName]string{
-	ToolNameBash:               "bash",
-	ToolNameReadTextFile:       "read_text_file",
-	ToolNameWriteTextFile:      "write_text_file",
-	ToolNameEditTextFile:       "edit_text_file",
-	ToolNameWriteNotes:         "write_notes",
-	ToolNameWakeMeWhen:         "wake_me_when",
-	ToolNameWebSearch:          "web_search",
-	ToolNameDeliverTo:          "deliver_to",
-	ToolNameScanMyExperience:   "scan_my_experience",
-	ToolNameRecallMyExperience: "recall_my_experience",
+	ToolNameBash:                "bash",
+	ToolNameReadTextFile:        "read_text_file",
+	ToolNameWriteTextFile:       "write_text_file",
+	ToolNameEditTextFile:        "edit_text_file",
+	ToolNameWriteNotes:          "write_notes",
+	ToolNameWakeMeWhen:          "wake_me_when",
+	ToolNameWebSearch:           "web_search",
+	ToolNameDeliverTo:           "deliver_to",
+	ToolNameScanMyExperience:    "scan_my_experience",
+	ToolNameRecallMyExperience:  "recall_my_experience",
+	ToolNameSearchChatHistories: "search_chat_histories",
 }
 
 // String returns the string representation of the ToolName for use in LLM function definitions.

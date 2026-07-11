@@ -22,7 +22,11 @@
     "hoursAgo": "{{n}}小时前",
     "daysAgo": "{{n}}天前",
     "monthsAgo": "{{n}}个月前",
-    "yearsAgo": "{{n}}年前"
+    "yearsAgo": "{{n}}年前",
+    "copy": "复制",
+    "copied": "已复制",
+    "expand": "展开",
+    "collapse": "收起"
   },
   "viewTabs": {
     "chat": "聊天",
@@ -265,7 +269,8 @@
       "read_text_file": "查看文件",
       "write_text_file": "写入文件",
       "edit_text_file": "编辑文件",
-      "deliver_to": "交付文件"
+      "deliver_to": "交付文件",
+      "search_chat_histories": "搜索聊天记录"
     }
   },
   "publicExperience": {

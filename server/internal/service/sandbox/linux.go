@@ -75,12 +75,13 @@ func BwrapAvailable() (bool, error) {
 
 // runLinux executes the command inside a bubblewrap sandbox.
 //
-// The sandbox uses user namespaces + mount namespaces for isolation:
-//   - /usr is mounted read-only
-//   - FHS symlinks (/bin, /lib, etc.) are detected and recreated
-//   - /etc essential files are bound read-only
-//   - Workspace is bound read-write
-//   - /tmp, /var/tmp, /dev/shm are tmpfs
+// Design: allow-default — entire root filesystem is mounted read-only,
+// workspace is read-write, network is shared. Simpler and more robust than
+// per-path binding (no need to enumerate /etc files or detect FHS symlinks).
+//
+//   - Root filesystem: read-only bind
+//   - Workspace: read-write bind
+//   - /tmp, /var/tmp, /dev/shm: tmpfs (writable, isolated)
 //   - Process isolation: new session, PID namespace, IPC namespace, drop all caps
 //   - Network: shared with host
 //
@@ -106,63 +107,8 @@ func runLinux(workspace string, cmd []string) (*exec.Cmd, bool, error) {
 
 	var args []string
 
-	// --- Read-only mount /usr ---
-	args = append(args, "--ro-bind", "/usr", "/usr")
-
-	// --- Detect merged-usr vs traditional FHS ---
-	// merged-usr distributions (modern Debian/Ubuntu/Arch) have /bin, /lib,
-	// /lib64 as symlinks to /usr/... — must use --symlink, not --ro-bind.
-	fhsPaths := []struct {
-		path   string
-		target string // Expected symlink target (relative to /)
-	}{
-		{"/bin", "usr/bin"},
-		{"/lib", "usr/lib"},
-		{"/lib64", "usr/lib64"},
-		{"/lib32", "usr/lib32"},
-		{"/libx32", "usr/libx32"},
-	}
-	for _, p := range fhsPaths {
-		if target, err := os.Readlink(p.path); err == nil {
-			// Is a symlink: if merged-usr style, recreate with --symlink
-			if target == p.target || target == "/"+p.target {
-				args = append(args, "--symlink", p.target, p.path)
-			} else {
-				// Non-standard symlink: bind if exists
-				if _, statErr := os.Stat(p.path); statErr == nil {
-					args = append(args, "--ro-bind", p.path, p.path)
-				} else if !os.IsNotExist(statErr) {
-					applogger.Error("sandbox: stat %s failed: %v (skipped)", p.path, statErr)
-				}
-			}
-		} else if _, statErr := os.Stat(p.path); statErr == nil {
-			// Real directory: read-only bind
-			args = append(args, "--ro-bind", p.path, p.path)
-		} else if !os.IsNotExist(statErr) {
-			applogger.Error("sandbox: stat %s failed: %v (skipped)", p.path, statErr)
-		}
-	}
-
-	// --- System config files (bind if they exist) ---
-	for _, p := range []string{
-		"/etc/alternatives",
-		"/etc/ssl",
-		"/etc/ca-certificates",
-		"/etc/pki",
-		"/etc/resolv.conf",
-		"/etc/hosts",
-		"/etc/hostname",
-		"/etc/passwd",
-		"/etc/group",
-		"/etc/nsswitch.conf",
-		"/etc/localtime",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			args = append(args, "--ro-bind", p, p)
-		} else if !os.IsNotExist(err) {
-			applogger.Error("sandbox: stat %s failed: %v (skipped)", p, err)
-		}
-	}
+	// --- Read-only root filesystem (allow-default for reads) ---
+	args = append(args, "--ro-bind", "/", "/")
 
 	// --- Read-write workspace ---
 	args = append(args, "--bind", workspace, workspace)
@@ -170,14 +116,14 @@ func runLinux(workspace string, cmd []string) (*exec.Cmd, bool, error) {
 	// --- Basic devices and proc ---
 	args = append(args, "--dev", "/dev", "--proc", "/proc")
 
-	// --- Temporary filesystems (after --dev to override /dev/shm) ---
+	// --- Temporary filesystems (writable, isolated from host) ---
 	args = append(args,
 		"--tmpfs", "/tmp",
 		"--tmpfs", "/var/tmp",
 		"--tmpfs", "/dev/shm",
 	)
 
-	// --- Network ---
+	// --- Network: shared with host ---
 	args = append(args, "--share-net")
 
 	// --- Process isolation ---

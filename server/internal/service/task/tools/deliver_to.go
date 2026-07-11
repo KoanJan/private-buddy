@@ -47,9 +47,8 @@ func (d *DeliverToTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
 		Name: d.Name().String(),
 		Description: "Deliver files from your output/ directory to another participant. " +
-			"The files will be copied to the recipient's received/ directory under a " +
-			"numbered subdirectory (e.g., delivery_1/). Use this when you have completed " +
-			"work products that someone else needs.",
+			"The files will be copied to the recipient's received/ directory. Use this " +
+			"when you have completed work products that someone else needs.",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -195,8 +194,8 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 
 	// Build result message
 	pathList := strings.Join(validatedPaths, ", ")
-	result := fmt.Sprintf("Delivered %d file(s) to user (delivery %s): %s",
-		len(validatedPaths), deliveryName, pathList)
+	result := fmt.Sprintf("Delivered %d file(s) to %s (delivery %s): %s",
+		len(validatedPaths), receiverName, deliveryName, pathList)
 
 	return result, nil
 }

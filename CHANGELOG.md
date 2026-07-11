@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.30] - 2026-07-12
+
+### Added
+- **Task Metadata**: structured metadata (source type, session info) injected into task system prompt, enabling agents to know what triggered their work and query relevant chat histories
+- **Search Chat Histories Tool**: new `search_chat_histories` tool for task agents to query chat records by keyword, with results grouped by session
+- **Chat Message Copy & Collapse**: message bubbles now include a copy button and auto-collapse for long messages with gradient mask and expand toggle
+
+### Changed
+- **Delivery Instructions**: task completion prompt no longer lists file paths; agents direct users to the Received tab since `deliver_to` handles delivery
+- **Task Notes On Stop**: notes now written on task stop (not just success), ensuring failure reasons are captured
+- **Activity Icons**: bash tool display changed from wrench emoji to `>_` text; tool icons grouped by category
+- **Tab Switch Scroll**: switching back to Chat tab now auto-scrolls to latest message
+- **Sandbox Policy**: both macOS Seatbelt and Linux bwrap sandboxes changed from deny-default to allow-default; root filesystem mounted read-only with workspace as the only writable area
+
+### Fixed
+- **Reflection Notes Error**: reflection now checks interaction records before reading notes.md; sessions without task interactions are skipped with INFO log, while read failures for sessions with interactions are logged as ERROR
+- **Sandbox DNS**: macOS sandbox blocked mDNSResponder mach-lookup, causing DNS resolution failure inside sandboxed processes
+
 ## [0.0.29] - 2026-07-10
 
 ### Added

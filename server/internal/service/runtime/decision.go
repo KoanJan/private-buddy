@@ -11,19 +11,23 @@ import (
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/task"
 
 	applogger "private-buddy-server/internal/logger"
 )
 
 // WorkPlan describes a single unit of work to be created by the runtime.
 // Decide produces one or more WorkPlans, each carrying the execution intent
-// (Guidance) so the Work knows what to do without re-interpreting the event.
+// (Guidance) and the full contextual background (Background) so the Work
+// knows what to do and why without re-interpreting the event.
 //
 // This design ensures the cognitive order is preserved:
 // Comprehend (understand) → Decide (judge + plan) → Work (execute the plan).
 type WorkPlan struct {
-	Type     model.WorkType `json:"type" jsonschema:"description=Work type: 1=chat for direct reply, 2=task for multi-step execution using tools,enum=1,enum=2,required"`
-	Guidance string         `json:"guidance" jsonschema:"description=Your internal intention, written in first-person as your own thought: what you plan to say (chat) or what you plan to execute (task). Write as if you are thinking to yourself.,required"`
+	Type       model.WorkType `json:"type" jsonschema:"description=Work type: 1=chat for direct reply, 2=task for multi-step execution using tools,enum=1,enum=2,required"`
+	Background string         `json:"background" jsonschema:"description=Full context for executing this plan. You will ONLY see this text during execution — include everything you need to remember: (1) what happened to trigger this work, (2) who else is involved and their names verbatim, (3) key takeaways from the comprehension analysis (inferred intent, situation). Write in natural language.,required"`
+	Guidance   string         `json:"guidance" jsonschema:"description=Your internal intention, written in first-person as your own thought: what you plan to say (chat) or what you plan to execute (task). Write as if you are thinking to yourself.,required"`
+	Metadata   *task.Metadata `json:"-"` // System-generated traceability info, not written by LLM
 }
 
 // WorkGuidance describes a directive to be sent to an existing active work.
@@ -97,7 +101,9 @@ Event: %s
 
 Action types (use the integer value for the "type" field):
 1. 0 (create) — Create new work plan(s). Use when the event is a new request or topic.
-   - MUST include a "work_plan" object with "type" and "guidance" fields.
+   - MUST include a "work_plan" object with "type", "background", and "guidance" fields.
+   - background: Full context you will need during execution. Include: what triggered this, who else is involved (use their exact names), and key points from the comprehension analysis if available. This text will be shown to you when you execute the plan.
+   - guidance: Your internal intention — what you plan to do, written in first-person.
    - Work type 1 (chat): reply to the person directly. Use for simple Q&A, greetings, casual chat.
    - Work type 2 (task): execute a multi-step task using tools, web searches, or file operations.
    - Both type 1 + type 2: acknowledge (chat) then execute (task). These run in parallel with no ordering guarantee.
@@ -116,7 +122,7 @@ Important: "Active works" only includes works currently running. If the event re
 If no action is needed, return an empty actions list.
 
 You can return multiple actions. Examples (note: IDs in examples are placeholders; always use the actual work IDs from "Active works" above):
-- Cancel an old task and create a new one: [{"type":2, "target_work_id":<ID from Active works>, "guidance":"I should save my progress and stop", "reason":"They said 'stop searching' — they want a direct answer instead"}, {"type":0, "work_plan":{"type":1, "guidance":"I stopped searching and now I should give them a direct answer about X..."}}]
+- Cancel an old task and create a new one: [{"type":2, "target_work_id":<ID from Active works>, "guidance":"I should save my progress and stop", "reason":"They said 'stop searching' — they want a direct answer instead"}, {"type":0, "work_plan":{"type":1, "background":"Alice just told me to stop searching and give a direct answer. She originally asked about X.","guidance":"I stopped searching and now I should give them a direct answer about X..."}}]
 - Route a follow-up to an existing work: [{"type":1, "target_work_id":<ID from Active works>, "guidance":"I should switch from Python to Go", "reason":"They said 'use Go instead' — they want the same task done in a different language"}]
 
 Decision rules (apply in order):
@@ -125,7 +131,7 @@ Decision rules (apply in order):
 3. If the comprehension says "needs world interaction: false" and no active work is relevant, create a single chat work (type=0 with work_plan.type=1).
 4. When in doubt and no comprehension hint is available, prefer a single chat work.
 
-Write guidance, reason, and plan in the same language as the event content.`
+Write background, guidance, reason, and plan in the same language as the event content.`
 
 // Decide determines how the agent should respond to an event.
 //

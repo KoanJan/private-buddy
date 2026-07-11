@@ -52,10 +52,26 @@ func CheckReflection(ctx context.Context, agentID int64) {
 	}
 
 	for _, sess := range sessions {
+		// Check whether this session has any task interactions.
+		// If not, notes.md is not expected to exist — skip without error.
+		hasInteractions, err := service.HasInteractions(sess.ID)
+		if err != nil {
+			applogger.Error("CheckReflection: failed to check interactions",
+				"session_id", sess.ID, "error", err)
+			continue
+		}
+		if !hasInteractions {
+			applogger.Info("CheckReflection: session has no task interactions, skipping",
+				"session_id", sess.ID)
+			continue
+		}
+
 		metaDir := workspace.GetMetaDir(sess.AgentID, sess.ID)
 		fpFile := filepath.Join(metaDir, "fingerprint.txt")
 		notesFile := filepath.Join(metaDir, "notes.md")
 
+		// Session has interactions, so notes.md should exist.
+		// Any read error here is a real problem — log as ERROR.
 		notesBytes, err := os.ReadFile(notesFile)
 		if err != nil {
 			applogger.Error("CheckReflection: failed to read notes file",

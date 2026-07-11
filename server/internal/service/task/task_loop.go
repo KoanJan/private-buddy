@@ -214,7 +214,7 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 		switch finishReason {
 		case "stop":
 			applogger.Info("TaskLoop completed", "iteration", iteration)
-			tl.updateNotesOnSuccess(ctx, iteration, content, messages)
+			tl.updateNotesOnStop(ctx, iteration, content, messages)
 			return &LoopResult{Status: "success", Result: content}
 
 		case "tool_calls":
@@ -504,10 +504,11 @@ After writing notes, you will regain access to all tools.`
 	return &LoopResult{Status: "success"}
 }
 
-// updateNotesOnSuccess updates notes after successful task completion.
-// This ensures notes reflect the final state for future modifications.
-// Uses the checkpoint client (lazy-initialized) with only write_notes tool available.
-func (tl *TaskLoop) updateNotesOnSuccess(ctx context.Context, iteration int, finalContent string, messages []llm.Message) {
+// updateNotesOnStop updates notes when the agent decides to end the task
+// (finish_reason=stop). The outcome may be completion, partial progress, or
+// abandonment — the function does not prejudge. Uses the checkpoint client
+// (lazy-initialized) with only write_notes tool available.
+func (tl *TaskLoop) updateNotesOnStop(ctx context.Context, iteration int, finalContent string, messages []llm.Message) {
 	if tl.writeNotesTool == nil {
 		return
 	}
@@ -516,17 +517,16 @@ func (tl *TaskLoop) updateNotesOnSuccess(ctx context.Context, iteration int, fin
 		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, llm.TemperatureCreative)
 	}
 
-	applogger.Info("Updating notes after successful completion", "iteration", iteration)
+	applogger.Info("Updating notes on task stop", "iteration", iteration)
 
-	successMsg := `[Task Completed - Update Your Notes]
-The task has been completed successfully.
+	endMsg := `[Task Ended - Update Your Notes]
+The task has ended. Record the final outcome in your notes.
 
-Please update your notes to reflect the final state.
-Use write_notes to APPEND a summary entry:
+Use write_notes to APPEND a summary entry reflecting what actually happened:
 
 {
   "entry_type": "progress",
-  "content": "Task completed. Summary of what was done...",
+  "content": "Summary of what was accomplished, or why the task could not proceed further...",
   "references": ["file1.py", "file2.json"]
 }
 
@@ -534,18 +534,34 @@ This will help you continue work if changes are requested later.`
 
 	messagesWithUpdate := append(messages, llm.Message{
 		Role:    "user",
-		Content: successMsg,
+		Content: endMsg,
+	})
+
+	tl.weakWriteInteraction(iteration, model.InteractionTypeRequest, map[string]interface{}{
+		"messages": messagesWithUpdate,
+		"is_final": true,
 	})
 
 	toolDefs := []llm.FunctionDefinition{tl.writeNotesTool.Schema()}
 	response, err := tl.checkpointClient.ChatWithTools(ctx, messagesWithUpdate, toolDefs)
 	if err != nil {
-		applogger.Error("Notes update on success failed", "error", err)
+		applogger.Error("Notes update on stop failed", "error", err)
 		return
 	}
 
-	if response.FinishReason == "tool_calls" {
-		for _, tc := range response.ToolCalls {
+	finishReason := response.FinishReason
+	content := response.Content
+	toolCalls := response.ToolCalls
+
+	tl.weakWriteInteraction(iteration, model.InteractionTypeResponse, map[string]interface{}{
+		"content":       content,
+		"tool_calls":    toolCalls,
+		"finish_reason": finishReason,
+		"is_final":      true,
+	})
+
+	if finishReason == "tool_calls" {
+		for _, tc := range toolCalls {
 			if tc.Function.Name != tools.ToolNameWriteNotes.String() {
 				continue
 			}
@@ -557,7 +573,7 @@ This will help you continue work if changes are requested later.`
 		tl.contextManager.RefreshNotes(tl.writeNotesTool.ReadNotes())
 	}
 
-	applogger.Info("Notes updated after successful completion")
+	applogger.Info("Notes updated on task stop")
 }
 
 // invokeLLM calls the LLM with the current messages and all registered tools.

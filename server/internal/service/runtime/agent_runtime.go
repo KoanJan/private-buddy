@@ -378,6 +378,8 @@ func (r *agentRuntime) findActiveWorkByID(workID int64) *work {
 // the event.
 func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, comprehension *comprehend.ComprehensionResult) (*work, bool) {
 
+	plan.Metadata = buildMetadata(event)
+
 	// Create draft for this work, snapshotting the agent's current read position
 	// as the context boundary. Messages up to this ID were visible when the
 	// work started, ensuring preprocessing and context assembly have the
@@ -451,6 +453,37 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 
 	r.weakUpdateAgentStatusInSession(event.SessionID, model.ParticipantStatusWorking)
 	return w, true
+}
+
+// buildMetadata constructs system-generated Metadata from the triggering event.
+// This is used by the task loop to understand its origin (session, self-reminder, etc.)
+// and to power tools like search_chat_histories with the correct session context.
+func buildMetadata(event *eventqueue.AgentEvent) *task.Metadata {
+	switch event.Type {
+	case eventqueue.EventTypeNewPrivateChatMessage:
+		if payload, ok := event.Payload.(*eventqueue.NewMessagePayload); ok {
+			return &task.Metadata{
+				SourceType: task.SourceTypeSession,
+				SessionMeta: &task.SessionMeta{
+					SessionID:        event.SessionID,
+					TriggerMessageID: payload.MessageID,
+					SenderName:       payload.SpeakerName,
+				},
+			}
+		}
+	case eventqueue.EventTypeScheduled:
+		return &task.Metadata{
+			SourceType: task.SourceTypeScheduled,
+		}
+	case eventqueue.EventTypeWorkCompleted:
+		return &task.Metadata{
+			SourceType: task.SourceTypeWorkCompleted,
+			SessionMeta: &task.SessionMeta{
+				SessionID: event.SessionID,
+			},
+		}
+	}
+	return nil
 }
 
 // ==========================================================================

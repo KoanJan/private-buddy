@@ -13,19 +13,20 @@ import { logger } from '../logger';
 const CONTENT_TRUNCATE_LENGTH = 200;
 
 /**
- * Maps tool names to display emoji.
+ * Maps tool names to display icons. Emoji strings for most tools, lucide icons for special cases.
  */
-const toolEmoji: Record<string, string> = {
-  bash: '🛠️',
+const toolIcon: Record<string, React.ReactNode> = {
+  bash: '>_',
   web_search: '🔍',
   write_notes: '📝',
   wake_me_when: '⏰',
-  scan_my_experience: '🔎',
+  scan_my_experience: '🧠',
   recall_my_experience: '🧠',
-  read_text_file: '📖',
-  write_text_file: '✏️',
-  edit_text_file: '🔧',
+  read_text_file: '🔍',
+  write_text_file: '📝',
+  edit_text_file: '📝',
   deliver_to: '📦',
+  search_chat_histories: '🔍',
 };
 
 /**
@@ -113,7 +114,7 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
           const displayName = agent?.name || 'AI';
 
           if (event.type === 'tool_call') {
-            const emoji = toolEmoji[event.tool || ''] || '🔧';
+            const icon = toolIcon[event.tool || ''] || '🔧';
             const action = t(`activity.tool.${event.tool}`);
             const targetText = event.target || '';
             const needsTruncate = targetText.length > CONTENT_TRUNCATE_LENGTH;
@@ -127,7 +128,7 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
                   <span className="activity-time">{event.time}</span>
                 </div>
                 <div className="activity-summary">
-                  {emoji} {action}
+                  {icon} {action}
                   {targetText && (needsTruncate && !expanded ? (
                     <span className="activity-tool-target">
                       {' '}{targetText.slice(0, CONTENT_TRUNCATE_LENGTH)}...

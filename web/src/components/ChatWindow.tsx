@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Input, Button, Spin } from 'antd';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Input, Button, Spin, message } from 'antd';
 import { RobotOutlined } from '@ant-design/icons';
-import { Send } from 'lucide-react';
+import { Send, Copy, ChevronsUpDown, ChevronsDownUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMessageTime } from '../utils/time';
 import AgentAvatar from './AgentAvatar';
@@ -24,6 +24,7 @@ interface ChatWindowProps {
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) => {
   const { t } = useTranslation();
+  const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set());
   const [inputValue, setInputValue] = useState('');
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   const [agentStatus, setAgentStatus] = useState<number>(PARTICIPANT_STATUS_IDLE);
@@ -112,19 +113,29 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
       .catch(err => logger.error('Failed to load current user person', err));
   }, []);
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    if (!chatMessagesRef.current) return;
-    if (isInitialLoadRef.current && messages.length > 0) {
-      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
-      isInitialLoadRef.current = false;
-    } else if (messages.length > 0) {
+  // scrollToBottom scrolls the chat messages container to the bottom
+  // smooth: if true, uses smooth animation; otherwise jumps directly
+  const scrollToBottom = useCallback((smooth: boolean = true) => {
+    if (!chatMessagesRef.current || messages.length === 0) return;
+    if (smooth) {
       chatMessagesRef.current.scrollTo({
         top: chatMessagesRef.current.scrollHeight,
         behavior: 'smooth',
       });
+    } else {
+      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages.length]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    if (isInitialLoadRef.current && messages.length > 0) {
+      scrollToBottom(false);
+      isInitialLoadRef.current = false;
+    } else if (messages.length > 0) {
+      scrollToBottom(true);
+    }
+  }, [messages, scrollToBottom]);
 
   // Cleanup SSE on unmount (useSSE handles this, but explicit for session transitions)
   useEffect(() => {
@@ -141,6 +152,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     container.style.setProperty('--indicator-left', `${tabRect.left - containerRect.left}px`);
     container.style.setProperty('--indicator-width', `${tabRect.width}px`);
   }, [viewMode]);
+
+  // Scroll to bottom when switching to chat view
+  useEffect(() => {
+    if (viewMode !== 'chat') return;
+    scrollToBottom(true);
+  }, [viewMode, scrollToBottom]);
 
   // ---- Handlers ----
 
@@ -162,6 +179,29 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     // Always connect SSE (will be a no-op if already connected to same session)
     sseConnect(result.sessionId);
   };
+
+  const handleCopy = (content: string) => {
+    navigator.clipboard.writeText(content).then(() => {
+      message.success(t('chat.copied'));
+    }).catch(() => {
+      // Fallback for environments without clipboard API
+      message.error('Copy failed');
+    });
+  };
+
+  const toggleMessageExpand = useCallback((msgId: number) => {
+    setExpandedMessages(prev => {
+      const next = new Set(prev);
+      if (next.has(msgId)) {
+        next.delete(msgId);
+      } else {
+        next.add(msgId);
+      }
+      return next;
+    });
+  }, []);
+
+  const COLLAPSE_THRESHOLD = 500;
 
   // ---- Render ----
 
@@ -245,13 +285,45 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                         <Spin size="small" />
                       </div>
                     ) : (
-                      <div className="message-content">
-                        {msg.person_id !== currentUserPersonId ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {msg.content}
-                          </ReactMarkdown>
-                        ) : (
-                          msg.content
+                      (() => {
+                        const isLong = msg.content.length > COLLAPSE_THRESHOLD;
+                        const expanded = expandedMessages.has(msg.id);
+                        const collapsed = isLong && !expanded;
+
+                        return (
+                          <div className={`message-content${collapsed ? ' collapsed' : ''}`}>
+                            {msg.person_id !== currentUserPersonId ? (
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {msg.content}
+                              </ReactMarkdown>
+                            ) : (
+                              msg.content
+                            )}
+                          </div>
+                        );
+                      })()
+                    )}
+                    {msg.content && (
+                      <div className="message-actions">
+                        <button
+                          className="copy-btn"
+                          onClick={() => handleCopy(msg.content)}
+                          title={t('chat.copy')}
+                        >
+                          <Copy size={14} />
+                        </button>
+                        {msg.content.length > COLLAPSE_THRESHOLD && (
+                          <button
+                            className="copy-btn"
+                            onClick={() => toggleMessageExpand(msg.id)}
+                            title={expandedMessages.has(msg.id) ? t('chat.collapse') : t('chat.expand')}
+                          >
+                            {expandedMessages.has(msg.id) ? (
+                              <ChevronsDownUp size={14} />
+                            ) : (
+                              <ChevronsUpDown size={14} />
+                            )}
+                          </button>
                         )}
                       </div>
                     )}

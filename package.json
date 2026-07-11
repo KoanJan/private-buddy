@@ -1,6 +1,6 @@
 {
   "name": "private-buddy",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "description": "Private Buddy - A private AI chat assistant",
   "main": "electron/dist/main.js",
   "scripts": {

@@ -617,6 +617,35 @@
   margin: 1em 0;
 }
 
+.message-content.collapsed {
+  max-height: 200px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
+}
+
+.message-actions {
+  display: flex;
+  margin-top: 4px;
+}
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-placeholder);
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+
+.copy-btn:hover {
+  color: var(--color-text-primary);
+  background: rgba(0, 0, 0, 0.06);
+}
 
 .loading-spinner {
   display: inline-block;

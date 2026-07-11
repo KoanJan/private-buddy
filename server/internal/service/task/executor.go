@@ -71,7 +71,9 @@ type RunTaskParams struct {
 	PersonID   int64 // Person ID of the executing agent
 	UserMsgID  int64
 	WorkID     int64
-	Guidance   string // Execution intent from Decide phase (replaces Rewrite)
+	Guidance   string    // Execution intent from Decide phase (replaces Rewrite)
+	Background string    // Full context from Decide phase: trigger event, participants, comprehension
+	Metadata   *Metadata // System-generated traceability info from work creation
 	Ctx        context.Context
 	OnNotify   func(data string)        // Optional callback for frontend notifications
 	GuidanceCh <-chan GuidanceDirective // Channel for receiving new guidance during execution
@@ -112,6 +114,8 @@ func RunTask(params RunTaskParams) *TaskResult {
 	return Execute(TaskParams{
 		TaskRequirement: params.Guidance, // Guidance IS the task requirement
 		Guidance:        params.Guidance,
+		Background:      params.Background,
+		Metadata:        params.Metadata,
 		LLMConfig:       params.LLMConfig,
 		MaxIterations:   0,
 		SessionID:       params.SessionID,
@@ -128,6 +132,8 @@ func RunTask(params RunTaskParams) *TaskResult {
 type TaskParams struct {
 	TaskRequirement string                   // The task description to execute (from Decide phase Guidance)
 	Guidance        string                   // Execution intent from Decide phase, injected into system prompt
+	Background      string                   // Full context from Decide phase: trigger event, participants, comprehension
+	Metadata        *Metadata                // System-generated traceability info from work creation
 	LLMConfig       *model.LLMConfig         // LLM configuration for the task
 	MaxIterations   int                      // Override for max loop iterations (0 = use default)
 	SessionID       int64                    // Session ID for interaction records and workspace
@@ -169,7 +175,7 @@ func Execute(params TaskParams) *TaskResult {
 
 	// Build the system prompt AFTER the tool list so that tool descriptions
 	// can be generated from the registered tools.
-	systemPrompt := buildSystemPrompt(params.PersonID, params.SessionID, params.Guidance, toolList)
+	systemPrompt := buildSystemPrompt(params.PersonID, params.SessionID, params.Background, params.Guidance, params.Metadata, toolList)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
@@ -248,7 +254,7 @@ func Execute(params TaskParams) *TaskResult {
 //
 // Dynamic content (iteration counts, notes length) is appended separately by
 // ContextManager at each iteration to preserve LLM prefix caching.
-func buildSystemPrompt(personID, sessionID int64, guidance string, toolList []tools.Tool) string {
+func buildSystemPrompt(personID, sessionID int64, background, guidance string, metadata *Metadata, toolList []tools.Tool) string {
 	sessionDir := workspace.GetWorkspacePath(personID, sessionID)
 	outputDir := workspace.GetOutputDir(personID, sessionID)
 
@@ -263,6 +269,21 @@ func buildSystemPrompt(personID, sessionID int64, guidance string, toolList []to
 		"",
 	}
 	parts = append(parts, toolLines...)
+
+	parts = append(parts,
+		"",
+		"[Background]",
+		background,
+	)
+
+	// Inject Metadata as a [Metadata] section if available.
+	if metadata != nil {
+		parts = append(parts,
+			"",
+			"[Metadata]",
+			metadata.String(),
+		)
+	}
 
 	parts = append(parts,
 		"",
@@ -370,6 +391,7 @@ func buildToolList(sessionID, personID, triggerMessageID int64, searchConfig *mo
 		tools.NewScanExperienceTool(personID),
 		tools.NewRecallExperienceTool(personID),
 		tools.NewDeliverToTool(personID, sessionID),
+		tools.NewSearchChatHistoriesTool(personID),
 	}
 
 	if searchConfig != nil && searchConfig.IsAvailable() {

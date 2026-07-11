@@ -146,6 +146,8 @@ func (w *work) runTask(ctx context.Context) {
 		UserMsgID:  triggerMessageID,
 		WorkID:     w.ID,
 		Guidance:   w.plan.Guidance,
+		Background: w.plan.Background,
+		Metadata:   w.plan.Metadata,
 		Ctx:        ctx,
 		OnNotify:   func(data string) { pushSSEEvent(w.sessionID, data) },
 		GuidanceCh: w.guidanceCh,

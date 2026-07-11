@@ -22,7 +22,11 @@
     "hoursAgo": "{{n}}h ago",
     "daysAgo": "{{n}}d ago",
     "monthsAgo": "{{n}}mo ago",
-    "yearsAgo": "{{n}}y ago"
+    "yearsAgo": "{{n}}y ago",
+    "copy": "Copy",
+    "copied": "Copied",
+    "expand": "Show more",
+    "collapse": "Show less"
   },
   "viewTabs": {
     "chat": "Chat",
@@ -265,7 +269,8 @@
       "read_text_file": "Read file",
       "write_text_file": "Write file",
       "edit_text_file": "Edit file",
-      "deliver_to": "Deliver files"
+      "deliver_to": "Deliver files",
+      "search_chat_histories": "Search chat history"
     }
   },
   "publicExperience": {

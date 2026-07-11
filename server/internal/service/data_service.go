@@ -413,6 +413,17 @@ func DeleteSessionCascade(sessionID int64) (personID int64, agentID int64, err e
 
 // ---- Query helpers ----
 
+// HasInteractions checks whether any task interaction records exist for the given session.
+func HasInteractions(sessionID int64) (bool, error) {
+	var count int64
+	if err := database.DB.Model(&model.Interaction{}).
+		Where("session_id = ?", sessionID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // GetSessionParticipantsByPersonType returns participant_sessions joined with persons filtered by type.
 func GetSessionParticipantsByPersonType(sessionID int64, personType int) ([]model.ParticipantSession, error) {
 	var p []model.ParticipantSession
