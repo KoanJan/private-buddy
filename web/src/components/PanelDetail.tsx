@@ -9,6 +9,7 @@ interface PanelDetailProps {
   children: ReactNode;
 }
 
+/** Detail panel layout with optional back navigation and add button. */
 export default function PanelDetail({ title, onBack, onAdd, children }: PanelDetailProps) {
   return (
     <div className="panel-detail">

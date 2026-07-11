@@ -215,6 +215,7 @@ func (vss *VectorStoreService) Search(ctx context.Context, sessionID int64, quer
 		var role, content string
 		var blob []byte
 		if err := rows.Scan(&msgID, &role, &content, &blob); err != nil {
+			applogger.Error("failed to scan message vector row during search", "error", err)
 			continue
 		}
 

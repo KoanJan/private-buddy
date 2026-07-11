@@ -2,6 +2,8 @@
 .trae
 .codebuddy
 .lingma
+.specify
+/specs
 
 # Node.js
 node_modules/
@@ -53,7 +55,11 @@ draft
 # Go build artifacts
 server/private-buddy-server
 server/private-buddy-server.exe
+server/audit
+server/audit.exe
 server/.pid
+/audit
+/audit.exe
 
 # Temporary files
 *.tmp

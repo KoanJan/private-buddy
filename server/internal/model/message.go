@@ -23,4 +23,5 @@ type Message struct {
 	UpdatedAt time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Message.
 func (Message) TableName() string { return "messages" }

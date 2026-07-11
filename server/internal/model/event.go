@@ -25,4 +25,5 @@ type Event struct {
 	CreatedAt time.Time `gorm:"not null;autoCreateTime;index:idx_events_type_created" json:"created_at"`
 }
 
+// TableName returns the database table name for Event.
 func (Event) TableName() string { return "events" }

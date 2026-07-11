@@ -253,6 +253,7 @@ func UpdateSystemLLMConfig(llmConfigID int64) error {
 	var sysCfg model.SystemLLMConfig
 	err := database.DB.Where("id = ?", 1).First(&sysCfg).Error
 	if err != nil {
+		applogger.Error("system LLM config not found, creating new record", "error", err)
 		sysCfg = model.SystemLLMConfig{
 			LLMConfigID: llmConfigID,
 		}
@@ -384,6 +385,7 @@ func DeleteSessionCascade(sessionID int64) (personID int64, agentID int64, err e
 		// Look up agent's PersonID for workspace path
 		var agent model.Agent
 		if err := tx.First(&agent, sess.AgentID).Error; err != nil {
+			applogger.Error("failed to find agent for session during cleanup", "agent_id", sess.AgentID, "session_id", sessionID, "error", err)
 			personID = 0
 		} else {
 			personID = agent.PersonID

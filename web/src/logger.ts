@@ -41,6 +41,7 @@ const saveLog = (level: string, ...args: unknown[]): string => {
   return logEntry;
 };
 
+/** Application logger with in-memory persistence and download support. */
 export const logger = {
   info: (...args: unknown[]): void => {
     const logEntry = saveLog('INFO', ...args);

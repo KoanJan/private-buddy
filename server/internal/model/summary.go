@@ -19,4 +19,5 @@ type Summary struct {
 	UpdatedAt time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Summary.
 func (Summary) TableName() string { return "summaries" }

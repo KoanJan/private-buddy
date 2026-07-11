@@ -11,4 +11,5 @@ type DBVersion struct {
 	AppliedAt   time.Time `gorm:"not null;autoCreateTime;column:applied_at" json:"applied_at"`
 }
 
+// TableName returns the database table name for DBVersion.
 func (DBVersion) TableName() string { return "db_versions" }

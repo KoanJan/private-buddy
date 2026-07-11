@@ -6,6 +6,7 @@ import (
 	"private-buddy-server/internal/model"
 )
 
+// LLMConfigBase contains the common fields for LLM config creation and updates.
 type LLMConfigBase struct {
 	Name        string  `json:"name" binding:"required"`
 	ModelID     string  `json:"model_id" binding:"required"`
@@ -14,8 +15,10 @@ type LLMConfigBase struct {
 	Description *string `json:"description"`
 }
 
+// LLMConfigCreate is an alias of LLMConfigBase for creating LLM configs.
 type LLMConfigCreate LLMConfigBase
 
+// LLMConfigUpdate contains the mutable fields for updating an LLM config.
 type LLMConfigUpdate struct {
 	Name        *string `json:"name"`
 	ModelID     *string `json:"model_id"`
@@ -24,6 +27,7 @@ type LLMConfigUpdate struct {
 	Description *string `json:"description"`
 }
 
+// LLMConfigResponse represents the API response for an LLM config.
 type LLMConfigResponse struct {
 	ID          int64     `json:"id"`
 	Name        string    `json:"name"`
@@ -35,6 +39,7 @@ type LLMConfigResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// NewLLMConfigResponse converts a model.LLMConfig to an LLMConfigResponse.
 func NewLLMConfigResponse(m *model.LLMConfig) *LLMConfigResponse {
 	return &LLMConfigResponse{
 		ID:          m.ID,
@@ -48,6 +53,7 @@ func NewLLMConfigResponse(m *model.LLMConfig) *LLMConfigResponse {
 	}
 }
 
+// NewLLMConfigResponseList converts a list of model.LLMConfig to LLMConfigResponse list.
 func NewLLMConfigResponseList(entities []model.LLMConfig) []*LLMConfigResponse {
 	result := make([]*LLMConfigResponse, 0, len(entities))
 	for i := range entities {
@@ -56,6 +62,7 @@ func NewLLMConfigResponseList(entities []model.LLMConfig) []*LLMConfigResponse {
 	return result
 }
 
+// BuildUpdates builds a map of non-nil update fields from LLMConfigUpdate.
 func (req *LLMConfigUpdate) BuildUpdates() map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.Name != nil {

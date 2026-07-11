@@ -16,4 +16,5 @@ type EventVector struct {
 	CreatedAt time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
 }
 
+// TableName returns the database table name for EventVector.
 func (EventVector) TableName() string { return "event_vectors" }

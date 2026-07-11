@@ -10,13 +10,20 @@ import "fmt"
 type AgentEventType int
 
 const (
-	EventTypeNewPrivateChatMessage AgentEventType = iota // User or agent message in a private chat
-	EventTypeGroupChatJoined                             // Agent was added to a private chat
-	EventTypeGroupChatLeft                               // Agent was removed from a group chat
-	EventTypeSystemNotification                          // System-level notification
-	EventTypeScheduled                                   // Scheduled event (self-wake alarm) fired
-	EventTypeWorkCompleted                               // A Work (task/chat) completed execution
-	EventTypeAlarmCreated                                // A new scheduled alarm was created (by tool or recovery)
+	// EventTypeNewPrivateChatMessage represents a user or agent message in a private chat.
+	EventTypeNewPrivateChatMessage AgentEventType = iota
+	// EventTypeGroupChatJoined represents the agent being added to a group chat.
+	EventTypeGroupChatJoined
+	// EventTypeGroupChatLeft represents the agent being removed from a group chat.
+	EventTypeGroupChatLeft
+	// EventTypeSystemNotification represents a system-level notification.
+	EventTypeSystemNotification
+	// EventTypeScheduled represents a scheduled event (self-wake alarm) that has fired.
+	EventTypeScheduled
+	// EventTypeWorkCompleted represents a Work (task/chat) completing execution.
+	EventTypeWorkCompleted
+	// EventTypeAlarmCreated represents a new scheduled alarm being created (by tool or recovery).
+	EventTypeAlarmCreated
 )
 
 // AgentEvent represents an event that should be processed by an agent.

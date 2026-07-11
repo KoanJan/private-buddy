@@ -13,7 +13,9 @@ const (
 type WorkType int
 
 const (
+	// WorkTypeChat represents a single LLM call (streaming response) work type.
 	WorkTypeChat WorkType = 1 // Single LLM call (streaming response)
+	// WorkTypeTask represents a ReAct loop (multi-iteration with tool calls) work type.
 	WorkTypeTask WorkType = 2 // ReAct loop (multi-iteration with tool calls)
 )
 
@@ -28,7 +30,7 @@ type Work struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	AgentID     int64     `gorm:"not null;index:idx_agent_status" json:"agent_id"`
 	SessionID   int64     `gorm:"not null" json:"session_id"`
-	DraftID     int64     `gorm:"column:draft_id" json:"draft_id"`
+	DraftID     int64     `gorm:"column:draft_id;not null;default:0" json:"draft_id"`
 	Type        WorkType  `gorm:"not null" json:"type"`                                    // 1=chat, 2=task
 	Description string    `gorm:"type:text;not null" json:"description"`                   // Natural language description for semantic routing and recovery
 	Status      int       `gorm:"not null;default:0;index:idx_agent_status" json:"status"` // 0=running, 1=completed, -1=abandoned
@@ -36,4 +38,5 @@ type Work struct {
 	UpdatedAt   time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Work.
 func (Work) TableName() string { return "works" }

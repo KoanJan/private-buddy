@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	applogger "private-buddy-server/internal/logger"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,7 @@ import (
 func requireDarwin(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("sw_vers"); err != nil {
+		applogger.Error("sandbox: sw_vers lookup failed, skipping darwin test", "error", err)
 		t.Skip("test requires macOS")
 	}
 }
@@ -36,6 +38,8 @@ func sandboxExecRunnable() bool {
 	return err == nil
 }
 
+// TestGeneratePolicy_WorkspaceReplaced verifies that the generated Seatbelt policy replaces
+// the $WORKSPACE placeholder with the actual workspace path.
 func TestGeneratePolicy_WorkspaceReplaced(t *testing.T) {
 	requireDarwin(t)
 
@@ -50,6 +54,8 @@ func TestGeneratePolicy_WorkspaceReplaced(t *testing.T) {
 	}
 }
 
+// TestRunDarwin_Echo verifies that sandbox-exec successfully runs a simple echo command
+// under a Seatbelt sandbox policy.
 func TestRunDarwin_Echo(t *testing.T) {
 	requireDarwin(t)
 	if !sandboxExecRunnable() {
@@ -58,17 +64,20 @@ func TestRunDarwin_Echo(t *testing.T) {
 
 	ws, err := os.MkdirTemp("", "pbtest-darwin-*")
 	if err != nil {
+		applogger.Error("sandbox test: failed to create temp workspace", "error", err)
 		t.Fatalf("failed to create temp workspace: %v", err)
 	}
 	defer os.RemoveAll(ws)
 
 	execCmd, _, err := runDarwin(ws, 1, 1, []string{"echo", "hello"})
 	if err != nil {
+		applogger.Error("sandbox test: runDarwin echo failed", "error", err)
 		t.Fatalf("runDarwin() returned error: %v", err)
 	}
 
 	out, err := execCmd.Output()
 	if err != nil {
+		applogger.Error("sandbox test: sandbox-exec echo failed", "error", err)
 		t.Fatalf("sandbox-exec of echo failed: %v", err)
 	}
 	if !strings.Contains(string(out), "hello") {
@@ -76,6 +85,8 @@ func TestRunDarwin_Echo(t *testing.T) {
 	}
 }
 
+// TestRunDarwin_WriteDenied verifies that the Seatbelt sandbox policy blocks writes
+// to protected system directories.
 func TestRunDarwin_WriteDenied(t *testing.T) {
 	requireDarwin(t)
 	if !sandboxExecRunnable() {
@@ -84,6 +95,7 @@ func TestRunDarwin_WriteDenied(t *testing.T) {
 
 	ws, err := os.MkdirTemp("", "pbtest-darwin-*")
 	if err != nil {
+		applogger.Error("sandbox test: failed to create temp workspace", "error", err)
 		t.Fatalf("failed to create temp workspace: %v", err)
 	}
 	defer os.RemoveAll(ws)
@@ -91,6 +103,7 @@ func TestRunDarwin_WriteDenied(t *testing.T) {
 	// Attempt to write to a protected directory
 	execCmd, _, err := runDarwin(ws, 1, 1, []string{"touch", "/private/etc/sandbox_test_probe"})
 	if err != nil {
+		applogger.Error("sandbox test: runDarwin write denied test failed", "error", err)
 		t.Fatalf("runDarwin() returned error: %v", err)
 	}
 
@@ -107,6 +120,8 @@ func TestRunDarwin_WriteDenied(t *testing.T) {
 	}
 }
 
+// TestRunDarwin_WriteAllowed verifies that the Seatbelt sandbox policy allows writes
+// within the designated workspace directory.
 func TestRunDarwin_WriteAllowed(t *testing.T) {
 	requireDarwin(t)
 	if !sandboxExecRunnable() {
@@ -115,6 +130,7 @@ func TestRunDarwin_WriteAllowed(t *testing.T) {
 
 	ws, err := os.MkdirTemp("", "pbtest-darwin-*")
 	if err != nil {
+		applogger.Error("sandbox test: failed to create temp workspace", "error", err)
 		t.Fatalf("failed to create temp workspace: %v", err)
 	}
 	defer os.RemoveAll(ws)
@@ -122,10 +138,12 @@ func TestRunDarwin_WriteAllowed(t *testing.T) {
 	testFile := filepath.Join(ws, "sandbox_write_test.txt")
 	execCmd, _, err := runDarwin(ws, 1, 1, []string{"touch", testFile})
 	if err != nil {
+		applogger.Error("sandbox test: runDarwin write allowed test failed", "error", err)
 		t.Fatalf("runDarwin() returned error: %v", err)
 	}
 
 	if out, err := execCmd.CombinedOutput(); err != nil {
+		applogger.Error("sandbox test: touch workspace file failed", "error", err)
 		t.Fatalf("touch workspace file failed: %v\n%s", err, string(out))
 	}
 
@@ -134,6 +152,8 @@ func TestRunDarwin_WriteAllowed(t *testing.T) {
 	}
 }
 
+// TestRunDarwin_EmptyCmd verifies that Run returns an error when given an empty
+// command slice on macOS.
 func TestRunDarwin_EmptyCmd(t *testing.T) {
 	requireDarwin(t)
 

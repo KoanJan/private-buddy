@@ -39,4 +39,5 @@ type PublicExperience struct {
 	UpdatedAt         time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for PublicExperience.
 func (PublicExperience) TableName() string { return "public_experiences" }

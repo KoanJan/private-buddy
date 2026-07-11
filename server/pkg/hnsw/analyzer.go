@@ -10,6 +10,7 @@ type Analyzer[K cmp.Ordered] struct {
 	Graph *Graph[K]
 }
 
+// Height returns the number of layers in the graph.
 func (a *Analyzer[T]) Height() int {
 	return len(a.Graph.layers)
 }

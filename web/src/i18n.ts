@@ -28,11 +28,13 @@ i18n
     }
   });
 
+/** Switches the application language and persists the choice. */
 export const changeLanguage = (lang: string) => {
   i18n.changeLanguage(lang);
   storage.setRaw(LANGUAGE_KEY, lang);
 };
 
+/** Returns the currently active language code. */
 export const getCurrentLanguage = (): string => {
   return i18n.language;
 };

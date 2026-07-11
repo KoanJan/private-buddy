@@ -58,20 +58,10 @@ func CheckReflection(ctx context.Context, agentID int64) {
 
 		notesBytes, err := os.ReadFile(notesFile)
 		if err != nil {
-			if os.IsNotExist(err) {
-				// Common case: session hasn't run a task yet, so notes.md
-				// doesn't exist. Info-level (not silent) to keep heartbeat
-				// behavior observable without flooding the log.
-				applogger.Info("CheckReflection: notes file not exist",
-					"file", notesFile,
-				)
-			} else {
-				// Unexpected read error — not a normal heartbeat path.
-				applogger.Error("CheckReflection: failed to read notes file",
-					"file", notesFile,
-					"error", err,
-				)
-			}
+			applogger.Error("CheckReflection: failed to read notes file",
+				"file", notesFile,
+				"error", err,
+			)
 			continue
 		}
 		if len(notesBytes) == 0 {
@@ -84,21 +74,11 @@ func CheckReflection(ctx context.Context, agentID int64) {
 		// differing content means reflection should run.
 		lastFingerprintBytes, err := os.ReadFile(fpFile)
 		if err != nil {
-			if os.IsNotExist(err) {
-				// File missing (first reflection for this session) — fall
-				// through to trigger reflection.
-				applogger.Info("CheckReflection: fingerprint file not exist",
-					"file", fpFile,
-				)
-			} else {
-				// Unexpected read error — log and skip this session. Using
-				// continue (not break) so other sessions are still processed.
-				applogger.Error("CheckReflection: failed to read fingerprint file",
-					"file", fpFile,
-					"error", err,
-				)
-				continue
-			}
+			applogger.Error("CheckReflection: failed to read fingerprint file",
+				"file", fpFile,
+				"error", err,
+			)
+			continue
 		} else if string(lastFingerprintBytes) == currentFingerprint {
 			// No change since the last reflection — skip.
 			continue

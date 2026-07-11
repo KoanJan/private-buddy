@@ -46,18 +46,18 @@ func NewBashTool(personID, sessionID int64) *BashTool {
 	return &BashTool{personID: personID, sessionID: sessionID}
 }
 
-// ToolNameBash is the type-safe name constant for BashTool.
-const ToolNameBash ToolName = "bash"
-
+// Name returns the tool name.
 func (b *BashTool) Name() ToolName { return ToolNameBash }
 
+// Description returns a brief description of the tool.
 func (b *BashTool) Description() string { return "Execute shell commands in your working directory" }
 
+// Schema returns the LLM function definition for the tool.
 func (b *BashTool) Schema() llm.FunctionDefinition {
 	sessionRoot := workspace.GetWorkspacePath(b.personID, b.sessionID)
 	workspaceHint := fmt.Sprintf(" All file operations must be within %s. Do not access paths outside this directory.", sessionRoot)
 	return llm.FunctionDefinition{
-		Name:        string(b.Name()),
+		Name:        b.Name().String(),
 		Description: "Execute a shell command. Use this tool to run commands, manage files, and interact with the system." + workspaceHint,
 		Parameters: map[string]interface{}{
 			"type": "object",
@@ -126,6 +126,7 @@ func (b *BashTool) Execute(args map[string]interface{}) (string, error) {
 	case err := <-done:
 		exitCode := 0
 		if err != nil {
+			applogger.Error("bash command execution failed", "error", err)
 			exitCode = 1
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				exitCode = exitErr.ExitCode()

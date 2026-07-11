@@ -410,6 +410,7 @@ func (h *Handler) GetSessionAgents(c *gin.Context) {
 		// Find agent by PersonID
 		var agent model.Agent
 		if err := database.DB.Where("person_id = ?", p.ParticipantID).First(&agent).Error; err != nil {
+			applogger.Error("failed to find agent by person ID for session participants", "person_id", p.ParticipantID, "error", err)
 			continue
 		}
 

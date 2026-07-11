@@ -106,6 +106,7 @@ func DeleteKnowledgeBase(kbID int64) error {
 	for _, a := range agents {
 		var ids []int64
 		if err := jsonUnmarshal(a.KnowledgeBaseIDs, &ids); err != nil {
+			applogger.Error("failed to unmarshal agent knowledge base IDs during KB deletion", "agent_id", a.ID, "error", err)
 			continue
 		}
 		for i, id := range ids {

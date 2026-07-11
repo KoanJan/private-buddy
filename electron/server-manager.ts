@@ -133,6 +133,7 @@ export async function startServer(): Promise<void> {
   }
 }
 
+/** Stops the server process gracefully with a SIGTERM, falling back to SIGKILL after 12 seconds. */
 export function stopServer(): void {
   if (!serverProcess) {
     return;
@@ -158,6 +159,7 @@ export function stopServer(): void {
   }
 }
 
+/** Returns whether the server process is currently running. */
 export function isServerRunning(): boolean {
   return serverProcess !== null;
 }

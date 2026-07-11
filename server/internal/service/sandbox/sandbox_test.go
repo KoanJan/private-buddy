@@ -51,6 +51,7 @@ func TestFallbackExec_Empty(t *testing.T) {
 func TestFallbackExec_Integration(t *testing.T) {
 	cmd := fallbackExec([]string{"true"})
 	if err := cmd.Run(); err != nil {
+		applogger.Error("sandbox test: fallback exec of 'true' failed", "error", err)
 		t.Errorf("fallback exec of 'true' failed: %v", err)
 	}
 }
@@ -60,6 +61,7 @@ func TestFallbackExec_EchoIntegration(t *testing.T) {
 	cmd := fallbackExec([]string{"echo", "hello"})
 	out, err := cmd.Output()
 	if err != nil {
+		applogger.Error("sandbox test: fallback exec of echo failed", "error", err)
 		t.Fatalf("fallback exec of echo failed: %v", err)
 	}
 	if !strings.Contains(string(out), "hello") {
@@ -76,6 +78,7 @@ func TestRun_UnsupportedPlatform(t *testing.T) {
 	default:
 		cmd, _, err := Run("/tmp/ws", 1, 1, []string{"true"})
 		if err != nil {
+			applogger.Error("sandbox test: Run failed on unsupported platform", "error", err)
 			t.Fatalf("Run() returned error on unsupported platform: %v", err)
 		}
 		if cmd == nil {
@@ -92,6 +95,7 @@ func TestRun_ArgsPreserved(t *testing.T) {
 	default:
 		cmd, _, err := Run("/tmp/ws", 1, 1, []string{"sh", "-c", "echo test"})
 		if err != nil {
+			applogger.Error("sandbox test: Run failed on args preserved test", "error", err)
 			t.Fatalf("Run() returned error: %v", err)
 		}
 		if len(cmd.Args) < 3 {

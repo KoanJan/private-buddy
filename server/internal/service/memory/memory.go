@@ -279,6 +279,7 @@ func Search(ctx context.Context, agentID int64, query string, k int) ([]memoryRe
 		// Get event vector
 		var ev model.EventVector
 		if err := database.DB.First(&ev, "event_id = ?", obs.EventID).Error; err != nil {
+			applogger.Error("failed to find event vector for observation during importance scoring", "event_id", obs.EventID, "error", err)
 			continue // Skip observations without vectors
 		}
 		if len(ev.Embedding) == 0 {
@@ -453,6 +454,7 @@ func runPropagation(eventID int64, delta float64, obsWithContext []observationWi
 	// Get the hit event's embedding for semantic propagation
 	var hitEventVector model.EventVector
 	if err := database.DB.First(&hitEventVector, "event_id = ?", eventID).Error; err != nil {
+		applogger.Error("failed to find hit event vector for relevance propagation", "event_id", eventID, "error", err)
 		hitEventVector.Embedding = nil
 	}
 

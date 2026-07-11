@@ -7,6 +7,7 @@ import (
 	"private-buddy-server/internal/model"
 )
 
+// AgentBase contains the common fields shared by agent create and update schemas.
 type AgentBase struct {
 	CharacterSettings string  `json:"character_settings"`
 	LLMConfigID       int64   `json:"llm_config_id" binding:"required"`
@@ -14,6 +15,7 @@ type AgentBase struct {
 	KnowledgeBaseIDs  []int64 `json:"knowledge_base_ids"`
 }
 
+// AgentCreate represents the input for creating an agent.
 type AgentCreate struct {
 	Name              string  `json:"name" binding:"required"`
 	Description       string  `json:"description"`
@@ -33,6 +35,7 @@ type AgentUpdate struct {
 	KnowledgeBaseIDs  *[]int64 `json:"knowledge_base_ids"`
 }
 
+// AgentResponse represents the API response for an agent.
 type AgentResponse struct {
 	ID                int64     `json:"id"`
 	PersonID          int64     `json:"person_id"`
@@ -46,6 +49,7 @@ type AgentResponse struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+// SessionBrief is a lightweight view of a session for list display.
 type SessionBrief struct {
 	ID        int64     `json:"id"`
 	Title     string    `json:"title"`
@@ -53,11 +57,13 @@ type SessionBrief struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// AgentWithSessions represents an agent with its associated sessions.
 type AgentWithSessions struct {
 	AgentResponse
 	Sessions []SessionBrief `json:"sessions"`
 }
 
+// NewAgentResponse converts a model.Agent and model.Person to an AgentResponse.
 func NewAgentResponse(m *model.Agent, person *model.Person) *AgentResponse {
 	var kbIDs []int64
 	if m.KnowledgeBaseIDs != "" && m.KnowledgeBaseIDs != "[]" {
@@ -86,6 +92,7 @@ func NewAgentResponse(m *model.Agent, person *model.Person) *AgentResponse {
 	}
 }
 
+// NewAgentResponseList converts a list of model.Agent to AgentResponse list.
 func NewAgentResponseList(agents []model.Agent, persons map[int64]*model.Person) []*AgentResponse {
 	result := make([]*AgentResponse, 0, len(agents))
 	for i := range agents {
@@ -94,6 +101,7 @@ func NewAgentResponseList(agents []model.Agent, persons map[int64]*model.Person)
 	return result
 }
 
+// NewSessionBriefList converts model.Session entities to a SessionBrief list.
 func NewSessionBriefList(entities []model.Session) []SessionBrief {
 	result := make([]SessionBrief, 0, len(entities))
 	for _, m := range entities {
@@ -107,6 +115,7 @@ func NewSessionBriefList(entities []model.Session) []SessionBrief {
 	return result
 }
 
+// BuildUpdates builds a map of non-nil update fields from AgentUpdate.
 func (req *AgentUpdate) BuildUpdates() map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.CharacterSettings != nil {

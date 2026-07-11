@@ -17,9 +17,6 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-// ToolNameDeliverTo is the type-safe name constant for DeliverToTool.
-const ToolNameDeliverTo ToolName = "deliver_to"
-
 // DeliverToTool copies files from the agent's output/ directory to another
 // participant's received/ directory. Each delivery creates a numbered
 // subdirectory (delivery_1, delivery_2, ...) to avoid conflicts between
@@ -37,15 +34,18 @@ func NewDeliverToTool(personID, sessionID int64) *DeliverToTool {
 	}
 }
 
+// Name returns the tool name.
 func (d *DeliverToTool) Name() ToolName { return ToolNameDeliverTo }
 
+// Description returns a brief description of the tool.
 func (d *DeliverToTool) Description() string {
 	return "Deliver files from your output directory to another participant's received/ directory"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (d *DeliverToTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: string(d.Name()),
+		Name: d.Name().String(),
 		Description: "Deliver files from your output/ directory to another participant. " +
 			"The files will be copied to the recipient's received/ directory under a " +
 			"numbered subdirectory (e.g., delivery_1/). Use this when you have completed " +
@@ -83,6 +83,7 @@ func resolveReceiver(name string) (personID int64, err error) {
 	return person.ID, nil
 }
 
+// Execute copies files from the agent's output directory to the recipient's received directory.
 func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 	// Parse receiver_name and resolve to agent ID.
 	receiverName, ok := args["receiver_name"].(string)
@@ -147,6 +148,7 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 	// Generate delivery directory name: {senderName}_{yyyyMMddhhmmssSSS}
 	var senderName string
 	if err := database.DB.Model(&model.Person{}).Where("id = ?", d.personID).Select("name").Scan(&senderName).Error; err != nil {
+		applogger.Error("failed to resolve sender name, using fallback", "error", err, "person_id", d.personID)
 		senderName = fmt.Sprintf("person_%d", d.personID)
 	}
 	now := time.Now()

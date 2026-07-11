@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	applogger "private-buddy-server/internal/logger"
 	"runtime"
 	"testing"
 )
@@ -13,6 +14,8 @@ func requireWindows(t *testing.T) {
 	}
 }
 
+// TestRunWindows_EmptyCmd verifies that Run returns an error when given an empty
+// command slice on Windows.
 func TestRunWindows_EmptyCmd(t *testing.T) {
 	requireWindows(t)
 
@@ -22,11 +25,14 @@ func TestRunWindows_EmptyCmd(t *testing.T) {
 	}
 }
 
+// TestRunWindows_FallbackExec verifies that Run passes commands through to plain
+// os/exec on Windows.
 func TestRunWindows_FallbackExec(t *testing.T) {
 	requireWindows(t)
 
 	cmd, _, err := Run(`C:\tmp\ws`, 1, 1, []string{"cmd", "/c", "echo", "hello"})
 	if err != nil {
+		applogger.Error("sandbox test: Run failed on windows fallback exec", "error", err)
 		t.Fatalf("Run() returned error: %v", err)
 	}
 	if cmd == nil {
@@ -38,11 +44,14 @@ func TestRunWindows_FallbackExec(t *testing.T) {
 	}
 }
 
+// TestRunWindows_ArgsPreserved verifies that command arguments are correctly
+// preserved when Run is called on Windows.
 func TestRunWindows_ArgsPreserved(t *testing.T) {
 	requireWindows(t)
 
 	cmd, _, err := Run(`C:\tmp\ws`, 1, 1, []string{"powershell", "-Command", "Write-Host test"})
 	if err != nil {
+		applogger.Error("sandbox test: Run failed on windows args test", "error", err)
 		t.Fatalf("Run() returned error: %v", err)
 	}
 	if len(cmd.Args) < 3 {

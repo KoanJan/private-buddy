@@ -14,4 +14,5 @@ type ModelCapability struct {
 	UpdatedAt          time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for ModelCapability.
 func (ModelCapability) TableName() string { return "model_capabilities" }

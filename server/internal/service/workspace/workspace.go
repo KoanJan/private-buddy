@@ -20,6 +20,8 @@ import (
 	"strconv"
 
 	"private-buddy-server/internal/config"
+
+	applogger "private-buddy-server/internal/logger"
 )
 
 // getRoot returns the workspace root directory resolved to an absolute path,
@@ -66,6 +68,7 @@ func InitWorkspace(personID, sessionID int64) string {
 
 	notesFile := filepath.Join(metaDir, "notes.md")
 	if _, err := os.Stat(notesFile); err != nil {
+		applogger.Error("failed to stat notes file, attempting to create", "file", notesFile, "error", err)
 		os.WriteFile(notesFile, []byte("# Agent Notes\n\nStructured log of agent's work progress.\n\n"), 0644)
 	}
 

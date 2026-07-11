@@ -8,6 +8,7 @@ interface ConfirmDeleteOptions {
   onOk: () => Promise<void>;
 }
 
+/** Shows a danger-styled confirmation modal for delete operations. */
 export const confirmDelete = (options: ConfirmDeleteOptions) => {
   Modal.confirm({
     title: options.title,

@@ -45,16 +45,16 @@ func NewWriteNotesTool(metaDir string, notesMaxChars int) *WriteNotesTool {
 	}
 }
 
-// ToolNameWriteNotes is the type-safe name constant for WriteNotesTool.
-const ToolNameWriteNotes ToolName = "write_notes"
-
+// Name returns the tool name.
 func (w *WriteNotesTool) Name() ToolName { return ToolNameWriteNotes }
 
+// Description returns a brief description of the tool.
 func (w *WriteNotesTool) Description() string { return "Append structured entries to your notes.md" }
 
+// Schema returns the LLM function definition for the tool.
 func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: string(w.Name()),
+		Name: w.Name().String(),
 		Description: "Append a structured entry to your NOTES. " +
 			"This ADDS a new entry, it does NOT overwrite. " +
 			"Use this to persist important information for future steps. " +

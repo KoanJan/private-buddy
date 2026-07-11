@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"private-buddy-server/pkg/hnsw/heap"
+
 	"golang.org/x/exp/maps"
 )
 
+// Vector is a type alias for a float32 slice representing an embedding vector.
 type Vector = []float32
 
 // Node is a node in the graph.
@@ -20,6 +22,7 @@ type Node[K cmp.Ordered] struct {
 	Value Vector
 }
 
+// MakeNode creates a new Node with the given key and vector.
 func MakeNode[K cmp.Ordered](key K, vec Vector) Node[K] {
 	return Node[K]{Key: key, Value: vec}
 }
@@ -72,6 +75,7 @@ type searchCandidate[K cmp.Ordered] struct {
 	dist float32
 }
 
+// Less compares two search candidates by distance.
 func (s searchCandidate[K]) Less(o searchCandidate[K]) bool {
 	return s.dist < o.dist
 }

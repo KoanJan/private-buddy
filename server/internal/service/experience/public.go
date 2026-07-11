@@ -129,6 +129,7 @@ func SearchPublicExperiences(ctx context.Context, query string, topN int, minSco
 		var exp model.PublicExperience
 		// Only return Active experiences — Generating/Error records are excluded.
 		if err := database.DB.Where("id = ? AND status = ?", v.ExperienceID, model.PublicExperienceStatusActive).First(&exp).Error; err != nil {
+			applogger.Error("failed to find public experience for vector during search", "experience_id", v.ExperienceID, "error", err)
 			continue
 		}
 		candidates = append(candidates, expWithVec{

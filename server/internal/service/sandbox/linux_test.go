@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os/exec"
 	"path/filepath"
+	applogger "private-buddy-server/internal/logger"
 	"runtime"
 	"strings"
 	"testing"
@@ -16,6 +17,8 @@ func requireLinux(t *testing.T) {
 	}
 }
 
+// TestBwrapAvailable_NotInstalled verifies that BwrapAvailable correctly reports
+// whether the bwrap sandbox binary is functional on the current system.
 func TestBwrapAvailable_NotInstalled(t *testing.T) {
 	requireLinux(t)
 
@@ -33,6 +36,8 @@ func TestBwrapAvailable_NotInstalled(t *testing.T) {
 	}
 }
 
+// TestBwrapLookup_EmbeddedOrFallback verifies that bwrapLookup returns a non-empty
+// path to the embedded bwrap binary or an appropriate fallback.
 func TestBwrapLookup_EmbeddedOrFallback(t *testing.T) {
 	requireLinux(t)
 
@@ -47,6 +52,8 @@ func TestBwrapLookup_EmbeddedOrFallback(t *testing.T) {
 	t.Logf("bwrap extracted to: %s", path)
 }
 
+// TestRunLinux_EmptyCmd verifies that Run returns an error when given an empty
+// command slice on Linux.
 func TestRunLinux_EmptyCmd(t *testing.T) {
 	requireLinux(t)
 
@@ -56,12 +63,15 @@ func TestRunLinux_EmptyCmd(t *testing.T) {
 	}
 }
 
+// TestRunLinux_BwrapFallback verifies that Run uses the bwrap sandbox when available
+// and falls back to plain exec when bwrap is not functional.
 func TestRunLinux_BwrapFallback(t *testing.T) {
 	requireLinux(t)
 
 	available, availErr := BwrapAvailable()
 	cmd, _, err := Run("/tmp/ws", 1, 1, []string{"true"})
 	if err != nil {
+		applogger.Error("sandbox test: Run failed on linux bwrap fallback", "error", err)
 		t.Fatalf("Run() returned error: %v", err)
 	}
 	if availErr != nil || !available {
@@ -78,12 +88,15 @@ func TestRunLinux_BwrapFallback(t *testing.T) {
 	}
 }
 
+// TestRunLinux_NonExistentCmd verifies that Run does not return an error for a
+// nonexistent command — the failure is deferred to cmd.Start.
 func TestRunLinux_NonExistentCmd(t *testing.T) {
 	requireLinux(t)
 
 	// Run returns *exec.Cmd without error — actual exec failure happens at cmd.Start()
 	cmd, _, err := Run("/tmp/ws", 1, 1, []string{"nonexistent_command_xyz"})
 	if err != nil {
+		applogger.Error("sandbox test: Run failed on linux non-existent cmd", "error", err)
 		t.Fatalf("Run() should not error on nonexistent command: %v", err)
 	}
 	if cmd == nil {
@@ -91,11 +104,14 @@ func TestRunLinux_NonExistentCmd(t *testing.T) {
 	}
 }
 
+// TestRunLinux_CmdArgsArePassed verifies that command arguments are correctly
+// passed through to the resulting *exec.Cmd.
 func TestRunLinux_CmdArgsArePassed(t *testing.T) {
 	requireLinux(t)
 
 	cmd, _, err := Run("/tmp/ws", 1, 1, []string{"echo", "-n", "test"})
 	if err != nil {
+		applogger.Error("sandbox test: Run failed on linux args test", "error", err)
 		t.Fatalf("Run() returned error: %v", err)
 	}
 	// In plain exec fallback, args should be ["echo", "-n", "test"]
@@ -112,6 +128,8 @@ func isPlainExec(cmd *exec.Cmd) bool {
 	return !strings.Contains(cmd.Path, "pb-bwrap")
 }
 
+// TestBwrapBinary_VariableExists verifies that the bwrapBinary embedded variable
+// is populated on supported platforms and nil on unsupported ones.
 func TestBwrapBinary_VariableExists(t *testing.T) {
 	// bwrapBinary is always defined (nil on unsupported platforms, populated on linux/386|amd64|arm|arm64)
 	supported := runtime.GOOS == "linux" && (runtime.GOARCH == "386" || runtime.GOARCH == "amd64" || runtime.GOARCH == "arm" || runtime.GOARCH == "arm64")

@@ -230,6 +230,7 @@ func propagateSemantic(
 		// Load event vector for this observation
 		var ev model.EventVector
 		if err := database.DB.First(&ev, "event_id = ?", oc.EventID).Error; err != nil {
+			applogger.Error("failed to find event vector during context scoring", "event_id", oc.EventID, "error", err)
 			continue
 		}
 		if len(ev.Embedding) == 0 {

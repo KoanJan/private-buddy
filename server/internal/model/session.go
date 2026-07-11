@@ -13,4 +13,5 @@ type Session struct {
 	UpdatedAt time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Session.
 func (Session) TableName() string { return "sessions" }

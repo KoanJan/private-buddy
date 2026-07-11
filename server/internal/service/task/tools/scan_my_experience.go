@@ -36,18 +36,18 @@ func NewScanExperienceTool(personID int64) *ScanExperienceTool {
 	return &ScanExperienceTool{personID: personID}
 }
 
-// ToolNameScanMyExperience is the type-safe name constant for ScanExperienceTool.
-const ToolNameScanMyExperience ToolName = "scan_my_experience"
-
+// Name returns the tool name.
 func (s *ScanExperienceTool) Name() ToolName { return ToolNameScanMyExperience }
 
+// Description returns a brief description of the tool.
 func (s *ScanExperienceTool) Description() string {
 	return "Search your past experiences by keyword to find relevant lessons"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (s *ScanExperienceTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: string(s.Name()),
+		Name: s.Name().String(),
 		Description: "Search your private experiences (lessons learned from past tasks) by keyword. " +
 			"Returns a list of matching experiences with id, title, description, and when_to_use. " +
 			"Use recall_my_experience with the exp_id to read the full content of a specific experience.",

@@ -87,6 +87,7 @@ func newMultiHandler(handlers ...slog.Handler) *multiHandler {
 	return &multiHandler{handlers: handlers}
 }
 
+// Enabled reports whether any of the underlying handlers are enabled for the given level.
 func (m *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	for _, h := range m.handlers {
 		if h.Enabled(ctx, level) {
@@ -96,6 +97,7 @@ func (m *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return false
 }
 
+// Handle dispatches the log record to all underlying handlers that are enabled for the record's level.
 func (m *multiHandler) Handle(ctx context.Context, r slog.Record) error {
 	for _, h := range m.handlers {
 		if h.Enabled(ctx, r.Level) {
@@ -107,6 +109,7 @@ func (m *multiHandler) Handle(ctx context.Context, r slog.Record) error {
 	return nil
 }
 
+// WithAttrs returns a new multiHandler that includes the given attributes.
 func (m *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	handlers := make([]slog.Handler, len(m.handlers))
 	for i, h := range m.handlers {
@@ -115,6 +118,7 @@ func (m *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return newMultiHandler(handlers...)
 }
 
+// WithGroup returns a new multiHandler that wraps attributes under the given group name.
 func (m *multiHandler) WithGroup(name string) slog.Handler {
 	handlers := make([]slog.Handler, len(m.handlers))
 	for i, h := range m.handlers {

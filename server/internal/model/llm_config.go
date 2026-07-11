@@ -15,4 +15,5 @@ type LLMConfig struct {
 	UpdatedAt   time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for LLMConfig.
 func (LLMConfig) TableName() string { return "llm_configs" }

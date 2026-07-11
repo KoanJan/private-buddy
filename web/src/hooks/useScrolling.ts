@@ -36,6 +36,7 @@ function fadeOut(el: HTMLElement) {
   animationFrames.set(el, requestAnimationFrame(animate));
 }
 
+/** Hook that adds auto-fading scrollbar visibility on scroll events. */
 export default function useScrolling(): void {
   useEffect(() => {
     const handleScroll = (e: Event) => {

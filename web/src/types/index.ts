@@ -69,11 +69,15 @@ export interface SessionWithAgent extends SessionBrief {
   agent_avatar: string;
 }
 
+/** Status constant for completed messages. */
 export const MESSAGE_STATUS_COMPLETED = 1;
 
+/** Temporary session ID used before a real session is created. */
 export const TEMP_SESSION_ID = -1;
 
+/** Interaction type constant for user requests. */
 export const INTERACTION_TYPE_REQUEST = 1;
+/** Interaction type constant for agent responses. */
 export const INTERACTION_TYPE_RESPONSE = 2;
 
 export interface SearchConfig {
@@ -86,8 +90,11 @@ export interface SearchConfig {
 }
 
 // Knowledge base index type constants (must match backend model.KnowledgeBaseIndexType*)
+/** Flat (brute-force) index type. */
 export const KB_INDEX_TYPE_FLAT = 0;
+/** Switching index type. */
 export const KB_INDEX_TYPE_SWITCHING = 1;
+/** HNSW (Hierarchical Navigable Small World) index type. */
 export const KB_INDEX_TYPE_HNSW = 2;
 
 export interface KnowledgeBase {
@@ -104,10 +111,15 @@ export interface KnowledgeBase {
 }
 
 // Document status constants (must match backend model.DocumentStatus*)
+/** Document pending processing. */
 export const DOC_STATUS_PENDING = 0;
+/** Document currently being processed. */
 export const DOC_STATUS_PROCESSING = 1;
+/** Document processed and ready. */
 export const DOC_STATUS_READY = 2;
+/** Document processing failed. */
 export const DOC_STATUS_FAILED = 3;
+/** Document has been deleted. */
 export const DOC_STATUS_DELETED = 4;
 
 export interface Document {
@@ -135,7 +147,9 @@ export interface SearchResult {
 }
 
 // Participant status constants (must match backend model.ParticipantStatus*)
+/** Participant is idle and waiting. */
 export const PARTICIPANT_STATUS_IDLE = 0;
+/** Participant is currently working. */
 export const PARTICIPANT_STATUS_WORKING = 1;
 
 export interface SessionAgentStatus {
@@ -163,12 +177,17 @@ export interface SystemLLMConfig {
 }
 
 // PublicExperience source type constants (must match backend model.PublicExperienceSource*)
+/** Source from file ingestion. */
 export const PUBLIC_EXPERIENCE_SOURCE_INGESTION = 1;
+/** Source from agent share. */
 export const PUBLIC_EXPERIENCE_SOURCE_SHARE = 2;
 
 // PublicExperience status constants (must match backend model.PublicExperienceStatus*)
+/** Experience is being generated. */
 export const PUBLIC_EXPERIENCE_STATUS_GENERATING = 1;
+/** Experience is active and available. */
 export const PUBLIC_EXPERIENCE_STATUS_ACTIVE = 2;
+/** Experience generation encountered an error. */
 export const PUBLIC_EXPERIENCE_STATUS_ERROR = 3;
 
 export interface PublicExperience {

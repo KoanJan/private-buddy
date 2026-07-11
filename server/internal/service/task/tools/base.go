@@ -19,9 +19,56 @@ package tools
 
 import "private-buddy-server/internal/service/llm"
 
-// ToolName is the type-safe identifier for a tool. Each tool implementation
-// should define a package-level constant of this type and return it from Name().
-type ToolName string
+// ToolName is the type-safe identifier for a tool using int enum values.
+// Each tool implementation returns its corresponding constant from Name().
+type ToolName int
+
+// ToolName constants define all known tool identifiers using int enum values.
+const (
+	ToolNameBash               ToolName = iota // bash
+	ToolNameReadTextFile                       // read_text_file
+	ToolNameWriteTextFile                      // write_text_file
+	ToolNameEditTextFile                       // edit_text_file
+	ToolNameWriteNotes                         // write_notes
+	ToolNameWakeMeWhen                         // wake_me_when
+	ToolNameWebSearch                          // web_search
+	ToolNameDeliverTo                          // deliver_to
+	ToolNameScanMyExperience                   // scan_my_experience
+	ToolNameRecallMyExperience                 // recall_my_experience
+)
+
+// nameStrings maps ToolName values to their string representation for LLM function calling.
+var nameStrings = map[ToolName]string{
+	ToolNameBash:               "bash",
+	ToolNameReadTextFile:       "read_text_file",
+	ToolNameWriteTextFile:      "write_text_file",
+	ToolNameEditTextFile:       "edit_text_file",
+	ToolNameWriteNotes:         "write_notes",
+	ToolNameWakeMeWhen:         "wake_me_when",
+	ToolNameWebSearch:          "web_search",
+	ToolNameDeliverTo:          "deliver_to",
+	ToolNameScanMyExperience:   "scan_my_experience",
+	ToolNameRecallMyExperience: "recall_my_experience",
+}
+
+// String returns the string representation of the ToolName for use in LLM function definitions.
+func (t ToolName) String() string {
+	if s, ok := nameStrings[t]; ok {
+		return s
+	}
+	return "unknown"
+}
+
+// FromString converts a string tool name to its ToolName enum value.
+// Returns the zero value (ToolNameBash) if the name is not recognized.
+func FromString(s string) ToolName {
+	for k, v := range nameStrings {
+		if v == s {
+			return k
+		}
+	}
+	return ToolNameBash
+}
 
 // Tool is the interface that all agent tools must implement.
 // Each tool has a unique name, a short description for the system prompt's

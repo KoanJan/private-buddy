@@ -25,18 +25,18 @@ func NewRecallExperienceTool(personID int64) *RecallExperienceTool {
 	return &RecallExperienceTool{personID: personID}
 }
 
-// ToolNameRecallMyExperience is the type-safe name constant for RecallExperienceTool.
-const ToolNameRecallMyExperience ToolName = "recall_my_experience"
-
+// Name returns the tool name.
 func (r *RecallExperienceTool) Name() ToolName { return ToolNameRecallMyExperience }
 
+// Description returns a brief description of the tool.
 func (r *RecallExperienceTool) Description() string {
 	return "Read the full content of a specific experience by its exp_id"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (r *RecallExperienceTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: string(r.Name()),
+		Name: r.Name().String(),
 		Description: "Read the full content of one of your private experiences by its exp_id. " +
 			"Returns all fields: id, title, description, when_to_use, guidelines, pitfalls, and procedure. " +
 			"The content is never truncated — you receive the complete experience text.",

@@ -149,6 +149,7 @@ func candidatesToResults(candidates []searchCandidate, kbID int64) []schema.Sear
 	for _, c := range candidates {
 		var chunk model.DocumentChunk
 		if err := database.DB.First(&chunk, int64(c.ChunkID)).Error; err != nil {
+			applogger.Error("failed to find document chunk in retriever", "chunk_id", c.ChunkID, "error", err)
 			continue
 		}
 		if chunk.Deleted == 1 {
@@ -157,6 +158,7 @@ func candidatesToResults(candidates []searchCandidate, kbID int64) []schema.Sear
 
 		var doc model.Document
 		if err := database.DB.Select("id, title").First(&doc, chunk.DocumentID).Error; err != nil {
+			applogger.Error("failed to find document in retriever", "document_id", chunk.DocumentID, "error", err)
 			continue
 		}
 

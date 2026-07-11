@@ -4,6 +4,7 @@ function key(name: string): string {
   return `${STORAGE_PREFIX}-${name}`;
 }
 
+/** Typed wrapper around localStorage with JSON serialization. */
 export const storage = {
   get<T = string>(name: string): T | null {
     try {

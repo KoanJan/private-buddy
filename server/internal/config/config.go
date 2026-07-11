@@ -26,6 +26,7 @@ import (
 	"strconv"
 )
 
+// AppVersion is the current application version.
 const AppVersion = "0.0.29"
 
 // globalSettings is the singleton configuration instance.

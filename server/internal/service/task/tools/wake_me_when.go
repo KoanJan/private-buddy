@@ -45,18 +45,18 @@ func NewWakeMeWhenTool(personID, sessionID, triggerMessageID int64) *WakeMeWhenT
 	}
 }
 
-// ToolNameWakeMeWhen is the type-safe name constant for WakeMeWhenTool.
-const ToolNameWakeMeWhen ToolName = "wake_me_when"
-
+// Name returns the tool name.
 func (w *WakeMeWhenTool) Name() ToolName { return ToolNameWakeMeWhen }
 
+// Description returns a brief description of the tool.
 func (w *WakeMeWhenTool) Description() string {
 	return "Set an alarm to wake yourself at a future time (e.g., reminders, follow-ups)"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (w *WakeMeWhenTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name: string(w.Name()),
+		Name: w.Name().String(),
 		Description: "Set an alarm to wake yourself up at a future time. " +
 			"When the alarm fires, you will receive a notification with the context you provide. " +
 			"This is YOUR self-wake mechanism — it does NOT create OS-level notifications or system alerts. " +

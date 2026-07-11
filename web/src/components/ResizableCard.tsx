@@ -11,6 +11,7 @@ interface ResizableCardProps {
   className?: string;
 }
 
+/** Card component with a draggable resize handle on one side. */
 export default function ResizableCard({
   children,
   defaultWidth = 480,

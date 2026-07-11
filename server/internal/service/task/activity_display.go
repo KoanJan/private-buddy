@@ -95,7 +95,7 @@ func parseResponseInteraction(interaction *model.Interaction) []schema.ActivityE
 
 // buildToolCallEvent converts a raw tool call into an ActivityEvent with tool name and target.
 func buildToolCallEvent(timeStr string, tc *rawToolCall) schema.ActivityEvent {
-	keys := argumentKeys[tools.ToolName(tc.Function.Name)]
+	keys := argumentKeys[tools.FromString(tc.Function.Name)]
 	target := ""
 	if len(keys) > 0 {
 		target = extractTarget(tc.Function.Arguments, keys)

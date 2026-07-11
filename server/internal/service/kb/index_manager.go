@@ -360,6 +360,7 @@ func (m *indexManager) searchHNSW(query []float32, topK int) ([]searchCandidate,
 			"SELECT embedding FROM vectors WHERE chunk_id = ?", n.Key,
 		).Scan(&blob)
 		if err != nil {
+			applogger.Error("failed to scan vector embedding in index manager", "chunk_id", n.Key, "error", err)
 			continue
 		}
 		vec := vectorstore.BlobToFloat32Slice(blob)

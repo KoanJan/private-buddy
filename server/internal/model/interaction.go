@@ -27,4 +27,5 @@ type Interaction struct {
 	UpdatedAt time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Interaction.
 func (Interaction) TableName() string { return "interactions" }

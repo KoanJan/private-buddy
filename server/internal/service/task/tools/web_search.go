@@ -11,9 +11,6 @@ import (
 	"private-buddy-server/internal/service/llm"
 )
 
-// ToolNameWebSearch is the type-safe name constant for WebSearchTool.
-const ToolNameWebSearch ToolName = "web_search"
-
 // defaultSearchNumResults is the default number of web search results returned.
 const defaultSearchNumResults = 5
 
@@ -29,13 +26,16 @@ func NewWebSearchTool(searchConfig *model.SearchConfig) *WebSearchTool {
 	return &WebSearchTool{searchConfig: searchConfig}
 }
 
+// Name returns the tool name.
 func (w *WebSearchTool) Name() ToolName { return ToolNameWebSearch }
 
+// Description returns a brief description of the tool.
 func (w *WebSearchTool) Description() string { return "Search the web for information" }
 
+// Schema returns the LLM function definition for the tool.
 func (w *WebSearchTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name:        string(w.Name()),
+		Name:        w.Name().String(),
 		Description: "Search the web for information. Use this tool to find current information, documentation, or answers to questions.",
 		Parameters: map[string]interface{}{
 			"type": "object",

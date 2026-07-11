@@ -58,11 +58,12 @@ function buildBaseUrl(): string {
 // Static base URL for axios instance creation (before port resolution).
 const API_BASE_URL = `${buildBaseUrl()}/api`;
 
-// Dynamic base URLs that reflect the resolved port after IPC.
+/** Returns the dynamic API base URL reflecting the resolved port. */
 export function getDynamicApiBaseUrl(): string {
   return `${buildBaseUrl()}/api`;
 }
 
+/** Returns the dynamic server base URL reflecting the resolved port. */
 export function getDynamicServerBaseUrl(): string {
   return buildBaseUrl();
 }
@@ -120,6 +121,7 @@ export async function initApiClient(): Promise<number> {
   return resolvePort();
 }
 
+/** API client for session CRUD operations. */
 export const sessionApi = {
   list: () => api.get<Session[]>('/sessions'),
   get: (id: number) => api.get<Session>(`/sessions/${id}`),
@@ -132,6 +134,7 @@ export const sessionApi = {
     `${getDynamicServerBaseUrl()}/api/sessions/${id}/received/file?delivery=${encodeURIComponent(delivery)}&path=${encodeURIComponent(path)}`,
 };
 
+/** API client for message operations. */
 export const messageApi = {
   list: (sessionId: number) => api.get<Message[]>(`/messages/${sessionId}`),
   send: (sessionId: number, content: string) =>
@@ -140,6 +143,7 @@ export const messageApi = {
     api.post<{session_id: number, trigger_message_id: number}>(`/chat/new?message=${encodeURIComponent(content)}${agentId ? `&agent_id=${agentId}` : ''}${title ? `&title=${encodeURIComponent(title)}` : ''}`),
 };
 
+/** API client for LLM configuration management. */
 export const llmConfigApi = {
   list: () => api.get<LLMConfig[]>('/llm-configs'),
   get: (id: number) => api.get<LLMConfig>(`/llm-configs/${id}`),
@@ -148,11 +152,13 @@ export const llmConfigApi = {
   delete: (id: number) => api.delete(`/llm-configs/${id}`),
 };
 
+/** API client for embedding configuration. */
 export const embeddingConfigApi = {
   get: () => api.get<EmbeddingConfig>('/embedding-config'),
   update: (data: Partial<EmbeddingConfig>) => api.put<EmbeddingConfig>('/embedding-config', data),
 };
 
+/** API client for agent CRUD operations. */
 export const agentApi = {
   list: () => api.get<Agent[]>('/agents'),
   listWithSessions: () => api.get<AgentWithSessions[]>('/agents/with-sessions'),
@@ -162,20 +168,24 @@ export const agentApi = {
   delete: (id: number) => api.delete(`/agents/${id}`),
 };
 
+/** API client for search configuration. */
 export const searchConfigApi = {
   get: () => api.get<SearchConfig>('/search-config'),
   update: (data: Partial<SearchConfig>) => api.put<SearchConfig>('/search-config', data),
 };
 
+/** API client for user profile management. */
 export const userProfileApi = {
   get: () => api.get<UserProfile>('/user-profile'),
   upsert: (data: { name: string; bio?: string }) => api.put<UserProfile>('/user-profile', data),
 };
 
+/** API client for person identity retrieval. */
 export const personApi = {
   me: () => api.get<{ id: number; name: string; type: number }>('/persons/me'),
 };
 
+/** API client for file upload operations. */
 export const uploadApi = {
   uploadAvatar: (file: File) => {
     const formData = new FormData();
@@ -186,20 +196,24 @@ export const uploadApi = {
   },
 };
 
+/** API client for chat and agent status operations. */
 export const chatApi = {
   getSessionAgents: (sessionId: number) =>
     api.get<SessionAgentStatus[]>(`/chat/agents/${sessionId}`),
 };
 
+/** Returns the full avatar URL for the given avatar filename. */
 export const getAvatarUrl = (avatar: string) => {
   if (!avatar) return '';
   return `${getDynamicServerBaseUrl()}/avatars/${avatar}`;
 };
 
+/** API client for application version retrieval. */
 export const versionApi = {
   get: () => api.get<{ version: string }>('/version'),
 };
 
+/** API client for knowledge base CRUD and search operations. */
 export const kbApi = {
   list: () => api.get<KnowledgeBase[]>('/kb'),
   get: (id: number) => api.get<KnowledgeBase>(`/kb/${id}`),
@@ -223,12 +237,14 @@ export const kbApi = {
     api.post<SearchResult[]>('/kb/search', { kb_ids: kbIds, query, top_k: topK }),
 };
 
+/** API client for system-level LLM configuration. */
 export const systemLLMConfigApi = {
   get: () => api.get<SystemLLMConfig>('/public-experiences/system-llm-config'),
   update: (data: { llm_config_id: number }) =>
     api.put<SystemLLMConfig>('/public-experiences/system-llm-config', data),
 };
 
+/** API client for public experience management. */
 export const publicExperienceApi = {
   list: () => api.get<PublicExperience[]>('/public-experiences'),
   get: (id: number) => api.get<PublicExperience>(`/public-experiences/${id}`),
@@ -238,6 +254,7 @@ export const publicExperienceApi = {
   redistill: (id: number) => api.post(`/public-experiences/${id}/redistill`),
 };
 
+/** API client for uploaded skill retrieval. */
 export const uploadedSkillApi = {
   get: (id: number) => api.get<UploadedSkill>(`/uploaded-skills/${id}`),
 };

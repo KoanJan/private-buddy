@@ -22,12 +22,14 @@ import (
 	"private-buddy-server/internal/service/workspace"
 )
 
+// Handler handles core API HTTP requests.
 type Handler struct {
 	crudLLM     *service.CRUDBase[model.LLMConfig]
 	crudAgent   *service.CRUDBase[model.Agent]
 	crudSession *service.CRUDBase[model.Session]
 }
 
+// NewHandler creates a new Handler instance.
 func NewHandler() *Handler {
 	return &Handler{
 		crudLLM:     service.NewCRUDBase[model.LLMConfig]("LLM config"),
@@ -36,10 +38,12 @@ func NewHandler() *Handler {
 	}
 }
 
+// Root handles the API root endpoint.
 func (h *Handler) Root(c *gin.Context) {
 	response.SuccessMessage(c, "Private Buddy API is running", nil)
 }
 
+// GetVersion handles retrieving the application version.
 func (h *Handler) GetVersion(c *gin.Context) {
 	var versionRecord model.DBVersion
 	err := database.DB.Order("id DESC").First(&versionRecord).Error
@@ -50,6 +54,7 @@ func (h *Handler) GetVersion(c *gin.Context) {
 	response.Success(c, gin.H{"version": version})
 }
 
+// CreateLLMConfig handles creating a new LLM configuration.
 func (h *Handler) CreateLLMConfig(c *gin.Context) {
 	var req schema.LLMConfigCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -72,6 +77,7 @@ func (h *Handler) CreateLLMConfig(c *gin.Context) {
 	response.Success(c, schema.NewLLMConfigResponse(&entity))
 }
 
+// ListLLMConfigs handles listing all LLM configurations.
 func (h *Handler) ListLLMConfigs(c *gin.Context) {
 	skip, limit := getPagination(c)
 	entities, err := h.crudLLM.GetMulti(skip, limit)
@@ -82,6 +88,7 @@ func (h *Handler) ListLLMConfigs(c *gin.Context) {
 	response.Success(c, schema.NewLLMConfigResponseList(entities))
 }
 
+// GetLLMConfig handles retrieving a single LLM configuration by ID.
 func (h *Handler) GetLLMConfig(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudLLM.Get(id)
@@ -92,6 +99,7 @@ func (h *Handler) GetLLMConfig(c *gin.Context) {
 	response.Success(c, schema.NewLLMConfigResponse(entity))
 }
 
+// UpdateLLMConfig handles updating an existing LLM configuration.
 func (h *Handler) UpdateLLMConfig(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudLLM.Get(id)
@@ -114,6 +122,7 @@ func (h *Handler) UpdateLLMConfig(c *gin.Context) {
 	response.Success(c, schema.NewLLMConfigResponse(entity))
 }
 
+// DeleteLLMConfig handles deleting an LLM configuration.
 func (h *Handler) DeleteLLMConfig(c *gin.Context) {
 	id := getPathID(c)
 	_, err := h.crudLLM.Get(id)
@@ -271,6 +280,7 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 	})
 }
 
+// CreateAgent handles creating a new agent.
 func (h *Handler) CreateAgent(c *gin.Context) {
 	var req schema.AgentCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -297,6 +307,7 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 	response.Success(c, schema.NewAgentResponse(entity, person))
 }
 
+// ListAgents handles listing all agents.
 func (h *Handler) ListAgents(c *gin.Context) {
 	skip, limit := getPagination(c)
 	entities, err := h.crudAgent.GetMulti(skip, limit)
@@ -309,6 +320,7 @@ func (h *Handler) ListAgents(c *gin.Context) {
 	response.Success(c, schema.NewAgentResponseList(entities, personsMap))
 }
 
+// ListAgentsWithSessions handles listing all agents with their sessions.
 func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 	var agents []model.Agent
 	if err := database.DB.Order("updated_at DESC").Find(&agents).Error; err != nil {
@@ -353,6 +365,7 @@ func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// GetAgent handles retrieving a single agent by ID.
 func (h *Handler) GetAgent(c *gin.Context) {
 	id := getPathID(c)
 	agent, person, err := service.GetAgentWithPerson(id)
@@ -363,6 +376,7 @@ func (h *Handler) GetAgent(c *gin.Context) {
 	response.Success(c, schema.NewAgentResponse(agent, person))
 }
 
+// UpdateAgent handles updating an existing agent.
 func (h *Handler) UpdateAgent(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudAgent.Get(id)
@@ -423,6 +437,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	response.Success(c, schema.NewAgentResponse(agent, person))
 }
 
+// DeleteAgent handles deleting an agent and its resources.
 func (h *Handler) DeleteAgent(c *gin.Context) {
 	id := getPathID(c)
 	agent, err := h.crudAgent.Get(id)
@@ -452,6 +467,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 	response.SuccessMessage(c, "Agent deleted successfully", nil)
 }
 
+// CreateSession handles creating a new session.
 func (h *Handler) CreateSession(c *gin.Context) {
 	var req schema.SessionCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -473,6 +489,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	response.Success(c, schema.NewSessionResponse(&entity))
 }
 
+// ListSessions handles listing all sessions.
 func (h *Handler) ListSessions(c *gin.Context) {
 	skip, limit := getPagination(c)
 	entities, err := h.crudSession.GetMulti(skip, limit)
@@ -483,6 +500,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	response.Success(c, schema.NewSessionResponseList(entities))
 }
 
+// GetSession handles retrieving a single session by ID.
 func (h *Handler) GetSession(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudSession.Get(id)
@@ -493,6 +511,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 	response.Success(c, schema.NewSessionResponse(entity))
 }
 
+// UpdateSession handles updating an existing session.
 func (h *Handler) UpdateSession(c *gin.Context) {
 	id := getPathID(c)
 	entity, err := h.crudSession.Get(id)
@@ -515,6 +534,7 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 	response.Success(c, schema.NewSessionResponse(entity))
 }
 
+// DeleteSession handles deleting a session and its resources.
 func (h *Handler) DeleteSession(c *gin.Context) {
 	id := getPathID(c)
 
@@ -725,6 +745,7 @@ func (h *Handler) GetReceivedFile(c *gin.Context) {
 	c.Data(200, "application/octet-stream", data)
 }
 
+// CreateMessage handles creating a new message in a session.
 func (h *Handler) CreateMessage(c *gin.Context) {
 	sessionID := getPathID(c)
 	var session model.Session
@@ -764,6 +785,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 	response.Success(c, schema.NewMessageResponse(&entity))
 }
 
+// ListMessages handles listing messages in a session.
 func (h *Handler) ListMessages(c *gin.Context) {
 	sessionID := getPathID(c)
 	var session model.Session
@@ -780,11 +802,13 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	response.Success(c, schema.NewMessageResponseList(messages))
 }
 
+// GetSearchConfig handles retrieving the search configuration.
 func (h *Handler) GetSearchConfig(c *gin.Context) {
 	config := service.GetSearchConfig()
 	response.Success(c, schema.NewSearchConfigResponse(config))
 }
 
+// UpdateSearchConfig handles updating the search configuration.
 func (h *Handler) UpdateSearchConfig(c *gin.Context) {
 	var req schema.SearchConfigUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {

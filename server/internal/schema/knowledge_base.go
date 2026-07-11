@@ -6,16 +6,19 @@ import (
 	"private-buddy-server/internal/model"
 )
 
+// KnowledgeBaseCreate represents the input for creating a knowledge base.
 type KnowledgeBaseCreate struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
 }
 
+// KnowledgeBaseUpdate contains the mutable fields for updating a knowledge base.
 type KnowledgeBaseUpdate struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 }
 
+// KnowledgeBaseResponse represents the API response for a knowledge base.
 type KnowledgeBaseResponse struct {
 	ID            int64     `json:"id"`
 	Name          string    `json:"name"`
@@ -29,6 +32,7 @@ type KnowledgeBaseResponse struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// NewKnowledgeBaseResponse converts a model.KnowledgeBase to a KnowledgeBaseResponse.
 func NewKnowledgeBaseResponse(m *model.KnowledgeBase) *KnowledgeBaseResponse {
 	return &KnowledgeBaseResponse{
 		ID:            m.ID,
@@ -44,6 +48,7 @@ func NewKnowledgeBaseResponse(m *model.KnowledgeBase) *KnowledgeBaseResponse {
 	}
 }
 
+// NewKnowledgeBaseResponseList converts a list of model.KnowledgeBase to KnowledgeBaseResponse list.
 func NewKnowledgeBaseResponseList(entities []model.KnowledgeBase) []*KnowledgeBaseResponse {
 	result := make([]*KnowledgeBaseResponse, 0, len(entities))
 	for i := range entities {
@@ -52,6 +57,7 @@ func NewKnowledgeBaseResponseList(entities []model.KnowledgeBase) []*KnowledgeBa
 	return result
 }
 
+// BuildUpdates builds a map of non-nil update fields from KnowledgeBaseUpdate.
 func (req *KnowledgeBaseUpdate) BuildUpdates() map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.Name != nil {

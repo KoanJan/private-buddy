@@ -15,4 +15,5 @@ type AgentDelivery struct {
 	CreatedAt   time.Time `gorm:"not null;autoCreateTime;column:created_at" json:"created_at"`
 }
 
+// TableName returns the database table name for AgentDelivery.
 func (AgentDelivery) TableName() string { return "agent_deliveries" }

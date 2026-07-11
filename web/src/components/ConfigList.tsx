@@ -40,6 +40,7 @@ interface ConfigListProps<T extends { id: number }> {
   editInitialValues?: (item: T) => Record<string, unknown>;
 }
 
+/** Generic reusable list component for CRUD config management with cards. */
 export default function ConfigList<T extends { id: number }>({
   api,
   formFields,

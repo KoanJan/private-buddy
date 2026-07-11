@@ -19,6 +19,7 @@ type Document struct {
 	UpdatedAt       time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Document.
 func (Document) TableName() string { return "documents" }
 
 // Document status constants

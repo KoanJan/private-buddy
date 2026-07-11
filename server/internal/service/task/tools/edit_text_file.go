@@ -35,18 +35,18 @@ func NewEditTextFileTool(personID, sessionID int64) *EditTextFileTool {
 	return &EditTextFileTool{personID: personID, sessionID: sessionID}
 }
 
-// ToolNameEditTextFile is the type-safe name constant for EditTextFileTool.
-const ToolNameEditTextFile ToolName = "edit_text_file"
-
+// Name returns the tool name.
 func (e *EditTextFileTool) Name() ToolName { return ToolNameEditTextFile }
 
+// Description returns a brief description of the tool.
 func (e *EditTextFileTool) Description() string {
 	return "Make precise text replacements in existing files"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (e *EditTextFileTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name:        string(e.Name()),
+		Name:        e.Name().String(),
 		Description: "Edit an existing file by replacing old_str with new_str. Uses exact substring matching — copy old_str EXACTLY from read_text_file output. Can only modify existing files; use write_text_file to create new files.",
 		Parameters: map[string]interface{}{
 			"type": "object",

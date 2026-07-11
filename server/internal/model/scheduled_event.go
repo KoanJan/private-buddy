@@ -50,4 +50,5 @@ type ScheduledEvent struct {
 	UpdatedAt        time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for ScheduledEvent.
 func (ScheduledEvent) TableName() string { return "scheduled_events" }

@@ -6,6 +6,7 @@ import (
 	"private-buddy-server/internal/model"
 )
 
+// DocumentResponse represents the API response for a document.
 type DocumentResponse struct {
 	ID              int64     `json:"id"`
 	KnowledgeBaseID int64     `json:"knowledge_base_id"`
@@ -21,6 +22,7 @@ type DocumentResponse struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// NewDocumentResponse converts a model.Document to a DocumentResponse.
 func NewDocumentResponse(m *model.Document) *DocumentResponse {
 	return &DocumentResponse{
 		ID:              m.ID,
@@ -38,6 +40,7 @@ func NewDocumentResponse(m *model.Document) *DocumentResponse {
 	}
 }
 
+// NewDocumentResponseList converts a list of model.Document to DocumentResponse list.
 func NewDocumentResponseList(entities []model.Document) []*DocumentResponse {
 	result := make([]*DocumentResponse, 0, len(entities))
 	for i := range entities {
@@ -46,17 +49,20 @@ func NewDocumentResponseList(entities []model.Document) []*DocumentResponse {
 	return result
 }
 
+// SearchRequest represents a search request within a knowledge base.
 type SearchRequest struct {
 	Query string `json:"query" binding:"required"`
 	TopK  int    `json:"top_k"`
 }
 
+// MultiKBSearchRequest represents a search request across multiple knowledge bases.
 type MultiKBSearchRequest struct {
 	KBIDs []int64 `json:"kb_ids" binding:"required"`
 	Query string  `json:"query" binding:"required"`
 	TopK  int     `json:"top_k"`
 }
 
+// SearchResult represents a single search result chunk.
 type SearchResult struct {
 	ChunkID         int64   `json:"chunk_id"`
 	DocumentID      int64   `json:"document_id"`

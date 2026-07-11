@@ -38,4 +38,5 @@ type AgentExperience struct {
 	UpdatedAt   time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for AgentExperience.
 func (AgentExperience) TableName() string { return "agent_experiences" }

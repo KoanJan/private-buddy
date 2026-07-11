@@ -14,12 +14,14 @@ import (
 	"private-buddy-server/internal/service/workspace"
 )
 
+// TestDeliverToTool_Execute tests the Execute method of DeliverToTool.
 func TestDeliverToTool_Execute(t *testing.T) {
 	// Setup a temp workspace root. Must set before any config access.
 	tmpRoot := t.TempDir()
 	// macOS temp dirs are symlinks — resolve to real path for workspace safety checks
 	realRoot, err := filepath.EvalSymlinks(tmpRoot)
 	if err != nil {
+		applogger.Error("failed to resolve temp dir symlink", "error", err)
 		t.Fatalf("failed to resolve temp dir: %v", err)
 	}
 	os.Setenv("DATA_ROOT", realRoot)
@@ -45,16 +47,19 @@ func TestDeliverToTool_Execute(t *testing.T) {
 	outputDir := workspace.GetOutputDir(personID, sessionID)
 	testFile := filepath.Join(outputDir, "report.txt")
 	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		applogger.Error("failed to create test file", "error", err)
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
 	// Create a subdirectory with files
 	subDir := filepath.Join(outputDir, "dist")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
+		applogger.Error("failed to create test subdirectory", "error", err)
 		t.Fatalf("failed to create subdir: %v", err)
 	}
 	subFile := filepath.Join(subDir, "app.js")
 	if err := os.WriteFile(subFile, []byte("console.log('hi')"), 0644); err != nil {
+		applogger.Error("failed to create test sub file", "error", err)
 		t.Fatalf("failed to create sub file: %v", err)
 	}
 
@@ -87,6 +92,7 @@ func TestDeliverToTool_Execute(t *testing.T) {
 			"remark":        "Test delivery",
 		})
 		if err != nil {
+			applogger.Error("deliver single file to user failed", "error", err)
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !strings.Contains(result, "delivery") {
@@ -102,6 +108,7 @@ func TestDeliverToTool_Execute(t *testing.T) {
 		copiedFile := filepath.Join(userReceived, dir1, "report.txt")
 		data, err := os.ReadFile(copiedFile)
 		if err != nil {
+			applogger.Error("failed to read copied delivery file", "error", err)
 			t.Fatalf("copied file not found: %v", err)
 		}
 		if string(data) != "hello world" {
@@ -115,6 +122,7 @@ func TestDeliverToTool_Execute(t *testing.T) {
 			"paths":         []interface{}{"dist"},
 		})
 		if err != nil {
+			applogger.Error("deliver directory to user failed", "error", err)
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !strings.Contains(result, "delivery") {
@@ -127,6 +135,7 @@ func TestDeliverToTool_Execute(t *testing.T) {
 		copiedFile := filepath.Join(userReceived, dir2, "dist", "app.js")
 		data, err := os.ReadFile(copiedFile)
 		if err != nil {
+			applogger.Error("failed to read copied delivery file", "error", err)
 			t.Fatalf("copied file not found: %v", err)
 		}
 		if string(data) != "console.log('hi')" {
@@ -141,9 +150,11 @@ func TestDeliverToTool_Execute(t *testing.T) {
 
 		// delivery dirs should both exist
 		if _, err := os.Stat(filepath.Join(userReceived, dir1, "report.txt")); err != nil {
+			applogger.Error("delivery 1 file missing", "error", err)
 			t.Errorf("delivery 1 should still exist: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(userReceived, dir2, "dist", "app.js")); err != nil {
+			applogger.Error("delivery 2 file missing", "error", err)
 			t.Errorf("delivery 2 should still exist: %v", err)
 		}
 	})
@@ -192,6 +203,7 @@ func TestDeliverToTool_Execute(t *testing.T) {
 	})
 }
 
+// TestDeliverToTool_Schema tests the Schema method of DeliverToTool.
 func TestDeliverToTool_Schema(t *testing.T) {
 	tool := NewDeliverToTool(1, 100)
 	schema := tool.Schema()
@@ -224,6 +236,7 @@ func TestDeliverToTool_Schema(t *testing.T) {
 	}
 }
 
+// TestDeliverToTool_DBRecord verifies the AgentDelivery model JSON serialization.
 func TestDeliverToTool_DBRecord(t *testing.T) {
 	// This test verifies the AgentDelivery model can be marshaled/unmarshaled
 	paths := []string{"report.txt", "dist/app.js"}
@@ -231,6 +244,7 @@ func TestDeliverToTool_DBRecord(t *testing.T) {
 
 	var decoded []string
 	if err := json.Unmarshal(pathsJSON, &decoded); err != nil {
+		applogger.Error("failed to unmarshal delivery paths JSON", "error", err)
 		t.Fatalf("failed to unmarshal paths JSON: %v", err)
 	}
 	if len(decoded) != 2 {

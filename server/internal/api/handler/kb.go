@@ -21,11 +21,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// KBHandler handles knowledge base related HTTP requests.
 type KBHandler struct {
 	crudKB  *service.CRUDBase[model.KnowledgeBase]
 	crudDoc *service.CRUDBase[model.Document]
 }
 
+// NewKBHandler creates a new KBHandler instance.
 func NewKBHandler() *KBHandler {
 	return &KBHandler{
 		crudKB:  service.NewCRUDBase[model.KnowledgeBase]("Knowledge base"),
@@ -33,6 +35,7 @@ func NewKBHandler() *KBHandler {
 	}
 }
 
+// CreateKnowledgeBase handles creating a new knowledge base.
 func (h *KBHandler) CreateKnowledgeBase(c *gin.Context) {
 	var req schema.KnowledgeBaseCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -53,6 +56,7 @@ func (h *KBHandler) CreateKnowledgeBase(c *gin.Context) {
 	response.Success(c, entity)
 }
 
+// ListKnowledgeBases handles listing all knowledge bases.
 func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
 	skip, limit := getPagination(c)
 	entities, err := h.crudKB.GetMulti(skip, limit)
@@ -81,6 +85,7 @@ func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
 	response.Success(c, results)
 }
 
+// GetKnowledgeBase handles retrieving a single knowledge base by ID.
 func (h *KBHandler) GetKnowledgeBase(c *gin.Context) {
 	entity, err := h.crudKB.Get(getPathID(c))
 	if err != nil {
@@ -90,6 +95,7 @@ func (h *KBHandler) GetKnowledgeBase(c *gin.Context) {
 	response.Success(c, entity)
 }
 
+// UpdateKnowledgeBase handles updating an existing knowledge base.
 func (h *KBHandler) UpdateKnowledgeBase(c *gin.Context) {
 	var req schema.KnowledgeBaseUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -115,6 +121,7 @@ func (h *KBHandler) UpdateKnowledgeBase(c *gin.Context) {
 	response.Success(c, entity)
 }
 
+// DeleteKnowledgeBase handles deleting a knowledge base and its resources.
 func (h *KBHandler) DeleteKnowledgeBase(c *gin.Context) {
 	id := getPathID(c)
 	if err := kb.DeleteKnowledgeBase(id); err != nil {
@@ -124,6 +131,7 @@ func (h *KBHandler) DeleteKnowledgeBase(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// ListDocuments handles listing documents in a knowledge base.
 func (h *KBHandler) ListDocuments(c *gin.Context) {
 	kbID := getPathID(c)
 	var documents []model.Document
@@ -134,6 +142,7 @@ func (h *KBHandler) ListDocuments(c *gin.Context) {
 	response.Success(c, documents)
 }
 
+// UploadDocument handles uploading a document to a knowledge base.
 func (h *KBHandler) UploadDocument(c *gin.Context) {
 	kbID := getPathID(c)
 
@@ -188,6 +197,7 @@ func (h *KBHandler) UploadDocument(c *gin.Context) {
 	response.Success(c, doc)
 }
 
+// GetDocument handles retrieving a single document by ID.
 func (h *KBHandler) GetDocument(c *gin.Context) {
 	docID := getPathIDByParam(c, "doc_id")
 	entity, err := h.crudDoc.Get(docID)
@@ -198,6 +208,7 @@ func (h *KBHandler) GetDocument(c *gin.Context) {
 	response.Success(c, entity)
 }
 
+// DeleteDocument handles deleting a document and its chunks.
 func (h *KBHandler) DeleteDocument(c *gin.Context) {
 	docID := getPathIDByParam(c, "doc_id")
 	var doc model.Document
@@ -235,6 +246,7 @@ func (h *KBHandler) DeleteDocument(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// SearchKB handles searching within a knowledge base.
 func (h *KBHandler) SearchKB(c *gin.Context) {
 	kbID := getPathID(c)
 	var req schema.SearchRequest
@@ -251,6 +263,7 @@ func (h *KBHandler) SearchKB(c *gin.Context) {
 	response.Success(c, results)
 }
 
+// SearchMultiKB handles searching across multiple knowledge bases.
 func (h *KBHandler) SearchMultiKB(c *gin.Context) {
 	var req schema.MultiKBSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

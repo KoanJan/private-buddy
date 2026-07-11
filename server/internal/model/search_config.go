@@ -13,6 +13,7 @@ type SearchConfig struct {
 	UpdatedAt   time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for SearchConfig.
 func (SearchConfig) TableName() string { return "search_config" }
 
 // IsAvailable returns true if the search provider is active and has a valid API key.

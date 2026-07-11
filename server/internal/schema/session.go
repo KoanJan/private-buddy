@@ -6,18 +6,22 @@ import (
 	"private-buddy-server/internal/model"
 )
 
+// SessionBase contains the common fields for session creation.
 type SessionBase struct {
 	Title   *string `json:"title"`
 	AgentID int64   `json:"agent_id" binding:"required"`
 }
 
+// SessionCreate is an alias of SessionBase for creating sessions.
 type SessionCreate SessionBase
 
+// SessionUpdate contains the mutable fields for updating a session.
 type SessionUpdate struct {
 	Title   *string `json:"title"`
 	AgentID *int64  `json:"agent_id"`
 }
 
+// SessionResponse represents the API response for a session.
 type SessionResponse struct {
 	ID        int64     `json:"id"`
 	Title     string    `json:"title"`
@@ -26,6 +30,7 @@ type SessionResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// NewSessionResponse converts a model.Session to a SessionResponse.
 func NewSessionResponse(m *model.Session) *SessionResponse {
 	return &SessionResponse{
 		ID:        m.ID,
@@ -36,6 +41,7 @@ func NewSessionResponse(m *model.Session) *SessionResponse {
 	}
 }
 
+// NewSessionResponseList converts a list of model.Session to SessionResponse list.
 func NewSessionResponseList(entities []model.Session) []*SessionResponse {
 	result := make([]*SessionResponse, 0, len(entities))
 	for i := range entities {
@@ -44,6 +50,7 @@ func NewSessionResponseList(entities []model.Session) []*SessionResponse {
 	return result
 }
 
+// BuildUpdates builds a map of non-nil update fields from SessionUpdate.
 func (req *SessionUpdate) BuildUpdates() map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.Title != nil {

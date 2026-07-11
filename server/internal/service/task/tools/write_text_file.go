@@ -33,18 +33,18 @@ func NewWriteTextFileTool(personID, sessionID int64) *WriteTextFileTool {
 	return &WriteTextFileTool{personID: personID, sessionID: sessionID}
 }
 
-// ToolNameWriteTextFile is the type-safe name constant for WriteTextFileTool.
-const ToolNameWriteTextFile ToolName = "write_text_file"
-
+// Name returns the tool name.
 func (w *WriteTextFileTool) Name() ToolName { return ToolNameWriteTextFile }
 
+// Description returns a brief description of the tool.
 func (w *WriteTextFileTool) Description() string {
 	return "Create, overwrite, or append to text files"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (w *WriteTextFileTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name:        string(w.Name()),
+		Name:        w.Name().String(),
 		Description: "Write content to a text file. Supports overwrite (replace entire file) and append (add to end) modes. Use this instead of bash echo/heredoc for writing files.",
 		Parameters: map[string]interface{}{
 			"type": "object",

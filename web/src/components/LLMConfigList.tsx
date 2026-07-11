@@ -18,6 +18,7 @@ interface LLMConfigListProps {
   beforeDelete?: (id: number) => Promise<boolean>;
 }
 
+/** LLM configuration list component wrapping ConfigList with LLM-specific fields. */
 export default function LLMConfigList({ onSelectConfig, showCreate, onCreateClose, onConfigChanged, beforeDelete }: LLMConfigListProps) {
   return (
     <ConfigList<LLMConfig>

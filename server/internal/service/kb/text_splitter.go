@@ -3,6 +3,8 @@ package kb
 import (
 	"strings"
 
+	applogger "private-buddy-server/internal/logger"
+
 	"github.com/pkoukk/tiktoken-go"
 )
 
@@ -21,6 +23,7 @@ type textSplitter struct {
 func newTextSplitter(chunkSize, chunkOverlap, minchunkSize int) *textSplitter {
 	tp, err := tiktoken.EncodingForModel("text-embedding-3-small")
 	if err != nil {
+		applogger.Error("failed to get tiktoken encoding for model, falling back to cl100k_base", "error", err)
 		tp, _ = tiktoken.GetEncoding("cl100k_base")
 	}
 	return &textSplitter{

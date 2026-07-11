@@ -19,4 +19,5 @@ type Agent struct {
 	UpdatedAt         time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
+// TableName returns the database table name for Agent.
 func (Agent) TableName() string { return "agents" }

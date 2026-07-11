@@ -10,4 +10,5 @@ type PublicExperienceVector struct {
 	CreatedAt    time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
 }
 
+// TableName returns the database table name for PublicExperienceVector.
 func (PublicExperienceVector) TableName() string { return "public_experience_vectors" }

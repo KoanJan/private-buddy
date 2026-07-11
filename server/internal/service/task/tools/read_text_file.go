@@ -37,18 +37,18 @@ const (
 	maxReadLimit     = 500
 )
 
-// ToolNameReadTextFile is the type-safe name constant for ReadTextFileTool.
-const ToolNameReadTextFile ToolName = "read_text_file"
-
+// Name returns the tool name.
 func (r *ReadTextFileTool) Name() ToolName { return ToolNameReadTextFile }
 
+// Description returns a brief description of the tool.
 func (r *ReadTextFileTool) Description() string {
 	return "Read text file contents with line offset/limit"
 }
 
+// Schema returns the LLM function definition for the tool.
 func (r *ReadTextFileTool) Schema() llm.FunctionDefinition {
 	return llm.FunctionDefinition{
-		Name:        string(r.Name()),
+		Name:        r.Name().String(),
 		Description: "Read the contents of a text file. Supports pagination via offset and limit. Rejects binary files. Use this instead of bash cat for reading files.",
 		Parameters: map[string]interface{}{
 			"type": "object",

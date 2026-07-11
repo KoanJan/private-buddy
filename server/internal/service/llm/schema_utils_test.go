@@ -2,6 +2,7 @@ package llm
 
 import (
 	"encoding/json"
+	applogger "private-buddy-server/internal/logger"
 	"testing"
 )
 
@@ -22,11 +23,13 @@ type testSchemaNested struct {
 	Items []string `json:"items" jsonschema:"description=List of items"`
 }
 
+// TestGenerateSchema_BasicStruct tests GenerateSchema with a basic struct.
 func TestGenerateSchema_BasicStruct(t *testing.T) {
 	schema := GenerateSchema[testSchemaBasic]()
 
 	var raw map[string]interface{}
 	if err := json.Unmarshal(schema, &raw); err != nil {
+		applogger.Error("GenerateSchema returned invalid JSON in basic struct test", "error", err)
 		t.Fatalf("GenerateSchema returned invalid JSON: %v", err)
 	}
 
@@ -73,11 +76,13 @@ func TestGenerateSchema_BasicStruct(t *testing.T) {
 	}
 }
 
+// TestGenerateSchema_WithEnum tests GenerateSchema with a struct that has enum constraints.
 func TestGenerateSchema_WithEnum(t *testing.T) {
 	schema := GenerateSchema[testSchemaWithEnum]()
 
 	var raw map[string]interface{}
 	if err := json.Unmarshal(schema, &raw); err != nil {
+		applogger.Error("GenerateSchema returned invalid JSON in enum test", "error", err)
 		t.Fatalf("GenerateSchema returned invalid JSON: %v", err)
 	}
 
@@ -97,11 +102,13 @@ func TestGenerateSchema_WithEnum(t *testing.T) {
 	}
 }
 
+// TestGenerateSchema_NestedStruct tests GenerateSchema with a nested struct.
 func TestGenerateSchema_NestedStruct(t *testing.T) {
 	schema := GenerateSchema[testSchemaNested]()
 
 	var raw map[string]interface{}
 	if err := json.Unmarshal(schema, &raw); err != nil {
+		applogger.Error("GenerateSchema returned invalid JSON in nested struct test", "error", err)
 		t.Fatalf("GenerateSchema returned invalid JSON: %v", err)
 	}
 
@@ -114,6 +121,7 @@ func TestGenerateSchema_NestedStruct(t *testing.T) {
 	}
 }
 
+// TestInlineSchemaRefs_NoRef tests inlineSchemaRefs with a schema that has no $ref.
 func TestInlineSchemaRefs_NoRef(t *testing.T) {
 	// Schema without $ref should be returned as-is
 	input := json.RawMessage(`{"type":"object","properties":{"x":{"type":"string"}}}`)
@@ -124,6 +132,7 @@ func TestInlineSchemaRefs_NoRef(t *testing.T) {
 	}
 }
 
+// TestResolveRefName tests resolveRefName with various ref format inputs.
 func TestResolveRefName(t *testing.T) {
 	tests := []struct {
 		ref      string
