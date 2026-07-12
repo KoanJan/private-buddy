@@ -2,13 +2,13 @@ package model
 
 import "time"
 
-// Agent represents an AI assistant configuration.
+// AgentConfig represents the configuration for an AI assistant.
 //
-// An agent defines the behavior and capabilities of an AI assistant,
+// An AgentConfig defines the behavior and capabilities of an AI assistant,
 // including its character settings (personality, style, identity)
 // and the LLM/embedding configurations to use.
 // Identity (name, bio) is stored in the persons table via PersonID.
-type Agent struct {
+type AgentConfig struct {
 	ID                int64     `gorm:"primaryKey;autoIncrement;type:INTEGER PRIMARY KEY AUTOINCREMENT" json:"id"`
 	PersonID          int64     `gorm:"not null;uniqueIndex;column:person_id;default:0" json:"person_id"`
 	CharacterSettings string    `gorm:"type:text;not null;default:'';column:character_settings" json:"character_settings"` // Agent's personality, style, identity
@@ -19,5 +19,5 @@ type Agent struct {
 	UpdatedAt         time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
-// TableName returns the database table name for Agent.
-func (Agent) TableName() string { return "agents" }
+// TableName returns the database table name for AgentConfig.
+func (AgentConfig) TableName() string { return "agent_configs" }

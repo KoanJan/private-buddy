@@ -1,14 +1,9 @@
 package chatcontext
 
 import (
-	"context"
-
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
-	"private-buddy-server/internal/service/llm"
-	"private-buddy-server/internal/service/vectorstore"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -19,25 +14,18 @@ type RetrievalResult struct {
 	RelevantSegments []comprehend.Segment `json:"relevant_segments"`
 	SummaryVersion   int                  `json:"summary_version"`
 	Narrative        string               `json:"narrative"`
-	HasEmbedding     bool                 `json:"has_embedding"`
-}
-
-// getEmbeddingConfig returns the global embedding config.
-// Returns nil if no config exists.
-func getEmbeddingConfig() *model.EmbeddingConfig {
-	return service.GetEmbeddingConfig()
 }
 
 // buildSummaryAndNarrative extracts summary version and cached narrative
 // from the new split models (Summary + AgentNarrative).
 // Returns (summaryVersion, narrative). summaryVersion is -1 if no summary exists.
-func buildSummaryAndNarrative(sessionID, agentID int64) (int, string) {
+func buildSummaryAndNarrative(sessionID, personID int64) (int, string) {
 	latestSummary := getLatestSummaryBySessionID(sessionID)
 	if latestSummary == nil {
 		return -1, ""
 	}
 
-	latestNarrative := getLatestNarrativeByIDs(sessionID, agentID)
+	latestNarrative := getLatestNarrativeByIDs(sessionID, personID)
 	if latestNarrative == nil {
 		return latestSummary.Version, ""
 	}
@@ -56,9 +44,9 @@ func getLatestSummaryBySessionID(sessionID int64) *model.Summary {
 }
 
 // getLatestNarrativeByIDs returns the latest narrative for a (session, agent).
-func getLatestNarrativeByIDs(sessionID, agentID int64) *model.AgentNarrative {
+func getLatestNarrativeByIDs(sessionID, personID int64) *model.AgentNarrative {
 	var n model.AgentNarrative
-	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).
+	err := database.DB.Where("session_id = ? AND person_id = ?", sessionID, personID).
 		Order("summary_version DESC").First(&n).Error
 	if err != nil {
 		return nil
@@ -66,10 +54,10 @@ func getLatestNarrativeByIDs(sessionID, agentID int64) *model.AgentNarrative {
 	return &n
 }
 
-// GetContextWithoutRAG retrieves context without RAG retrieval.
-// Used for queries that don't need RAG (e.g., greetings, chitchat).
+// GetContextWithoutRetrieval retrieves context without keyword retrieval.
+// Used for queries that don't need retrieval (e.g., greetings, chitchat).
 // Retrieves recent messages, latest summary, and cached narrative.
-func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalResult {
+func GetContextWithoutRetrieval(sessionID, personID int64, recentCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
 		RelevantSegments: []comprehend.Segment{},
@@ -77,123 +65,44 @@ func GetContextWithoutRAG(sessionID, agentID int64, recentCount int) *RetrievalR
 
 	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
-	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(sessionID, agentID)
+	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(sessionID, personID)
 
 	return result
 }
 
-// GetContextForChat retrieves context for chat response generation.
+// GetContextForChat retrieves context for chat response generation using
+// keyword-based search on session history messages.
 // Returns:
 //  1. Recent messages from the session
-//  2. RAG segments relevant to the query (if embedding configured)
+//  2. Keyword-matched segments from session history
 //  3. Latest summary (if available)
 //  4. Cached narrative from agent_narratives (if available)
-func GetContextForChat(ctx context.Context, sessionID, agentID int64, query string, recentCount int, ragCount int) *RetrievalResult {
+func GetContextForChat(sessionID, personID int64, keywords []string, recentCount int, ragCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
 		RelevantSegments: []comprehend.Segment{},
-		HasEmbedding:     false,
 	}
 
 	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
 
-	embeddingConfig := getEmbeddingConfig()
-	if embeddingConfig != nil {
-		result.HasEmbedding = true
-		embeddingSvc := llm.NewEmbeddingService(embeddingConfig.BaseURL, embeddingConfig.APIKey, embeddingConfig.ModelID, 0)
-		vectorStore := vectorstore.NewVectorStoreService(embeddingSvc)
-		if err := vectorStore.Init(); err == nil {
-			searchResults, err := vectorStore.Search(ctx, sessionID, query, ragCount)
-			if err != nil {
-				applogger.Error("RAG retrieval failed", "error", err)
-			} else {
-				for _, sr := range searchResults {
-					result.RelevantSegments = append(result.RelevantSegments, comprehend.Segment{
-						MessageID: sr.MessageID,
-						Content:   sr.Content,
-						Source:    comprehend.SourceChatHistory,
-					})
-				}
-				applogger.Info("RAG retrieved segments",
-					"session_id", sessionID,
-					"count", len(searchResults),
-				)
-			}
-			vectorStore.Close()
-		}
+	// Keyword-based retrieval: search messages in this session
+	if len(keywords) > 0 {
+		result.RelevantSegments = SearchMessagesByKeywords([]int64{sessionID}, keywords, ragCount)
+		applogger.Info("Keyword retrieval completed",
+			"session_id", sessionID,
+			"keywords", keywords,
+			"segment_count", len(result.RelevantSegments),
+		)
 	}
 
 	latestSummary := getLatestSummaryBySessionID(sessionID)
 	if latestSummary != nil {
 		result.SummaryVersion = latestSummary.Version
 	}
-	latestNarrative := getLatestNarrativeByIDs(sessionID, agentID)
+	latestNarrative := getLatestNarrativeByIDs(sessionID, personID)
 	if latestNarrative != nil {
 		result.Narrative = latestNarrative.Content
 	}
 
 	return result
-}
-
-// IndexMessages adds messages to the vector store for RAG retrieval.
-// This method adds messages to the vector store after they are completed,
-// enabling future RAG retrieval. Returns true if indexing succeeded.
-//
-// NOTE: This only indexes the given messageIDs (typically the current round).
-// Messages that existed before embedding was configured are NOT retroactively
-// indexed. A batch re-index mechanism is needed to cover that case.
-func IndexMessages(ctx context.Context, sessionID int64, messageIDs []int64) bool {
-	embeddingConfig := getEmbeddingConfig()
-	if embeddingConfig == nil {
-		applogger.Info("No embedding config, skipping indexing", "session_id", sessionID)
-		return false
-	}
-
-	var messages []model.Message
-	if err := database.DB.Where("id IN ? AND session_id = ?", messageIDs, sessionID).Find(&messages).Error; err != nil {
-		applogger.Error("IndexMessages: failed to load messages", "session_id", sessionID, "error", err)
-		return false
-	}
-
-	if len(messages) == 0 {
-		applogger.Error("No messages found for indexing", "session_id", sessionID)
-		return false
-	}
-
-	embeddingSvc := llm.NewEmbeddingService(embeddingConfig.BaseURL, embeddingConfig.APIKey, embeddingConfig.ModelID, 0)
-	vectorStore := vectorstore.NewVectorStoreService(embeddingSvc)
-	if err := vectorStore.Init(); err != nil {
-		applogger.Error("Failed to init vector store for indexing", "error", err)
-		return false
-	}
-	defer vectorStore.Close()
-
-	contents := make([]string, len(messages))
-	metadatas := make([]vectorstore.VectorMetadata, len(messages))
-	msgIDs := make([]int64, len(messages))
-
-	for i, msg := range messages {
-		role := "user"
-		userPersonID, err := service.GetCurrentUserPersonID()
-		if err != nil {
-			applogger.Error("IndexMessages: failed to get current user person ID", "error", err)
-		} else if msg.PersonID != userPersonID {
-			role = "assistant"
-		}
-		contents[i] = msg.Content
-		metadatas[i] = vectorstore.VectorMetadata{
-			MessageID: msg.ID,
-			Role:      role,
-			Content:   msg.Content,
-		}
-		msgIDs[i] = msg.ID
-	}
-
-	if err := vectorStore.AddMessages(ctx, sessionID, msgIDs, contents, metadatas); err != nil {
-		applogger.Error("Failed to index messages", "error", err)
-		return false
-	}
-
-	applogger.Info("Indexed messages for session", "session_id", sessionID, "count", len(messages))
-	return true
 }

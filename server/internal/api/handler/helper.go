@@ -62,18 +62,18 @@ func handleNotFound(c *gin.Context, entityName string, id int64) {
 	response.NotFound(c, fmt.Sprintf("%s %d not found", entityName, id))
 }
 
-// loadAgentPersons loads Person records for each agent and returns a map keyed by PersonID.
-func loadAgentPersons(agents []model.Agent) map[int64]*model.Person {
-	personIDs := make([]int64, 0, len(agents))
-	for i := range agents {
-		personIDs = append(personIDs, agents[i].PersonID)
+// loadAgentConfigPersons loads Person records for each agent config and returns a map keyed by PersonID.
+func loadAgentConfigPersons(configs []model.AgentConfig) map[int64]*model.Person {
+	personIDs := make([]int64, 0, len(configs))
+	for i := range configs {
+		personIDs = append(personIDs, configs[i].PersonID)
 	}
 	if len(personIDs) == 0 {
 		return nil
 	}
 	var persons []model.Person
 	if err := database.DB.Where("id IN ?", personIDs).Find(&persons).Error; err != nil {
-		applogger.Error("loadAgentPersons: failed to load persons", "error", err)
+		applogger.Error("loadAgentConfigPersons: failed to load persons", "error", err)
 		return nil
 	}
 	personsMap := make(map[int64]*model.Person, len(persons))

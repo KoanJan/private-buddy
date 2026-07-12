@@ -99,21 +99,21 @@ func CreateKnowledgeBase(kb *model.KnowledgeBase) error {
 
 // DeleteKnowledgeBase deletes a knowledge base and all its data.
 func DeleteKnowledgeBase(kbID int64) error {
-	var agents []model.Agent
-	if err := database.DB.Find(&agents).Error; err != nil {
-		return fmt.Errorf("failed to load agents for KB cleanup: %w", err)
+	var configs []model.AgentConfig
+	if err := database.DB.Find(&configs).Error; err != nil {
+		return fmt.Errorf("failed to load agent configs for KB cleanup: %w", err)
 	}
-	for _, a := range agents {
+	for _, ac := range configs {
 		var ids []int64
-		if err := jsonUnmarshal(a.KnowledgeBaseIDs, &ids); err != nil {
-			applogger.Error("failed to unmarshal agent knowledge base IDs during KB deletion", "agent_id", a.ID, "error", err)
+		if err := jsonUnmarshal(ac.KnowledgeBaseIDs, &ids); err != nil {
+			applogger.Error("failed to unmarshal agent config knowledge base IDs during KB deletion", "agent_config_id", ac.ID, "error", err)
 			continue
 		}
 		for i, id := range ids {
 			if id == kbID {
 				ids = append(ids[:i], ids[i+1:]...)
-				if err := database.DB.Model(&a).Update("knowledge_base_ids", jsonMarshal(ids)).Error; err != nil {
-					applogger.Error("failed to update agent KB IDs after KB deletion", "agent_id", a.ID, "error", err)
+				if err := database.DB.Model(&ac).Update("knowledge_base_ids", jsonMarshal(ids)).Error; err != nil {
+					applogger.Error("failed to update agent config KB IDs after KB deletion", "agent_config_id", ac.ID, "error", err)
 				}
 				break
 			}

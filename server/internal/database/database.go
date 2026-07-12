@@ -81,7 +81,7 @@ func AutoMigrate() {
 		&model.Person{},
 		&model.LLMConfig{},
 		&model.EmbeddingConfig{},
-		&model.Agent{},
+		&model.AgentConfig{},
 		&model.Session{},
 		&model.Message{},
 		&model.Interaction{},

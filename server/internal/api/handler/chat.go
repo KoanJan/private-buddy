@@ -136,27 +136,29 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 	}
 
 	agentIDStr := c.Query("agent_id")
-	var agentID int64
+	var agentPersonID int64
+	var agentConfigID int64
 	if agentIDStr != "" {
-		agentID, _ = strconv.ParseInt(agentIDStr, 10, 64)
+		agentPersonID, _ = strconv.ParseInt(agentIDStr, 10, 64)
 	}
-	applogger.Info("CreateAndSend received agent_id param", "raw", agentIDStr, "parsed", agentID)
-	if agentID == 0 {
-		var defaultAgent model.Agent
-		if err := database.DB.First(&defaultAgent).Error; err != nil {
+	applogger.Info("CreateAndSend received agent_id param", "raw", agentIDStr, "parsed", agentPersonID)
+	if agentPersonID == 0 {
+		var defaultAgentConfig model.AgentConfig
+		if err := database.DB.First(&defaultAgentConfig).Error; err != nil {
 			response.InternalError(c, "No default agent found")
 			return
 		}
-		agentID = defaultAgent.ID
+		agentPersonID = defaultAgentConfig.PersonID
+		agentConfigID = defaultAgentConfig.ID
+	} else {
+		// Resolve agent config by person ID for event routing
+		var ac model.AgentConfig
+		if err := database.DB.Where("person_id = ?", agentPersonID).First(&ac).Error; err != nil {
+			response.InternalError(c, "No agent config found for person")
+			return
+		}
+		agentConfigID = ac.ID
 	}
-
-	// Load the full agent record to get PersonID
-	agent, err := service.GetAgent(agentID)
-	if err != nil {
-		response.InternalError(c, "Agent not found")
-		return
-	}
-	agentPersonID := agent.PersonID
 
 	userPersonID, err := service.GetCurrentUserPersonID()
 	if err != nil {
@@ -175,8 +177,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 	}
 
 	session := model.Session{
-		Title:   title,
-		AgentID: agentID,
+		Title: title,
 	}
 	userMsg := model.Message{
 		SessionID: session.ID,
@@ -235,7 +236,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 	})
 
 	// Send event to Agent Runtime instead of creating placeholder AI message
-	h.sendEventToRuntime(agentID, session.ID, userMsg.ID, message)
+	h.sendEventToRuntime(agentConfigID, session.ID, userMsg.ID, message)
 
 	response.Success(c, gin.H{
 		"session_id":         session.ID,
@@ -300,8 +301,9 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		applogger.Error("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
 	}
 
-	// Send event to Agent Runtime instead of creating placeholder AI message
-	h.sendEventToRuntime(session.AgentID, sessionID, userMsg.ID, message)
+	// Send event to Agent Runtime — resolve AI participant from participant_sessions.
+	agentConfigID := resolveFirstAIAgentConfigID(sessionID)
+	h.sendEventToRuntime(agentConfigID, sessionID, userMsg.ID, message)
 
 	response.Success(c, gin.H{
 		"trigger_message_id": userMsg.ID,
@@ -364,7 +366,7 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 // sendEventToRuntime ensures the agent runtime is running and sends a new
 // message event to the agent via the global event queue.
 // This is the only path for user messages to reach the agent.
-func (h *Handler) sendEventToRuntime(agentID, sessionID, messageID int64, messageContent string) {
+func (h *Handler) sendEventToRuntime(agentConfigID, sessionID, messageID int64, messageContent string) {
 	event := &eventqueue.AgentEvent{
 		Type:      eventqueue.EventTypeNewPrivateChatMessage,
 		SessionID: sessionID,
@@ -374,7 +376,7 @@ func (h *Handler) sendEventToRuntime(agentID, sessionID, messageID int64, messag
 			SpeakerName:    service.GetUserName(),
 		},
 	}
-	eventqueue.SendEvent(agentID, event)
+	eventqueue.SendEvent(agentConfigID, event)
 }
 
 // sessionAgentStatus represents an agent's status within a session.
@@ -408,16 +410,16 @@ func (h *Handler) GetSessionAgents(c *gin.Context) {
 	result := make([]sessionAgentStatus, 0, len(participants))
 	for _, p := range participants {
 		// Find agent by PersonID
-		var agent model.Agent
-		if err := database.DB.Where("person_id = ?", p.ParticipantID).First(&agent).Error; err != nil {
+		var ac model.AgentConfig
+		if err := database.DB.Where("person_id = ?", p.ParticipantID).First(&ac).Error; err != nil {
 			applogger.Error("failed to find agent by person ID for session participants", "person_id", p.ParticipantID, "error", err)
 			continue
 		}
 
 		result = append(result, sessionAgentStatus{
-			AgentID: agent.ID,
-			Name:    service.GetAgentName(agent.ID),
-			Avatar:  agent.Avatar,
+			AgentID: p.ParticipantID,
+			Name:    service.GetAgentConfigName(ac.ID),
+			Avatar:  ac.Avatar,
 			Status:  p.Status, // Read directly from ParticipantSession.Status
 		})
 	}

@@ -44,14 +44,14 @@ func panicIfNotReady() {
 // sourceID identifies the origin resource, interpreted by source:
 //   - source=1 (Reflection): sourceID = session_id
 //   - source=2 (Learn):       sourceID = public_experience_id
-func createExperience(ctx context.Context, agentID int64, source int, sourceID int64, title, description, whenToUse, guidelines, pitfalls, procedure string) (*model.AgentExperience, error) {
+func createExperience(ctx context.Context, personID int64, source int, sourceID int64, title, description, whenToUse, guidelines, pitfalls, procedure string) (*model.AgentExperience, error) {
 	emb, err := embeddingSvc.EmbedSingle(ctx, description)
 	if err != nil {
 		return nil, fmt.Errorf("embed experience description: %w", err)
 	}
 
 	exp := &model.AgentExperience{
-		AgentID:     agentID,
+		PersonID:    personID,
 		Title:       title,
 		Description: description,
 		WhenToUse:   whenToUse,
@@ -80,7 +80,7 @@ func createExperience(ctx context.Context, agentID int64, source int, sourceID i
 
 	applogger.Info("AgentExperience created",
 		"id", exp.ID,
-		"agent_id", agentID,
+		"person_id", personID,
 		"source", source,
 		"source_id", sourceID,
 	)
@@ -98,9 +98,9 @@ func createExperience(ctx context.Context, agentID int64, source int, sourceID i
 // Called by the reflection step when the LLM determines that a newly distilled
 // experience refines an existing one (update_exp_id > 0) rather than being a
 // new lesson.
-func updateExperience(ctx context.Context, expID, agentID int64, title, description, whenToUse, guidelines, pitfalls, procedure string) error {
+func updateExperience(ctx context.Context, expID, personID int64, title, description, whenToUse, guidelines, pitfalls, procedure string) error {
 	var exp model.AgentExperience
-	if err := database.DB.Where("id = ? AND agent_id = ?", expID, agentID).First(&exp).Error; err != nil {
+	if err := database.DB.Where("id = ? AND person_id = ?", expID, personID).First(&exp).Error; err != nil {
 		return fmt.Errorf("experience not found: %w", err)
 	}
 
@@ -132,7 +132,7 @@ func updateExperience(ctx context.Context, expID, agentID int64, title, descript
 
 	applogger.Info("AgentExperience updated",
 		"id", expID,
-		"agent_id", agentID,
+		"person_id", personID,
 		"source", exp.Source,
 		"description_changed", description != exp.Description,
 	)

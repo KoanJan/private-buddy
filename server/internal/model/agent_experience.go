@@ -25,7 +25,7 @@ const (
 //     start of the next heartbeat scan.
 type AgentExperience struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	AgentID     int64     `gorm:"not null;index;column:agent_id" json:"agent_id"`
+	PersonID    int64     `gorm:"not null;index;column:person_id" json:"person_id"`
 	Title       string    `gorm:"type:varchar(500);not null" json:"title"`
 	Description string    `gorm:"type:text;not null" json:"description"`
 	WhenToUse   string    `gorm:"type:text;not null;default:''" json:"when_to_use"`

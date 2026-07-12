@@ -49,16 +49,16 @@ const (
 // Work execution runs in separate goroutines, allowing the event loop to remain responsive.
 type agentRuntime struct {
 	activeWorks        []*work
-	agentID            int64
+	agentConfigID      int64
 	agentPersonID      int64                         // Agent's PersonID for participant_session queries
 	eventCh            <-chan *eventqueue.AgentEvent // Read-only channel subscribed from eventqueue.Global
 	draftCommitCh      chan *draftCommitRequest
-	heartbeatInterval  time.Duration                              // Base heartbeat interval (adaptive)
-	idleTicks          int                                        // Consecutive idle heartbeats (for tickless backoff)
-	heartbeatTick      int                                        // Total heartbeat ticks (for check scheduling)
-	mu                 sync.Mutex                                 // Protects activeWrites for external queries
-	learningInProgress atomic.Bool                                // Guards against concurrent learning checks
-	onStatusChange     func(agentID, sessionID int64, status int) // Callback for SSE push
+	heartbeatInterval  time.Duration                                              // Base heartbeat interval (adaptive)
+	idleTicks          int                                                        // Consecutive idle heartbeats (for tickless backoff)
+	heartbeatTick      int                                                        // Total heartbeat ticks (for check scheduling)
+	mu                 sync.Mutex                                                 // Protects activeWrites for external queries
+	learningInProgress atomic.Bool                                                // Guards against concurrent learning checks
+	onStatusChange     func(agentConfigID, personID, sessionID int64, status int) // Callback for SSE push
 }
 
 // ==========================================================================
@@ -69,13 +69,13 @@ type agentRuntime struct {
 // This is the internal constructor — for external use, see createAgentRuntime
 // which adds event subscription and work recovery.
 func newAgentRuntime(
-	agentID int64,
+	agentConfigID int64,
 	eventCh <-chan *eventqueue.AgentEvent,
 	heartbeatInterval time.Duration,
-	onStatusChange func(agentID, sessionID int64, status int),
+	onStatusChange func(agentConfigID, personID, sessionID int64, status int),
 ) *agentRuntime {
 	return &agentRuntime{
-		agentID:           agentID,
+		agentConfigID:     agentConfigID,
 		eventCh:           eventCh,
 		draftCommitCh:     make(chan *draftCommitRequest, 16),
 		heartbeatInterval: heartbeatInterval,
@@ -131,7 +131,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// Wait for draft handler to drain its channel
 			internalWg.Wait()
 
-			applogger.Info("agentRuntime stopped", "agent_id", r.agentID)
+			applogger.Info("agentRuntime stopped", "agent_config_id", r.agentConfigID)
 			return
 
 		case event := <-r.eventCh:
@@ -150,7 +150,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 				if payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload); ok {
 					r.activeWorks = removeWorkByID(r.activeWorks, payload.WorkID)
 					applogger.Info("Work completed event received",
-						"agent_id", r.agentID,
+						"agent_config_id", r.agentConfigID,
 						"work_id", payload.WorkID,
 						"work_type", payload.WorkType,
 						"status", payload.Status,
@@ -216,14 +216,14 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// Decision: how should the agent respond to this event?
 			// After the cognitive order refactoring, we Comprehend first,
 			// then Decide based on the comprehension results.
-			agent, err := service.GetAgent(r.agentID)
+			ac, err := service.GetAgentConfig(r.agentConfigID)
 			if err != nil {
-				applogger.Error("Failed to load agent in handleEvent", "agent_id", r.agentID, "error", err)
+				applogger.Error("Failed to load agent config in handleEvent", "agent_config_id", r.agentConfigID, "error", err)
 				continue
 			}
-			llmConfig, err := service.GetLLMConfig(agent.LLMConfigID)
+			llmConfig, err := service.GetLLMConfig(ac.LLMConfigID)
 			if err != nil {
-				applogger.Error("Failed to load LLM config in handleEvent", "agent_id", r.agentID, "llm_config_id", agent.LLMConfigID, "error", err)
+				applogger.Error("Failed to load LLM config in handleEvent", "agent_config_id", r.agentConfigID, "llm_config_id", ac.LLMConfigID, "error", err)
 				continue
 			}
 
@@ -231,13 +231,13 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// Understand the event in context: who is speaking, what do they mean,
 			// what's the user's state, what knowledge is relevant.
 			activeWorksSummary := buildActiveWorksSummary(r.activeWorks, event.SessionID)
-			comprehension := comprehend.Comprehend(ctx, event, agent, llmConfig, activeWorksSummary)
+			comprehension := comprehend.Comprehend(ctx, event, ac, llmConfig, activeWorksSummary)
 
 			// ── Phase 2: Decide ──
 			// Based on comprehension, determine what action(s) to take.
 			// A single decision can produce multiple actions: e.g., cancel an
 			// old task AND create a new one.
-			decision := Decide(ctx, event, agent, llmConfig, comprehension, r.activeWorks)
+			decision := Decide(ctx, event, ac, llmConfig, comprehension, r.activeWorks)
 
 			// ── Phase 3: Execute ──
 			// Carry out all actions from the decision.
@@ -251,14 +251,14 @@ func (r *agentRuntime) Run(ctx context.Context) {
 					target := r.findActiveWorkByID(wg.TargetWorkID)
 					if target == nil {
 						applogger.Error("Target work not found for route, skipping",
-							"agent_id", r.agentID,
+							"agent_config_id", r.agentConfigID,
 							"target_work_id", wg.TargetWorkID,
 						)
 						continue
 					}
 					if target.plan.Type != model.WorkTypeTask {
 						applogger.Error("Route target is not TaskWork, skipping",
-							"agent_id", r.agentID,
+							"agent_config_id", r.agentConfigID,
 							"work_id", target.ID,
 							"work_type", target.plan.Type,
 						)
@@ -269,7 +269,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						Reason:   wg.Reason,
 					})
 					applogger.Info("Routed guidance to existing TaskWork",
-						"agent_id", r.agentID,
+						"agent_config_id", r.agentConfigID,
 						"work_id", target.ID,
 						"guidance", wg.Guidance,
 						"reason", wg.Reason,
@@ -287,7 +287,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 					target := r.findActiveWorkByID(wg.TargetWorkID)
 					if target == nil {
 						applogger.Error("Target work not found for cancel, skipping",
-							"agent_id", r.agentID,
+							"agent_config_id", r.agentConfigID,
 							"target_work_id", wg.TargetWorkID,
 						)
 						continue
@@ -297,7 +297,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						// Fall back to direct abandon for ChatWork.
 						target.abandon()
 						applogger.Info("Cancelled ChatWork by direct abandon (no iteration loop)",
-							"agent_id", r.agentID,
+							"agent_config_id", r.agentConfigID,
 							"work_id", wg.TargetWorkID,
 						)
 						continue
@@ -309,7 +309,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 						Reason:   wg.Reason,
 					})
 					applogger.Info("Sent cancel directive to TaskWork",
-						"agent_id", r.agentID,
+						"agent_config_id", r.agentConfigID,
 						"work_id", wg.TargetWorkID,
 						"guidance", wg.Guidance,
 						"reason", wg.Reason,
@@ -319,7 +319,7 @@ func (r *agentRuntime) Run(ctx context.Context) {
 					// Instantiate Work from the Action's WorkPlan
 					if action.WorkPlan == nil {
 						applogger.Error("Create action has no work_plan, skipping",
-							"agent_id", r.agentID,
+							"agent_config_id", r.agentConfigID,
 						)
 						continue
 					}
@@ -402,20 +402,20 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 		}
 
 		draft = &model.MessageDraft{
-			AgentID:           r.agentID,
+			PersonID:          r.agentPersonID,
 			SessionID:         event.SessionID,
 			Status:            model.DraftStatusBuilding,
 			LastReadMessageID: agentLastReadID,
 		}
 		if err := tx.Create(draft).Error; err != nil {
-			applogger.Error("Failed to create draft", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
+			applogger.Error("Failed to create draft", "agent_config_id", r.agentConfigID, "session_id", event.SessionID, "error", err)
 			return nil, false
 		}
 	}
 
 	// Persist work to database
 	workRecord := &model.Work{
-		AgentID:     r.agentID,
+		PersonID:    r.agentPersonID,
 		SessionID:   event.SessionID,
 		Type:        plan.Type,
 		Description: event.FormatDescription(),
@@ -425,7 +425,7 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 		workRecord.DraftID = draft.ID
 	}
 	if err := tx.Create(workRecord).Error; err != nil {
-		applogger.Error("Failed to create work", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
+		applogger.Error("Failed to create work", "agent_config_id", r.agentConfigID, "session_id", event.SessionID, "error", err)
 		return nil, false
 	}
 
@@ -447,7 +447,7 @@ func (r *agentRuntime) newWork(event *eventqueue.AgentEvent, plan *WorkPlan, com
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		applogger.Error("Failed to create work", "agent_id", r.agentID, "session_id", event.SessionID, "error", err)
+		applogger.Error("Failed to create work", "agent_config_id", r.agentConfigID, "session_id", event.SessionID, "error", err)
 		return nil, false
 	}
 
@@ -501,7 +501,7 @@ func buildMetadata(event *eventqueue.AgentEvent) *task.Metadata {
 //   - working → (commit) → idle
 func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *eventqueue.ScheduledEventPayload) {
 	applogger.Info("Fast path: sending pre-computed message for scheduled event",
-		"agent_id", r.agentID,
+		"agent_config_id", r.agentConfigID,
 		"session_id", sessionID,
 		"scheduled_event_id", payload.ScheduledEventID,
 	)
@@ -516,14 +516,14 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 
 	// Create draft for audit trail
 	draft := &model.MessageDraft{
-		AgentID:           r.agentID,
+		PersonID:          r.agentPersonID,
 		SessionID:         sessionID,
 		Status:            model.DraftStatusBuilding,
 		LastReadMessageID: agentLastReadID,
 	}
 	if err := database.DB.Create(draft).Error; err != nil {
 		applogger.Error("Failed to create draft for fast path message",
-			"agent_id", r.agentID, "session_id", sessionID, "error", err)
+			"agent_config_id", r.agentConfigID, "session_id", sessionID, "error", err)
 		return
 	}
 
@@ -547,7 +547,7 @@ func (r *agentRuntime) handleFastPathSendMessage(sessionID int64, payload *event
 	r.weakUpdateAgentStatusInSession(sessionID, model.ParticipantStatusIdle)
 
 	applogger.Info("Fast path message dispatched",
-		"agent_id", r.agentID,
+		"agent_config_id", r.agentConfigID,
 		"session_id", sessionID,
 		"draft_id", draft.ID,
 		"scheduled_event_id", payload.ScheduledEventID,
@@ -570,7 +570,7 @@ func (r *agentRuntime) weakUpdateAgentStatusInSession(sessionID int64, status in
 
 	if err != nil {
 		applogger.Error("Failed to read participant status",
-			"agent_id", r.agentID, "session_id", sessionID, "error", err)
+			"agent_config_id", r.agentConfigID, "session_id", sessionID, "error", err)
 		return
 	}
 
@@ -584,13 +584,13 @@ func (r *agentRuntime) weakUpdateAgentStatusInSession(sessionID int64, status in
 			sessionID, r.agentPersonID).
 		Update("status", status).Error; err != nil {
 		applogger.Error("Failed to update participant status",
-			"agent_id", r.agentID, "session_id", sessionID, "error", err)
+			"agent_config_id", r.agentConfigID, "session_id", sessionID, "error", err)
 		return
 	}
 
 	// Fire SSE callback for status change
 	if r.onStatusChange != nil {
-		r.onStatusChange(r.agentID, sessionID, status)
+		r.onStatusChange(r.agentConfigID, r.agentPersonID, sessionID, status)
 	}
 }
 
@@ -653,20 +653,20 @@ func (r *agentRuntime) adjustHeartbeatInterval() time.Duration {
 //
 // This is the public entry point for creating a new agent runtime — positioned
 // at the bottom because it depends on recoverActiveWorks (defined just above).
-func createAgentRuntime(agentID int64, onStatusChange func(agentID, sessionID int64, status int)) (*agentRuntime, error) {
-	eventCh := eventqueue.Subscribe(agentID)
+func createAgentRuntime(agentConfigID int64, onStatusChange func(agentConfigID, personID, sessionID int64, status int)) (*agentRuntime, error) {
+	eventCh := eventqueue.Subscribe(agentConfigID)
 
-	runtime := newAgentRuntime(agentID, eventCh, 30*time.Second, onStatusChange)
+	runtime := newAgentRuntime(agentConfigID, eventCh, 30*time.Second, onStatusChange)
 
 	// Resolve agent's PersonID for participant_session queries
-	agent, err := service.GetAgent(agentID)
+	ac, err := service.GetAgentConfig(agentConfigID)
 	if err != nil {
-		return nil, fmt.Errorf("createAgentRuntime: failed to load agent %d: %w", agentID, err)
+		return nil, fmt.Errorf("createAgentRuntime: failed to load agent config %d: %w", agentConfigID, err)
 	}
-	runtime.agentPersonID = agent.PersonID
+	runtime.agentPersonID = ac.PersonID
 
 	// Recover any abandoned works from previous run
-	recoverActiveWorks(agentID)
+	recoverActiveWorks(agentConfigID)
 
 	return runtime, nil
 }

@@ -39,8 +39,8 @@
 //
 // # File layout
 //
-//   - memory.go: package API (Init/Start/OnRAGHit/CheckProfileDensity/Search),
-//     ingestion, retrieval, RAG hit processing, survival boost.
+//   - memory.go: package API (Init/Start/OnRetrievalHit/CheckProfileDensity),
+//     ingestion, retrieval hit processing.
 //   - event_vector.go: SubmitVectorization entry point and background
 //     goroutine for event → embedding → observation creation.
 //   - ingester.go: event table writes, embedding storage, observation creation.
@@ -56,13 +56,10 @@
 //     bound to ctx. Cancelling ctx shuts them down gracefully.
 //   - SubmitVectorization(task): enqueues a message for event vectorization.
 //     Non-blocking; drops if queue is full.
-//   - OnRAGHit(agentID, messageIDs): applies retrieval hits from the existing
-//     session-level RAG system to the memory system's observations.
-//   - CheckProfileDensity(ctx, agentID): scans long-term observations and
+//   - OnRetrievalHit(agentConfigID, messageIDs): applies retrieval hits from
+//     context engineering to the memory system's observations.
+//   - CheckProfileDensity(ctx, agentConfigID): scans long-term observations and
 //     triggers EntityProfile generation when density thresholds are met.
-//   - Search(ctx, agentID, query, k): semantic memory retrieval — generates
-//     a query embedding, computes cosine similarity against all eligible
-//     observations, and returns top-k results sorted by composite score.
 //
 // # Background services
 //
@@ -78,5 +75,5 @@
 //   - api/handler/*.go: SubmitVectorization for user/agent messages.
 //   - service/runtime/agent_runtime.go: SubmitVectorization for agent messages.
 //   - service/runtime/heartbeat_checks.go: CheckProfileDensity during heartbeat.
-//   - service/chat/chat_service.go: OnRAGHit from session-level RAG.
+//   - service/chat/chat_service.go: OnRetrievalHit from session-level retrieval.
 package memory

@@ -96,11 +96,11 @@ type SessionInfo struct {
 func Comprehend(
 	ctx context.Context,
 	event *eventqueue.AgentEvent,
-	agent *model.Agent,
+	ac *model.AgentConfig,
 	llmConfig *model.LLMConfig,
 	activeWorksSummary string,
 ) *ComprehensionResult {
-	sessionInfo := buildSessionInfo(event.SessionID, agent)
+	sessionInfo := buildSessionInfo(event.SessionID, ac)
 
 	result := &ComprehensionResult{
 		// Active works summary for self-awareness.
@@ -112,7 +112,7 @@ func Comprehend(
 	eventDescription := event.FormatDescription()
 	if eventDescription == "" {
 		applogger.Info("Comprehend: empty event, skipping",
-			"agent_id", agent.ID,
+			"person_id", ac.PersonID,
 			"session_id", sessionInfo.SessionID,
 		)
 		return result
@@ -128,7 +128,7 @@ func Comprehend(
 	// The event description carries all the context the Decide phase needs.
 	if event.Type != eventqueue.EventTypeNewPrivateChatMessage {
 		applogger.Info("Comprehend completed (non-message event, skipped pipeline)",
-			"agent_id", agent.ID,
+			"agent_config_id", ac.ID,
 			"session_id", sessionInfo.SessionID,
 			"event_type", event.Type,
 		)
@@ -149,10 +149,10 @@ func Comprehend(
 				llmConfig,
 				eventDescription,
 				preprocessingHistory,
-				agent.CharacterSettings,
+				ac.CharacterSettings,
 				sessionInfo.WindowSize,
 				sessionInfo.UserName,
-				service.GetAgentName(agent.ID),
+				service.GetAgentConfigName(ac.ID),
 			)
 			// Extract preprocessing results
 			result.ProcessedQuery = preprocessingResult.ProcessedQuery
@@ -204,8 +204,8 @@ func Comprehend(
 			llmConfig,
 			recentMessagesForState,
 			sessionInfo.UserName,
-			service.GetAgentName(agent.ID),
-			agent.CharacterSettings,
+			service.GetAgentConfigName(ac.ID),
+			ac.CharacterSettings,
 			result.ActiveWorksSummary,
 		)
 		// Extract PersonState results
@@ -219,7 +219,7 @@ func Comprehend(
 	wg.Wait()
 
 	applogger.Info("Comprehend completed",
-		"agent_id", agent.ID,
+		"agent_config_id", ac.ID,
 		"session_id", sessionInfo.SessionID,
 		"needs_world_interaction", result.NeedsWorldInteraction,
 		"query_type", result.QueryType,
@@ -269,7 +269,7 @@ func getPreprocessingHistory(sessionID int64, limit int) []llm.Message {
 
 // buildSessionInfo loads session-level parameters needed for comprehension.
 // This is called once per event in the event loop, before Comprehend().
-func buildSessionInfo(sessionID int64, agent *model.Agent) *SessionInfo {
+func buildSessionInfo(sessionID int64, ac *model.AgentConfig) *SessionInfo {
 	info := &SessionInfo{
 		SessionID:  sessionID,
 		WindowSize: 50, // Default window size
@@ -287,10 +287,10 @@ func buildSessionInfo(sessionID int64, agent *model.Agent) *SessionInfo {
 	}
 	info.MessageCount = messageCount
 
-	// Get knowledge base IDs for this agent
-	if agent.KnowledgeBaseIDs != "" && agent.KnowledgeBaseIDs != "[]" {
+	// Get knowledge base IDs for this agent config
+	if ac.KnowledgeBaseIDs != "" && ac.KnowledgeBaseIDs != "[]" {
 		var ids []int64
-		if err := json.Unmarshal([]byte(agent.KnowledgeBaseIDs), &ids); err == nil {
+		if err := json.Unmarshal([]byte(ac.KnowledgeBaseIDs), &ids); err == nil {
 			var validIDs []int64
 			for _, id := range ids {
 				var kb model.KnowledgeBase

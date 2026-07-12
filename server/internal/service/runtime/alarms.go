@@ -53,14 +53,14 @@ func (r *alarmRegistryType) cancelAll() {
 }
 
 // cancelAlarmsForAgent cancels all alarm goroutines for a specific agent.
-// Currently cancels all because the registry is keyed by eventID, not agentID.
-func (r *alarmRegistryType) cancelAlarmsForAgent(agentID int64) {
+// Currently cancels all because the registry is keyed by eventID, not agentConfigID.
+func (r *alarmRegistryType) cancelAlarmsForAgent(agentConfigID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, cancel := range r.alarms {
 		cancel()
 	}
-	_ = agentID
+	_ = agentConfigID
 	r.alarms = make(map[int64]context.CancelFunc)
 }
 
@@ -89,7 +89,7 @@ func registerAlarmGoroutine(event *model.ScheduledEvent) {
 		until := time.Until(event.TriggerAt)
 		applogger.Info("Scheduled event goroutine waiting",
 			"event_id", event.ID,
-			"agent_id", event.AgentID,
+			"person_id", event.PersonID,
 			"session_id", event.SessionID,
 			"trigger_at", event.TriggerAt,
 			"action", event.Action,
@@ -103,7 +103,7 @@ func registerAlarmGoroutine(event *model.ScheduledEvent) {
 		case <-alarmCtx.Done():
 			applogger.Info("Scheduled event goroutine cancelled",
 				"event_id", event.ID,
-				"agent_id", event.AgentID,
+				"person_id", event.PersonID,
 			)
 			return
 		case <-timer.C:
@@ -142,12 +142,25 @@ func fireScheduledEvent(event *model.ScheduledEvent) {
 
 	applogger.Info("Scheduled event fired, sending to eventqueue",
 		"event_id", event.ID,
-		"agent_id", event.AgentID,
+		"person_id", event.PersonID,
 		"session_id", event.SessionID,
 		"action", event.Action,
 	)
 
-	eventqueue.SendEvent(event.AgentID, &eventqueue.AgentEvent{
+	// Bridge: resolve agentConfigID from personID for eventqueue routing.
+	// The event queue is keyed by agentConfigID because the runtime event loop
+	// subscribes per-agent-config, but scheduled_events is now keyed by person_id.
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", event.PersonID).First(&ac).Error; err != nil {
+		applogger.Error("fireScheduledEvent: failed to resolve agent config from person_id",
+			"event_id", event.ID,
+			"person_id", event.PersonID,
+			"error", err,
+		)
+		return
+	}
+
+	eventqueue.SendEvent(ac.ID, &eventqueue.AgentEvent{
 		Type:      eventqueue.EventTypeScheduled,
 		SessionID: event.SessionID,
 		Payload: &eventqueue.ScheduledEventPayload{

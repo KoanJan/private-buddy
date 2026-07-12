@@ -21,7 +21,7 @@ type SearchResult struct {
 // experiences. Returns results sorted by descending cosine similarity,
 // filtered by minScore.
 // Returns nil, nil when the embedding service is not configured.
-func SearchExperiences(ctx context.Context, agentID int64, taskDescription string, topN int, minScore float64) ([]SearchResult, error) {
+func SearchExperiences(ctx context.Context, personID int64, taskDescription string, topN int, minScore float64) ([]SearchResult, error) {
 	if embeddingSvc == nil {
 		return nil, nil
 	}
@@ -35,11 +35,11 @@ func SearchExperiences(ctx context.Context, agentID int64, taskDescription strin
 		return nil, nil
 	}
 
-	// Pre-filter by agent_id at the SQL level to avoid loading the entire
+	// Pre-filter by agent_config_id at the SQL level to avoid loading the entire
 	// vectors table. First load this agent's experience IDs, then load only
 	// the corresponding vectors.
 	var experiences []model.AgentExperience
-	if err := database.DB.Where("agent_id = ?", agentID).Find(&experiences).Error; err != nil {
+	if err := database.DB.Where("person_id = ?", personID).Find(&experiences).Error; err != nil {
 		return nil, fmt.Errorf("load agent experiences: %w", err)
 	}
 	if len(experiences) == 0 {
@@ -73,7 +73,7 @@ func SearchExperiences(ctx context.Context, agentID int64, taskDescription strin
 			// vectors in sync with their parent rows).
 			applogger.Error("Experience retrieval: vector has no matching experience row (data integrity violation)",
 				"experience_id", v.ExperienceID,
-				"agent_id", agentID,
+				"person_id", personID,
 			)
 			continue
 		}
@@ -98,7 +98,7 @@ func SearchExperiences(ctx context.Context, agentID int64, taskDescription strin
 	}
 
 	applogger.Info("Experience retrieval completed",
-		"agent_id", agentID,
+		"person_id", personID,
 		"candidates", len(vectors),
 		"results", len(results),
 	)

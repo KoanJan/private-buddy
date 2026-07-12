@@ -139,7 +139,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 
 	// Create a DB record for persistence and debugging
 	event := model.ScheduledEvent{
-		AgentID:          w.personID,
+		PersonID:         w.personID,
 		SessionID:        w.sessionID,
 		TriggerMessageID: w.triggerMessageID,
 		TriggerAt:        triggerAt,
@@ -150,17 +150,24 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 	}
 	if err := database.DB.Create(&event).Error; err != nil {
 		applogger.Error("Failed to create scheduled event record",
-			"agent_id", w.personID,
+			"person_id", w.personID,
 			"session_id", w.sessionID,
 			"error", err,
 		)
 		return "", fmt.Errorf("failed to create alarm")
 	}
 
-	// Notify runtime to register a goroutine for this alarm.
-	// The tool does NOT manage goroutines — it only creates the DB record
-	// and sends an event. The runtime is responsible for goroutine lifecycle.
-	eventqueue.SendEvent(w.personID, &eventqueue.AgentEvent{
+	// Bridge: resolve agentConfigID from personID for eventqueue routing.
+	// The event queue is keyed by agentConfigID, but the tool only has personID.
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", w.personID).First(&ac).Error; err != nil {
+		applogger.Error("Failed to resolve agent config for eventqueue routing",
+			"person_id", w.personID, "error", err,
+		)
+		return "", fmt.Errorf("failed to notify runtime of alarm")
+	}
+
+	eventqueue.SendEvent(ac.ID, &eventqueue.AgentEvent{
 		Type:      eventqueue.EventTypeAlarmCreated,
 		SessionID: w.sessionID,
 		Payload: &eventqueue.AlarmCreatedPayload{

@@ -80,7 +80,7 @@ type TriggerOverride struct {
 // shared data between pipeline stages.
 type pipeline struct {
 	session          *model.Session
-	agent            *model.Agent
+	ac               *model.AgentConfig
 	llmConfig        *model.LLMConfig
 	triggerMessageID int64
 	triggerOverride  *TriggerOverride // Non-nil when the trigger is not a persisted message (e.g., scheduled event)
@@ -99,7 +99,6 @@ type pipeline struct {
 	preprocessingResult *comprehend.PreprocessingResult
 	kbSegments          []comprehend.Segment
 	taskResult          *chatcontext.TaskResultForAssembly
-	hasEmbedding        bool
 	guidance            string // Execution intent from Decide phase
 }
 
@@ -113,7 +112,7 @@ type pipeline struct {
 func ExecuteChat(
 	ctx context.Context,
 	session *model.Session,
-	agent *model.Agent,
+	ac *model.AgentConfig,
 	llmConfig *model.LLMConfig,
 	triggerMessageID int64,
 	draftID int64,
@@ -123,7 +122,7 @@ func ExecuteChat(
 
 	p := &pipeline{
 		session:             session,
-		agent:               agent,
+		ac:                  ac,
 		llmConfig:           llmConfig,
 		triggerMessageID:    triggerMessageID,
 		triggerOverride:     triggerOverride,
@@ -244,7 +243,7 @@ func (p *pipeline) loadMessages() error {
 		applogger.Error("failed to count messages for chat pipeline", "session_id", p.sessionID, "error", err)
 	}
 	p.windowSize = config.Get().SummaryWindowSize
-	p.kbIDs = getKnowledgeBaseIDs(p.agent)
+	p.kbIDs = getKnowledgeBaseIDs(p.ac)
 
 	applogger.Info("Starting chat processing",
 		"session_id", p.sessionID,
@@ -281,13 +280,13 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 	// Signal narrative generation if recent messages have accumulated enough.
 	// The narrative goroutine internally triggers summary generation if needed.
 	if len(recentMessages) >= p.windowSize {
-		comprehend.SignalNarrative(p.sessionID, p.agent.ID)
+		comprehend.SignalNarrative(p.sessionID, p.ac.PersonID)
 	}
 
-	characterSettings := p.agent.CharacterSettings
+	characterSettings := p.ac.CharacterSettings
 
 	entityProfileSection := chatcontext.FormatEntityProfileSection(
-		memory.LoadProfileForEntity(p.agent.ID, model.EntityTypePerson, 1),
+		memory.LoadProfileForEntity(p.ac.PersonID, model.EntityTypePerson, 1),
 		p.userName,
 	)
 
@@ -312,7 +311,6 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 		p.userName,
 		p.guidance,
 	)
-	p.hasEmbedding = len(p.kbSegments) > 0
 	return messages, "", false
 }
 
@@ -328,29 +326,28 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	}
 
 	processedQuery := p.triggerMessage.Content
+	var keywords []string
 	if p.preprocessingResult != nil {
 		processedQuery = p.preprocessingResult.ProcessedQuery
+		keywords = p.preprocessingResult.Keywords
 		applogger.Info("Query type and processed",
 			"type", p.preprocessingResult.QueryType,
 			"processed", processedQuery[:min(50, len(processedQuery))],
 		)
 	}
 
-	// Context retrieval (with or without RAG)
+	// Context retrieval (with or without keyword retrieval)
 	var contextResult *chatcontext.RetrievalResult
 	if p.preprocessingResult != nil && p.preprocessingResult.SkipRetrieval {
-		contextResult = chatcontext.GetContextWithoutRAG(p.sessionID, p.agent.ID, p.windowSize)
-		p.hasEmbedding = false
+		contextResult = chatcontext.GetContextWithoutRetrieval(p.sessionID, p.ac.PersonID, p.windowSize)
 	} else {
-		contextResult = chatcontext.GetContextForChat(ctx, p.sessionID, p.agent.ID, processedQuery, p.windowSize, 5)
-		p.hasEmbedding = contextResult.HasEmbedding
+		contextResult = chatcontext.GetContextForChat(p.sessionID, p.ac.PersonID, keywords, p.windowSize, 5)
 	}
 
 	// Merge knowledge base segments with chat history segments
 	relevantSegments := contextResult.RelevantSegments
 	if len(p.kbSegments) > 0 {
 		relevantSegments = append(relevantSegments, p.kbSegments...)
-		p.hasEmbedding = true
 	}
 
 	// Use cached narrative (generated in background with summary)
@@ -368,7 +365,7 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	// Signal narrative generation if recent messages have accumulated enough.
 	// The narrative goroutine internally triggers summary generation if needed.
 	if len(contextResult.RecentMessages) >= p.windowSize {
-		comprehend.SignalNarrative(p.sessionID, p.agent.ID)
+		comprehend.SignalNarrative(p.sessionID, p.ac.PersonID)
 	}
 
 	// Calculate message sequence numbers for metadata
@@ -379,7 +376,7 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 
 	recentStart := int(p.messageCount) - len(contextResult.RecentMessages) + 1
 
-	characterSettings := p.agent.CharacterSettings
+	characterSettings := p.ac.CharacterSettings
 
 	// Apply RAG retrieval hits to the memory system: chat-history segments
 	// that were retrieved count as observation retrieval hits, boosting
@@ -391,11 +388,11 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 		}
 	}
 	if len(ragHitIDs) > 0 {
-		memory.OnRAGHit(p.agent.ID, ragHitIDs)
+		memory.OnRetrievalHit(p.ac.PersonID, ragHitIDs)
 	}
 
 	entityProfileSection := chatcontext.FormatEntityProfileSection(
-		memory.LoadProfileForEntity(p.agent.ID, model.EntityTypePerson, 1),
+		memory.LoadProfileForEntity(p.ac.PersonID, model.EntityTypePerson, 1),
 		p.userName,
 	)
 
@@ -448,30 +445,24 @@ func (p *pipeline) streamResponse(ctx context.Context, messages []llm.Message) (
 	return fullContent, nil
 }
 
-// postProcess handles post-response tasks: RAG indexing and summary generation.
-// Note: message indexing uses triggerMessageID only, since the AI message
-// doesn't exist yet (draft has not been committed).
+// postProcess handles post-response tasks.
+// Note: Summary generation is now triggered at the message creation level
+// (after any message is committed, regardless of sender), not here.
 func (p *pipeline) postProcess(ctx context.Context) {
-	if p.hasEmbedding {
-		go func() {
-			chatcontext.IndexMessages(ctx, p.sessionID, []int64{p.triggerMessageID})
-		}()
-	}
-
 	// Note: summary generation is now triggered at the message creation level
 	// (after any message is committed, regardless of sender), not here.
 }
 
 // getKnowledgeBaseIDs returns the knowledge base IDs associated with the agent.
-func getKnowledgeBaseIDs(agent *model.Agent) []int64 {
-	if agent.KnowledgeBaseIDs == "" || agent.KnowledgeBaseIDs == "[]" {
-		applogger.Info("Agent has no KBs configured", "agent_id", agent.ID, "knowledge_base_ids", agent.KnowledgeBaseIDs)
+func getKnowledgeBaseIDs(ac *model.AgentConfig) []int64 {
+	if ac.KnowledgeBaseIDs == "" || ac.KnowledgeBaseIDs == "[]" {
+		applogger.Info("Agent has no KBs configured", "agent_config_id", ac.ID, "knowledge_base_ids", ac.KnowledgeBaseIDs)
 		return nil
 	}
 
 	var ids []int64
-	if err := json.Unmarshal([]byte(agent.KnowledgeBaseIDs), &ids); err != nil {
-		applogger.Error("Failed to parse agent knowledge_base_ids", "agent_id", agent.ID, "raw", agent.KnowledgeBaseIDs, "error", err)
+	if err := json.Unmarshal([]byte(ac.KnowledgeBaseIDs), &ids); err != nil {
+		applogger.Error("Failed to parse agent config knowledge_base_ids", "agent_config_id", ac.ID, "raw", ac.KnowledgeBaseIDs, "error", err)
 		return nil
 	}
 
@@ -481,10 +472,10 @@ func getKnowledgeBaseIDs(agent *model.Agent) []int64 {
 		if err := database.DB.First(&kb, id).Error; err == nil {
 			validIDs = append(validIDs, id)
 		} else {
-			applogger.Error("KB ID not found in database", "agent_id", agent.ID, "kb_id", id, "error", err)
+			applogger.Error("KB ID not found in database", "agent_config_id", ac.ID, "kb_id", id, "error", err)
 		}
 	}
 
-	applogger.Info("Agent KB IDs resolved", "agent_id", agent.ID, "raw_ids", ids, "valid_ids", validIDs)
+	applogger.Info("Agent config KB IDs resolved", "agent_config_id", ac.ID, "raw_ids", ids, "valid_ids", validIDs)
 	return validIDs
 }

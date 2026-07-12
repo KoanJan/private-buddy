@@ -148,19 +148,19 @@ Write background, guidance, reason, and plan in the same language as the event c
 //
 // For other event types, simple rule-based decisions are used.
 // The LLM call uses TemperatureDeterministic for consistent decision making.
-func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, activeWorks []*work) DecisionResult {
+func Decide(ctx context.Context, event *eventqueue.AgentEvent, ac *model.AgentConfig, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, activeWorks []*work) DecisionResult {
 	// Non-message events use simple rule-based decisions
 	switch event.Type {
 	case eventqueue.EventTypeGroupChatJoined:
-		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "session_joined event")
+		applogger.Info("Decision made (rule-based)", "agent_config_id", ac.ID, "reason", "session_joined event")
 		return DecisionResult{}
 	case eventqueue.EventTypeGroupChatLeft, eventqueue.EventTypeSystemNotification:
-		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "reason", "non-message event")
+		applogger.Info("Decision made (rule-based)", "agent_config_id", ac.ID, "reason", "non-message event")
 		return DecisionResult{}
 	case eventqueue.EventTypeWorkCompleted:
-		return decideWorkCompleted(event, agent)
+		return decideWorkCompleted(event, ac)
 	case eventqueue.EventTypeScheduled:
-		applogger.Info("Decision made (rule-based)", "agent_id", agent.ID, "action", ActionCreate, "reason", "scheduled event")
+		applogger.Info("Decision made (rule-based)", "agent_config_id", ac.ID, "action", ActionCreate, "reason", "scheduled event")
 		return DecisionResult{
 			Actions: []Action{{
 				Type:     ActionCreate,
@@ -172,7 +172,7 @@ func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agen
 	default:
 		applogger.Error("Unknown event type in Decide",
 			"event_type", event.Type,
-			"agent_id", agent.ID,
+			"agent_config_id", ac.ID,
 		)
 		return DecisionResult{}
 	}
@@ -180,7 +180,7 @@ func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agen
 	sameSessionWorks := filterWorksBySession(activeWorks, event.SessionID)
 
 	// Use LLM to decide — it can create, route, cancel, or produce no actions
-	return decideWithLLM(ctx, event, agent, llmConfig, comprehension, sameSessionWorks)
+	return decideWithLLM(ctx, event, ac, llmConfig, comprehension, sameSessionWorks)
 }
 
 // decideWorkCompleted handles EventTypeWorkCompleted with a rule-based decision.
@@ -193,10 +193,10 @@ func Decide(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agen
 // ChatWork completion produces no action — chat works are one-shot replies
 // that don't need follow-up.
 // Task work failure also creates a ChatWork to let them know what happened.
-func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) DecisionResult {
+func decideWorkCompleted(event *eventqueue.AgentEvent, ac *model.AgentConfig) DecisionResult {
 	payload, ok := event.Payload.(*eventqueue.WorkCompletedPayload)
 	if !ok || payload == nil {
-		applogger.Error("WorkCompleted event has invalid payload", "agent_id", agent.ID)
+		applogger.Error("WorkCompleted event has invalid payload", "agent_config_id", ac.ID)
 		return DecisionResult{}
 	}
 
@@ -204,7 +204,7 @@ func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) Decis
 	// ChatWork completion is a one-shot reply — no follow-up needed.
 	if payload.WorkType != int(model.WorkTypeTask) {
 		applogger.Info("WorkCompleted: ChatWork, no follow-up needed",
-			"agent_id", agent.ID, "work_id", payload.WorkID)
+			"agent_config_id", ac.ID, "work_id", payload.WorkID)
 		return DecisionResult{}
 	}
 
@@ -216,7 +216,7 @@ func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) Decis
 	}
 
 	applogger.Info("Decision made (rule-based, work completed)",
-		"agent_id", agent.ID,
+		"agent_config_id", ac.ID,
 		"work_id", payload.WorkID,
 		"status", payload.Status,
 		"action", ActionCreate,
@@ -231,12 +231,12 @@ func decideWorkCompleted(event *eventqueue.AgentEvent, agent *model.Agent) Decis
 }
 
 // decideWithLLM uses LLM to decide whether to create new work or route to an existing one.
-func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, agent *model.Agent, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, sameSessionWorks []*work) DecisionResult {
+func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, ac *model.AgentConfig, llmConfig *model.LLMConfig, comprehension *comprehend.ComprehensionResult, sameSessionWorks []*work) DecisionResult {
 	// Validate event has content before calling LLM
 	eventDescription := event.FormatDescription()
 	if eventDescription == "" {
 		applogger.Error("Decision: event has empty content, ignoring",
-			"agent_id", agent.ID,
+			"agent_config_id", ac.ID,
 			"session_id", event.SessionID,
 		)
 		return DecisionResult{}
@@ -245,13 +245,13 @@ func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, agent *mod
 	comprehensionContext := buildComprehensionContext(comprehension)
 	activeWorksContext := buildActiveWorksContext(sameSessionWorks)
 
-	agentDescription := agent.CharacterSettings
-	person, err := service.GetPerson(agent.PersonID)
+	agentDescription := ac.CharacterSettings
+	person, err := service.GetPerson(ac.PersonID)
 	if err == nil && person.Bio != "" {
 		agentDescription = person.Bio
 	}
 
-	prompt := fmt.Sprintf(decidePromptTemplate, service.GetAgentName(agent.ID), agentDescription, eventDescription, comprehensionContext, activeWorksContext)
+	prompt := fmt.Sprintf(decidePromptTemplate, service.GetAgentConfigName(ac.ID), agentDescription, eventDescription, comprehensionContext, activeWorksContext)
 
 	// Active work IDs are listed in the prompt via buildActiveWorksContext so the
 	// LLM knows which values are valid for target_work_id. We do NOT use schema enum
@@ -276,7 +276,7 @@ func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, agent *mod
 
 	if err != nil {
 		applogger.Error("Decision LLM call failed, ignoring",
-			"agent_id", agent.ID,
+			"agent_config_id", ac.ID,
 			"error", err,
 		)
 		return DecisionResult{}
@@ -285,14 +285,14 @@ func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, agent *mod
 	var decision DecisionResult
 	if err := json.Unmarshal([]byte(result), &decision); err != nil {
 		applogger.Error("Decision LLM output parse failed, ignoring",
-			"agent_id", agent.ID,
+			"agent_config_id", ac.ID,
 			"error", err,
 		)
 		return DecisionResult{}
 	}
 
 	applogger.Info("Decision made",
-		"agent_id", agent.ID,
+		"agent_config_id", ac.ID,
 		"thoughts", decision.Thoughts,
 		"action_count", len(decision.Actions),
 	)

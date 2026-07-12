@@ -40,7 +40,6 @@ export interface EmbeddingConfig {
 
 export interface Agent {
   id: number;
-  person_id: number;
   name: string;
   bio: string;
   character_settings: string;

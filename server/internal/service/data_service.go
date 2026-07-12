@@ -21,18 +21,18 @@ func GetSession(sessionID int64) *model.Session {
 	return &session
 }
 
-// GetAgent retrieves an agent by ID.
-func GetAgent(agentID int64) (*model.Agent, error) {
-	var agent model.Agent
-	if err := database.DB.First(&agent, agentID).Error; err != nil {
-		return nil, fmt.Errorf("agent %d: %w", agentID, err)
+// GetAgentConfig retrieves an agent config by ID.
+func GetAgentConfig(agentConfigID int64) (*model.AgentConfig, error) {
+	var ac model.AgentConfig
+	if err := database.DB.First(&ac, agentConfigID).Error; err != nil {
+		return nil, fmt.Errorf("agent config %d: %w", agentConfigID, err)
 	}
-	return &agent, nil
+	return &ac, nil
 }
 
-// GetAgentWithPerson retrieves an agent with its associated Person.
-func GetAgentWithPerson(agentID int64) (*model.Agent, *model.Person, error) {
-	agent, err := GetAgent(agentID)
+// GetAgentConfigWithPerson retrieves an agent config with its associated Person.
+func GetAgentConfigWithPerson(agentConfigID int64) (*model.AgentConfig, *model.Person, error) {
+	agent, err := GetAgentConfig(agentConfigID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,9 +43,18 @@ func GetAgentWithPerson(agentID int64) (*model.Agent, *model.Person, error) {
 	return agent, person, nil
 }
 
-// GetAgentName returns the name of an agent via its Person record.
-func GetAgentName(agentID int64) string {
-	agent, err := GetAgent(agentID)
+// GetAgentConfigByPersonID retrieves an agent config by PersonID.
+func GetAgentConfigByPersonID(personID int64) (*model.AgentConfig, error) {
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", personID).First(&ac).Error; err != nil {
+		return nil, fmt.Errorf("agent config with person_id %d: %w", personID, err)
+	}
+	return &ac, nil
+}
+
+// GetAgentConfigName returns the name of an agent config via its Person record.
+func GetAgentConfigName(agentConfigID int64) string {
+	agent, err := GetAgentConfig(agentConfigID)
 	if err != nil {
 		return ""
 	}
@@ -56,9 +65,9 @@ func GetAgentName(agentID int64) string {
 	return person.Name
 }
 
-// GetAgentPersonID returns the PersonID associated with an agent.
-func GetAgentPersonID(agentID int64) int64 {
-	agent, err := GetAgent(agentID)
+// GetAgentConfigPersonID returns the PersonID associated with an agent config.
+func GetAgentConfigPersonID(agentConfigID int64) int64 {
+	agent, err := GetAgentConfig(agentConfigID)
 	if err != nil {
 		return 0
 	}
@@ -272,10 +281,10 @@ func UpdateSystemLLMConfig(llmConfigID int64) error {
 
 // ---- Transactional composite operations ----
 
-// CreateAgentWithPerson creates a Person (type=AI) and an Agent in a single transaction.
-// Returns the created Agent and Person.
-func CreateAgentWithPerson(name, bio string, characterSettings string, llmConfigID int64, avatar string, knowledgeBaseIDs []int64) (*model.Agent, *model.Person, error) {
-	var agent *model.Agent
+// CreateAgentConfigWithPerson creates a Person (type=AI) and an AgentConfig in a single transaction.
+// Returns the created AgentConfig and Person.
+func CreateAgentConfigWithPerson(name, bio string, characterSettings string, llmConfigID int64, avatar string, knowledgeBaseIDs []int64) (*model.AgentConfig, *model.Person, error) {
+	var agent *model.AgentConfig
 	var person *model.Person
 
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
@@ -294,7 +303,7 @@ func CreateAgentWithPerson(name, bio string, characterSettings string, llmConfig
 			kbIDsJSON = string(data)
 		}
 
-		a := model.Agent{
+		a := model.AgentConfig{
 			PersonID:          p.ID,
 			CharacterSettings: characterSettings,
 			LLMConfigID:       llmConfigID,
@@ -313,20 +322,14 @@ func CreateAgentWithPerson(name, bio string, characterSettings string, llmConfig
 	return agent, person, err
 }
 
-// DeleteAgentCascade deletes an agent and all associated data in a single transaction.
+// DeleteAgentConfigCascade deletes an agent config and all associated data in a single transaction.
 // Workspace cleanup (filesystem) remains the caller's responsibility.
-func DeleteAgentCascade(agentID int64) (personID int64, sessionIDs []int64, err error) {
+func DeleteAgentConfigCascade(personID int64) (sessionIDs []int64, err error) {
 	err = database.DB.Transaction(func(tx *gorm.DB) error {
-		// Get the agent's PersonID for caller's workspace cleanup
-		var agent model.Agent
-		if err := tx.First(&agent, agentID).Error; err != nil {
-			return fmt.Errorf("agent %d not found: %w", agentID, err)
-		}
-		personID = agent.PersonID
-
-		// Collect session IDs
-		if err := tx.Model(&model.Session{}).Where("agent_id = ?", agentID).Pluck("id", &sessionIDs).Error; err != nil {
-			return fmt.Errorf("pluck sessions: %w", err)
+		// Collect session IDs via participant_sessions.
+		if err := tx.Raw(`SELECT ps.session_id FROM participant_sessions ps
+			WHERE ps.participant_id = ?`, personID).Pluck("session_id", &sessionIDs).Error; err != nil {
+			return fmt.Errorf("pluck sessions via participant_sessions: %w", err)
 		}
 
 		if len(sessionIDs) > 0 {
@@ -342,7 +345,7 @@ func DeleteAgentCascade(agentID int64) (personID int64, sessionIDs []int64, err 
 					return err
 				}
 			}
-			if err := tx.Where("agent_id = ?", agentID).Delete(&model.Session{}).Error; err != nil {
+			if err := tx.Where("id IN ?", sessionIDs).Delete(&model.Session{}).Error; err != nil {
 				return err
 			}
 			if err := tx.Where("session_id IN ?", sessionIDs).Delete(&model.ScheduledEvent{}).Error; err != nil {
@@ -350,16 +353,16 @@ func DeleteAgentCascade(agentID int64) (personID int64, sessionIDs []int64, err 
 			}
 		}
 
-		// Agent-level memory and cognition
-		if err := tx.Where("agent_id = ?", agentID).Delete(&model.AgentObservation{}).Error; err != nil {
+		// Agent-level memory and cognition — now keyed by person_id.
+		if err := tx.Where("person_id = ?", personID).Delete(&model.AgentObservation{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("agent_id = ?", agentID).Delete(&model.EntityProfile{}).Error; err != nil {
+		if err := tx.Where("person_id = ?", personID).Delete(&model.EntityProfile{}).Error; err != nil {
 			return err
 		}
 
-		// Delete agent and person
-		if err := tx.Delete(&model.Agent{}, agentID).Error; err != nil {
+		// Delete agent config and person
+		if err := tx.Where("person_id = ?", personID).Delete(&model.AgentConfig{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Delete(&model.Person{}, personID).Error; err != nil {
@@ -369,27 +372,31 @@ func DeleteAgentCascade(agentID int64) (personID int64, sessionIDs []int64, err 
 		return nil
 	})
 
-	return personID, sessionIDs, err
+	return sessionIDs, err
 }
 
 // DeleteSessionCascade deletes a session and all associated data in a transaction.
-// Returns the agent's PersonID and the session's AgentID for caller's workspace cleanup.
-func DeleteSessionCascade(sessionID int64) (personID int64, agentID int64, err error) {
+// Returns the first AI agent's PersonID for caller's workspace cleanup, and 0 for
+// the legacy agentConfigID (caller ignores it).
+func DeleteSessionCascade(sessionID int64) (personID int64, agentConfigID int64, err error) {
 	err = database.DB.Transaction(func(tx *gorm.DB) error {
 		var sess model.Session
 		if err := tx.First(&sess, sessionID).Error; err != nil {
 			return fmt.Errorf("session %d not found: %w", sessionID, err)
 		}
-		agentID = sess.AgentID
 
-		// Look up agent's PersonID for workspace path
-		var agent model.Agent
-		if err := tx.First(&agent, sess.AgentID).Error; err != nil {
-			applogger.Error("failed to find agent for session during cleanup", "agent_id", sess.AgentID, "session_id", sessionID, "error", err)
-			personID = 0
-		} else {
-			personID = agent.PersonID
+		// Resolve the first AI agent's PersonID from participant_sessions
+		// for workspace cleanup.
+		var aiPersonID int64
+		if err := tx.Raw(`SELECT ac.person_id FROM participant_sessions ps
+			JOIN persons p ON p.id = ps.participant_id AND p.type = 1
+			JOIN agent_configs ac ON ac.person_id = p.id
+			WHERE ps.session_id = ?
+			LIMIT 1`, sessionID).Scan(&aiPersonID).Error; err != nil {
+			applogger.Error("failed to find agent person for session during cleanup",
+				"session_id", sessionID, "error", err)
 		}
+		personID = aiPersonID
 
 		tables := []interface{}{
 			&model.Work{}, &model.MessageDraft{}, &model.Interaction{},
@@ -408,7 +415,7 @@ func DeleteSessionCascade(sessionID int64) (personID int64, agentID int64, err e
 		return nil
 	})
 
-	return personID, agentID, err
+	return personID, agentConfigID, err
 }
 
 // ---- Query helpers ----

@@ -36,7 +36,7 @@ type learnDecision struct {
 // This is the public entry point called from the agent heartbeat at a low
 // frequency (every 30 ticks). Safe to call when the embedding service is
 // not configured — does nothing.
-func CheckLearning(ctx context.Context, agentID int64) {
+func CheckLearning(ctx context.Context, personID int64) {
 	if embeddingSvc == nil {
 		return
 	}
@@ -44,15 +44,15 @@ func CheckLearning(ctx context.Context, agentID int64) {
 	// Load session-level entity profiles for this agent.
 	// These narratives describe what domains/tasks the agent actually works on.
 	var profiles []model.EntityProfile
-	if err := database.DB.Where("agent_id = ? AND entity_type = ?", agentID, model.EntityTypeSession).
+	if err := database.DB.Where("entity_type = ? AND person_id = ?", model.EntityTypeSession, personID).
 		Find(&profiles).Error; err != nil {
 		applogger.Error("CheckLearning: failed to load entity profiles",
-			"agent_id", agentID, "error", err)
+			"person_id", personID, "error", err)
 		return
 	}
 	if len(profiles) == 0 {
 		applogger.Debug("CheckLearning: no session profiles yet, skipping",
-			"agent_id", agentID)
+			"person_id", personID)
 		return
 	}
 
@@ -68,39 +68,39 @@ func CheckLearning(ctx context.Context, agentID int64) {
 		learningSearchTopN, learningSearchMinScore)
 	if err != nil {
 		applogger.Error("CheckLearning: public experience search failed",
-			"agent_id", agentID, "error", err)
+			"person_id", personID, "error", err)
 		return
 	}
 	if len(candidates) == 0 {
 		applogger.Debug("CheckLearning: no matching public experiences",
-			"agent_id", agentID)
+			"person_id", personID)
 		return
 	}
 
-	// Load agent LLM config for the judgment call
-	ag, err := service.GetAgent(agentID)
-	if err != nil {
-		applogger.Error("CheckLearning: failed to load agent",
-			"agent_id", agentID, "error", err)
+	// Load agent config LLM config for the judgment call
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", personID).First(&ac).Error; err != nil {
+		applogger.Error("CheckLearning: failed to load agent config",
+			"person_id", personID, "error", err)
 		return
 	}
-	llmCfg, err := service.GetLLMConfig(ag.LLMConfigID)
+	llmCfg, err := service.GetLLMConfig(ac.LLMConfigID)
 	if err != nil {
 		applogger.Error("CheckLearning: failed to load LLM config",
-			"agent_id", agentID, "error", err)
+			"person_id", personID, "error", err)
 		return
 	}
 
 	// Ask LLM to judge which public experiences are worth learning
-	learnIDs, err := judgeLearning(ctx, ag, llmCfg, candidates, narratives)
+	learnIDs, err := judgeLearning(ctx, &ac, llmCfg, candidates, narratives)
 	if err != nil {
 		applogger.Error("CheckLearning: LLM judgment failed",
-			"agent_id", agentID, "error", err)
+			"person_id", personID, "error", err)
 		return
 	}
 	if len(learnIDs) == 0 {
 		applogger.Debug("CheckLearning: nothing worth learning",
-			"agent_id", agentID)
+			"person_id", personID)
 		return
 	}
 
@@ -116,7 +116,7 @@ func CheckLearning(ctx context.Context, agentID int64) {
 		pub, ok := candidateMap[pubID]
 		if !ok {
 			applogger.Error("CheckLearning: LLM returned unknown public experience ID",
-				"agent_id", agentID, "public_experience_id", pubID)
+				"person_id", personID, "public_experience_id", pubID)
 			continue
 		}
 
@@ -125,11 +125,11 @@ func CheckLearning(ctx context.Context, agentID int64) {
 			writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			_, err := createExperience(writeCtx, agentID, model.AgentExperienceSourceLearn, pub.ID,
+			_, err := createExperience(writeCtx, personID, model.AgentExperienceSourceLearn, pub.ID,
 				pub.Title, pub.Description, pub.WhenToUse, pub.Guidelines, pub.Pitfalls, pub.Procedure)
 			if err != nil {
 				applogger.Error("CheckLearning: failed to copy experience",
-					"agent_id", agentID,
+					"person_id", personID,
 					"public_experience_id", pub.ID,
 					"error", err,
 				)
@@ -144,7 +144,7 @@ func CheckLearning(ctx context.Context, agentID int64) {
 	}
 
 	applogger.Info("CheckLearning: completed",
-		"agent_id", agentID,
+		"person_id", personID,
 		"candidates", len(candidates),
 		"learned", learned,
 	)
@@ -152,7 +152,7 @@ func CheckLearning(ctx context.Context, agentID int64) {
 
 // judgeLearning asks the LLM to decide which public experiences are worth
 // learning based on the agent's long-term interaction patterns and personality.
-func judgeLearning(ctx context.Context, agent *model.Agent, llmCfg *model.LLMConfig,
+func judgeLearning(ctx context.Context, ac *model.AgentConfig, llmCfg *model.LLMConfig,
 	candidates []PublicSearchResult, narratives []string) ([]int64, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)

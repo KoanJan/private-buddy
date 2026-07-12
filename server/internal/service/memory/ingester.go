@@ -75,15 +75,15 @@ func storeEventEmbedding(ctx context.Context, eventID int64, content string) err
 
 // createObservation creates a mechanical observation for an agent.
 // No LLM — content is retrieved on demand via event_id → events.
-func createObservation(ctx context.Context, agentID, eventID int64) error {
-	obs := newObservation(agentID, eventID)
+func createObservation(ctx context.Context, personID, eventID int64) error {
+	obs := newObservation(personID, eventID)
 
 	if err := database.DB.Create(obs).Error; err != nil {
 		return fmt.Errorf("failed to create observation: %w", err)
 	}
 
 	applogger.Debug("Observation created",
-		"agent_id", agentID,
+		"person_id", personID,
 		"event_id", eventID,
 		"obs_id", obs.ID,
 	)

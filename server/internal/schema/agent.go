@@ -7,16 +7,16 @@ import (
 	"private-buddy-server/internal/model"
 )
 
-// AgentBase contains the common fields shared by agent create and update schemas.
-type AgentBase struct {
+// AgentConfigBase contains the common fields shared by agent config create and update schemas.
+type AgentConfigBase struct {
 	CharacterSettings string  `json:"character_settings"`
 	LLMConfigID       int64   `json:"llm_config_id" binding:"required"`
 	Avatar            string  `json:"avatar"`
 	KnowledgeBaseIDs  []int64 `json:"knowledge_base_ids"`
 }
 
-// AgentCreate represents the input for creating an agent.
-type AgentCreate struct {
+// AgentConfigCreate represents the input for creating an agent config.
+type AgentConfigCreate struct {
 	Name              string  `json:"name" binding:"required"`
 	Description       string  `json:"description"`
 	CharacterSettings string  `json:"character_settings"`
@@ -25,8 +25,8 @@ type AgentCreate struct {
 	KnowledgeBaseIDs  []int64 `json:"knowledge_base_ids"`
 }
 
-// AgentUpdate allows updating mutable agent fields and person-level fields.
-type AgentUpdate struct {
+// AgentConfigUpdate allows updating mutable agent config fields and person-level fields.
+type AgentConfigUpdate struct {
 	Name              *string  `json:"name"`
 	Bio               *string  `json:"bio"`
 	CharacterSettings *string  `json:"character_settings"`
@@ -36,9 +36,10 @@ type AgentUpdate struct {
 }
 
 // AgentResponse represents the API response for an agent.
+// From the frontend's perspective, the agent is the Person entity.
+// ID is the person ID; the handler layer distributes to Person and AgentConfig internally.
 type AgentResponse struct {
 	ID                int64     `json:"id"`
-	PersonID          int64     `json:"person_id"`
 	Name              string    `json:"name"`
 	Bio               string    `json:"bio"`
 	CharacterSettings string    `json:"character_settings"`
@@ -63,8 +64,8 @@ type AgentWithSessions struct {
 	Sessions []SessionBrief `json:"sessions"`
 }
 
-// NewAgentResponse converts a model.Agent and model.Person to an AgentResponse.
-func NewAgentResponse(m *model.Agent, person *model.Person) *AgentResponse {
+// NewAgentResponse converts a model.AgentConfig and model.Person to an AgentResponse.
+func NewAgentResponse(m *model.AgentConfig, person *model.Person) *AgentResponse {
 	var kbIDs []int64
 	if m.KnowledgeBaseIDs != "" && m.KnowledgeBaseIDs != "[]" {
 		json.Unmarshal([]byte(m.KnowledgeBaseIDs), &kbIDs)
@@ -79,8 +80,7 @@ func NewAgentResponse(m *model.Agent, person *model.Person) *AgentResponse {
 		bio = person.Bio
 	}
 	return &AgentResponse{
-		ID:                m.ID,
-		PersonID:          m.PersonID,
+		ID:                person.ID,
 		Name:              name,
 		Bio:               bio,
 		CharacterSettings: m.CharacterSettings,
@@ -92,11 +92,11 @@ func NewAgentResponse(m *model.Agent, person *model.Person) *AgentResponse {
 	}
 }
 
-// NewAgentResponseList converts a list of model.Agent to AgentResponse list.
-func NewAgentResponseList(agents []model.Agent, persons map[int64]*model.Person) []*AgentResponse {
-	result := make([]*AgentResponse, 0, len(agents))
-	for i := range agents {
-		result = append(result, NewAgentResponse(&agents[i], persons[agents[i].PersonID]))
+// NewAgentResponseList converts a list of model.AgentConfig to AgentResponse list.
+func NewAgentResponseList(configs []model.AgentConfig, persons map[int64]*model.Person) []*AgentResponse {
+	result := make([]*AgentResponse, 0, len(configs))
+	for i := range configs {
+		result = append(result, NewAgentResponse(&configs[i], persons[configs[i].PersonID]))
 	}
 	return result
 }
@@ -115,8 +115,8 @@ func NewSessionBriefList(entities []model.Session) []SessionBrief {
 	return result
 }
 
-// BuildUpdates builds a map of non-nil update fields from AgentUpdate.
-func (req *AgentUpdate) BuildUpdates() map[string]interface{} {
+// BuildUpdates builds a map of non-nil update fields from AgentConfigUpdate.
+func (req *AgentConfigUpdate) BuildUpdates() map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.CharacterSettings != nil {
 		updates["character_settings"] = *req.CharacterSettings

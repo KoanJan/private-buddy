@@ -45,19 +45,19 @@ type entityDirection struct {
 // not survival_count. See loadProfileEvidences.
 //
 // Returns the number of profiles triggered.
-func checkDensity(ctx context.Context, agentID int64) int {
+func checkDensity(ctx context.Context, personID int64) int {
 	// Load all observations for this agent
 	var observations []model.AgentObservation
-	if err := database.DB.Where("agent_id = ?", agentID).
+	if err := database.DB.Where("person_id = ?", personID).
 		Order("id").Find(&observations).Error; err != nil {
 		applogger.Error("EntityProfile density check: failed to load observations",
-			"agent_id", agentID, "error", err)
+			"person_id", personID, "error", err)
 		return 0
 	}
 
 	if len(observations) < profileTriggerMin {
 		applogger.Debug("EntityProfile density check: insufficient observations",
-			"agent_id", agentID,
+			"person_id", personID,
 			"qualified", len(observations),
 			"required", profileTriggerMin,
 		)
@@ -72,15 +72,15 @@ func checkDensity(ctx context.Context, agentID int64) int {
 		if count < profileTriggerMin {
 			continue
 		}
-		if isRateLimited(dir.EntityType, dir.EntityID, agentID) {
+		if isRateLimited(dir.EntityType, dir.EntityID, personID) {
 			applogger.Debug("EntityProfile rate limited",
-				"agent_id", agentID,
+				"person_id", personID,
 				"entity_type", dir.EntityType,
 				"entity_id", dir.EntityID,
 			)
 			continue
 		}
-		go generateProfile(ctx, agentID, dir.EntityType, dir.EntityID)
+		go generateProfile(ctx, personID, dir.EntityType, dir.EntityID)
 		triggered++
 	}
 
@@ -183,26 +183,6 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 		humanPersonIDs[p.ParticipantID] = true
 	}
 
-	// Batch-load agents for sessions to map agent_id → person_id
-	agents := make(map[int64]int64) // agent_id → person_id
-	var agentIDs []int64
-	seenAgents := make(map[int64]bool)
-	for _, s := range sessions {
-		if !seenAgents[s.AgentID] {
-			agentIDs = append(agentIDs, s.AgentID)
-			seenAgents[s.AgentID] = true
-		}
-	}
-	if len(agentIDs) > 0 {
-		var agentRecords []model.Agent
-		if err := database.DB.Where("id IN ?", agentIDs).Find(&agentRecords).Error; err != nil {
-			applogger.Error("resolveEntityDirections: failed to load agents", "error", err)
-		}
-		for _, a := range agentRecords {
-			agents[a.ID] = a.PersonID
-		}
-	}
-
 	// Count observations per entity direction
 	counts := make(map[entityDirection]int)
 	dedup := make(map[entityDirection]map[int64]bool) // dir → set of observation IDs
@@ -248,10 +228,10 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 
 // isRateLimited checks whether a profile was recently updated (within the
 // rate limit window). Returns true if the profile should be skipped.
-func isRateLimited(entityType int, entityID, agentID int64) bool {
+func isRateLimited(entityType int, entityID, personID int64) bool {
 	var profile model.EntityProfile
-	err := database.DB.Where("agent_id = ? AND entity_type = ? AND entity_id = ?",
-		agentID, entityType, entityID).First(&profile).Error
+	err := database.DB.Where("person_id = ? AND entity_type = ? AND entity_id = ?",
+		personID, entityType, entityID).First(&profile).Error
 	if err != nil {
 		return false // No existing profile, not rate limited
 	}
@@ -265,9 +245,9 @@ func isRateLimited(entityType int, entityID, agentID int64) bool {
 // formats them as evidence, and asks the LLM to synthesize a fresh narrative
 // (no prior narrative is fed). MD5 of the evidence text is compared with the
 // existing profile's input_md5 — if unchanged, generation is skipped.
-func generateProfile(ctx context.Context, agentID int64, entityType int, entityID int64) {
+func generateProfile(ctx context.Context, personID int64, entityType int, entityID int64) {
 	applogger.Info("Generating EntityProfile",
-		"agent_id", agentID,
+		"person_id", personID,
 		"entity_type", entityType,
 		"entity_id", entityID,
 	)
@@ -280,23 +260,31 @@ func generateProfile(ctx context.Context, agentID int64, entityType int, entityI
 		return
 	}
 
-	// Resolve agent name for self-referencing in the prompt
-	agent := getAgent(agentID)
-	if agent == nil {
-		applogger.Error("EntityProfile: agent not found", "agent_id", agentID)
+	// Resolve agent config for self-referencing in the prompt
+	ac := getAgentConfigByPersonID(personID)
+	if ac == nil {
+		applogger.Error("EntityProfile: agent config not found", "person_id", personID)
 		return
 	}
-	agentName := service.GetAgentName(agentID)
+
+	// Load agent name from the persons table
+	var agentPerson model.Person
+	if err := database.DB.First(&agentPerson, personID).Error; err != nil {
+		applogger.Error("EntityProfile: failed to load agent person",
+			"person_id", personID, "error", err)
+		return
+	}
+	agentName := agentPerson.Name
 
 	// Load relevant observations with event content
-	evidences := loadProfileEvidences(agentID, entityType, entityID, agentName)
+	evidences := loadProfileEvidences(personID, entityType, entityID, agentName)
 
 	// Build the LLM prompt.
 	// When the agent is reflecting on itself, use "yourself" instead of the agent
 	// name as the entity label to prevent the LLM from slipping into third-person.
 	entityDesc := entityName
 	extraDirective := ""
-	if entityType == model.EntityTypePerson && entityID == agent.PersonID {
+	if entityType == model.EntityTypePerson && entityID == ac.PersonID {
 		entityDesc = "yourself"
 		extraDirective = " Write in first-person (use 'I', 'me', 'my')."
 	}
@@ -324,15 +312,15 @@ Key observations:
 	inputHash := fmt.Sprintf("%x", md5.Sum([]byte(promptText)))
 
 	var existingProfile model.EntityProfile
-	if err := database.DB.Where("agent_id = ? AND entity_type = ? AND entity_id = ?",
-		agentID, entityType, entityID).First(&existingProfile).Error; err != nil {
+	if err := database.DB.Where("person_id = ? AND entity_type = ? AND entity_id = ?",
+		personID, entityType, entityID).First(&existingProfile).Error; err != nil {
 		applogger.Error("EntityProfile: failed to check existing profile before generation",
-			"agent_id", agentID, "entity_type", entityType, "entity_id", entityID, "error", err)
+			"person_id", personID, "entity_type", entityType, "entity_id", entityID, "error", err)
 	}
 
 	if existingProfile.ID != 0 && existingProfile.InputMD5 == inputHash && existingProfile.InputMD5 != "" {
 		applogger.Info("EntityProfile input unchanged, skipping regeneration",
-			"agent_id", agentID,
+			"person_id", personID,
 			"entity_type", entityType,
 			"entity_id", entityID,
 			"md5", inputHash,
@@ -340,9 +328,9 @@ Key observations:
 		return
 	}
 
-	llmConfig := getLLMConfig(agent.LLMConfigID)
+	llmConfig := getLLMConfig(ac.LLMConfigID)
 	if llmConfig == nil {
-		applogger.Error("EntityProfile: LLM config not found", "agent_id", agentID)
+		applogger.Error("EntityProfile: LLM config not found", "person_id", personID)
 		return
 	}
 
@@ -356,7 +344,7 @@ Key observations:
 
 	if err != nil {
 		applogger.Error("EntityProfile LLM call failed",
-			"agent_id", agentID,
+			"person_id", personID,
 			"entity_type", entityType,
 			"entity_id", entityID,
 			"error", err,
@@ -367,7 +355,7 @@ Key observations:
 	narrative = strings.TrimSpace(narrative)
 	if narrative == "" {
 		applogger.Error("EntityProfile LLM returned empty narrative",
-			"agent_id", agentID,
+			"person_id", personID,
 		)
 		return
 	}
@@ -382,12 +370,12 @@ Key observations:
 			"last_updated_at": time.Now(),
 		}).Error; err != nil {
 			applogger.Error("EntityProfile: failed to update profile",
-				"agent_id", agentID, "entity_type", entityType, "error", err)
+				"person_id", personID, "entity_type", entityType, "error", err)
 			return
 		}
 	} else {
 		profile := model.EntityProfile{
-			AgentID:       agentID,
+			PersonID:      personID,
 			EntityType:    entityType,
 			EntityID:      entityID,
 			Narrative:     narrative,
@@ -395,13 +383,13 @@ Key observations:
 			InputMD5:      inputHash,
 		}
 		if err := database.DB.Create(&profile).Error; err != nil {
-			applogger.Error("EntityProfile: failed to create profile", "agent_id", agentID, "entity_type", entityType, "error", err)
+			applogger.Error("EntityProfile: failed to create profile", "person_id", personID, "entity_type", entityType, "error", err)
 			return
 		}
 	}
 
 	applogger.Info("EntityProfile generated",
-		"agent_id", agentID,
+		"person_id", personID,
 		"entity_type", entityType,
 		"entity_id", entityID,
 		"evidence_count", evidenceCount,
@@ -432,14 +420,14 @@ func entityLabel(entityType int, entityID int64) (string, bool) {
 //
 // Selection: top profileTopK observations sorted by importance DESC (id DESC as
 // tiebreaker for equal importance). No survival_count gate.
-func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentName string) []string {
+func loadProfileEvidences(personID int64, entityType int, entityID int64, agentName string) []string {
 	// Load all observations ordered by importance DESC, then id DESC for recency tiebreaking.
 	var observations []model.AgentObservation
-	if err := database.DB.Where("agent_id = ?", agentID).
+	if err := database.DB.Where("person_id = ?", personID).
 		Order("importance DESC, id DESC").
 		Find(&observations).Error; err != nil {
 		applogger.Error("loadProfileEvidences: failed to load observations",
-			"agent_id", agentID, "error", err)
+			"person_id", personID, "error", err)
 		return nil
 	}
 
@@ -558,13 +546,13 @@ func loadProfileEvidences(agentID int64, entityType int, entityID int64, agentNa
 	return evidences
 }
 
-// getAgent retrieves the agent model by ID.
-func getAgent(agentID int64) *model.Agent {
-	var agent model.Agent
-	if err := database.DB.First(&agent, agentID).Error; err != nil {
+// getAgentConfigByPersonID retrieves the agent config model by person_id.
+func getAgentConfigByPersonID(personID int64) *model.AgentConfig {
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", personID).First(&ac).Error; err != nil {
 		return nil
 	}
-	return &agent
+	return &ac
 }
 
 // getLLMConfig retrieves the LLM config by ID.
@@ -578,10 +566,10 @@ func getLLMConfig(configID int64) *model.LLMConfig {
 
 // LoadProfileForEntity returns the narrative from an agent's EntityProfile for
 // a specific entity (user/agent/session). Returns empty string if no profile exists.
-func LoadProfileForEntity(agentID int64, entityType int, entityID int64) string {
+func LoadProfileForEntity(personID int64, entityType int, entityID int64) string {
 	var profile model.EntityProfile
-	err := database.DB.Where("agent_id = ? AND entity_type = ? AND entity_id = ?",
-		agentID, entityType, entityID).First(&profile).Error
+	err := database.DB.Where("person_id = ? AND entity_type = ? AND entity_id = ?",
+		personID, entityType, entityID).First(&profile).Error
 	if err != nil {
 		return ""
 	}

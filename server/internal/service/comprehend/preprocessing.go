@@ -18,7 +18,8 @@ const queryTypeAmbiguous = "ambiguous" // Query contains references to previous 
 const queryTypeVague = "vague"         // Query is too vague to understand intent
 const queryTypeNoQuery = "no_query"    // Query doesn't need retrieval (greetings, etc.)
 
-// routingPrompt is the LLM prompt template for query type classification.
+// routingPrompt is the LLM prompt template for query type classification
+// and keyword extraction for history search.
 // It takes two parameters: history (formatted conversation) and query (the person's message).
 const routingPrompt = `Analyze the query type and process accordingly.
 
@@ -31,7 +32,9 @@ Classify the query type and process:
 1. "no_query" - No retrieval needed: greetings, chitchat, emotional expressions, simple responses, etc. that can be answered without retrieving historical information.
 2. "clear" - Clear query: the query is complete and unambiguous, requiring relevant information to answer.
 3. "ambiguous" - Ambiguous reference: the query contains pronouns (like "it", "that", "this") or references to previous content, requiring context to understand. For this type, you MUST rewrite the query into a complete, clear query that can be understood independently without relying on conversation history.
-4. "vague" - Too vague: the query is too brief or ambiguous, making it difficult to determine intent even with context. For this type, explain the reason for vagueness.`
+4. "vague" - Too vague: the query is too brief or ambiguous, making it difficult to determine intent even with context. For this type, explain the reason for vagueness.
+
+In addition, extract a list of keywords from the query (or rewritten query if applicable) suitable for keyword-based search in conversation history. Keywords should capture the core topics, entities, and concepts mentioned.`
 
 // clarifyPrompt is the LLM prompt template for generating clarification questions.
 // It takes three parameters: history, query, and reason.
@@ -55,20 +58,22 @@ Output only the clarification question, without any additional content.`
 // QueryRoutingResult represents the structured output of query routing.
 // Defines the expected format when the LLM classifies and processes a user query.
 type QueryRoutingResult struct {
-	Type           string `json:"type" jsonschema:"description=Query type classification,enum=no_query,enum=clear,enum=ambiguous,enum=vague,required"`
-	RewrittenQuery string `json:"rewritten_query" jsonschema:"description=Rewritten query that is self-contained and clear (required for ambiguous type)"`
-	Reason         string `json:"reason" jsonschema:"description=Reason why the query is vague and needs clarification (required for vague type)"`
+	Type           string   `json:"type" jsonschema:"description=Query type classification,enum=no_query,enum=clear,enum=ambiguous,enum=vague,required"`
+	RewrittenQuery string   `json:"rewritten_query" jsonschema:"description=Rewritten query that is self-contained and clear (required for ambiguous type)"`
+	Keywords       []string `json:"keywords" jsonschema:"description=Keywords extracted from the query for keyword-based history search,required"`
+	Reason         string   `json:"reason" jsonschema:"description=Reason why the query is vague and needs clarification (required for vague type)"`
 }
 
 // PreprocessingResult represents the full output of query preprocessing,
-// including the processed query, type classification, and clarification if needed.
+// including the processed query, type classification, keywords for retrieval, and clarification if needed.
 type PreprocessingResult struct {
-	OriginalQuery      string `json:"original_query"`
-	ProcessedQuery     string `json:"processed_query"`
-	QueryType          string `json:"query_type"`
-	NeedsClarification bool   `json:"needs_clarification"`
-	Clarification      string `json:"clarification"`
-	SkipRetrieval      bool   `json:"skip_retrieval"`
+	OriginalQuery      string   `json:"original_query"`
+	ProcessedQuery     string   `json:"processed_query"`
+	Keywords           []string `json:"keywords"`
+	QueryType          string   `json:"query_type"`
+	NeedsClarification bool     `json:"needs_clarification"`
+	Clarification      string   `json:"clarification"`
+	SkipRetrieval      bool     `json:"skip_retrieval"`
 }
 
 // formatHistoryForPreprocessing formats conversation history for preprocessing prompts.
@@ -200,6 +205,7 @@ func PreprocessQuery(
 	}
 
 	routing := routeQuery(ctx, llmConfig, query, history, maxMessages, userName, agentName)
+	result.Keywords = routing.Keywords
 	queryType := routing.Type
 	result.QueryType = queryType
 
@@ -232,6 +238,7 @@ func PreprocessQuery(
 	applogger.Info("Query preprocessing complete",
 		"type", queryType,
 		"processed", result.ProcessedQuery[:min(50, len(result.ProcessedQuery))],
+		"keywords", result.Keywords,
 	)
 	return result
 }

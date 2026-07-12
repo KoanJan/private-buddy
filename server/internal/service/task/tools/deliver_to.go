@@ -181,11 +181,11 @@ func (d *DeliverToTool) Execute(args map[string]interface{}) (string, error) {
 	}
 
 	record := model.AgentDelivery{
-		FromAgentID: d.personID,
-		ToPersonID:  targetPersonID,
-		SessionID:   d.sessionID,
-		Paths:       string(pathsJSON),
-		Remark:      remark,
+		FromPersonID: d.personID,
+		ToPersonID:   targetPersonID,
+		SessionID:    d.sessionID,
+		Paths:        string(pathsJSON),
+		Remark:       remark,
 	}
 	if err := database.DB.Create(&record).Error; err != nil {
 		applogger.Error("Failed to write agent_delivery record", "error", err)

@@ -22,8 +22,8 @@ import (
 // Thread-safe. Each agent gets exactly one runtime.
 type runtimeManager struct {
 	mu             sync.RWMutex
-	runtimes       map[int64]*agentRuntime // agentID -> runtime
-	onStatusChange func(agentID, sessionID int64, status int)
+	runtimes       map[int64]*agentRuntime // agentConfigID -> runtime
+	onStatusChange func(agentConfigID, personID, sessionID int64, status int)
 
 	// rootCtx is the root context for all agent runtimes.
 	// Cancelling it propagates to every runtime, stopping all goroutines at once.
@@ -36,7 +36,7 @@ type runtimeManager struct {
 }
 
 // newRuntimeManager creates a new runtime manager.
-func newRuntimeManager(onStatusChange func(agentID, sessionID int64, status int)) *runtimeManager {
+func newRuntimeManager(onStatusChange func(agentConfigID, personID, sessionID int64, status int)) *runtimeManager {
 	rootCtx, cancelAll := context.WithCancel(context.Background())
 	return &runtimeManager{
 		runtimes:       make(map[int64]*agentRuntime),
@@ -48,17 +48,17 @@ func newRuntimeManager(onStatusChange func(agentID, sessionID int64, status int)
 
 // StartRuntime creates a runtime for the given agent, starts the event loop,
 // and registers it. Does nothing if the runtime already exists.
-func (rm *runtimeManager) StartRuntime(agentID int64) {
+func (rm *runtimeManager) StartRuntime(agentConfigID int64) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	if _, ok := rm.runtimes[agentID]; ok {
+	if _, ok := rm.runtimes[agentConfigID]; ok {
 		return
 	}
 
-	rt, err := createAgentRuntime(agentID, rm.onStatusChange)
+	rt, err := createAgentRuntime(agentConfigID, rm.onStatusChange)
 	if err != nil {
-		applogger.Error("StartRuntime: failed to create agent runtime", "agent_id", agentID, "error", err)
+		applogger.Error("StartRuntime: failed to create agent runtime", "agent_config_id", agentConfigID, "error", err)
 		return
 	}
 	rm.wg.Add(1)
@@ -66,7 +66,7 @@ func (rm *runtimeManager) StartRuntime(agentID int64) {
 		defer rm.wg.Done()
 		rt.Run(rm.rootCtx)
 	}()
-	rm.runtimes[agentID] = rt
+	rm.runtimes[agentConfigID] = rt
 }
 
 // StopAll signals all agent runtimes to stop but does NOT wait for them to finish.
@@ -118,8 +118,8 @@ func (rm *runtimeManager) Shutdown(timeout time.Duration) {
 	// Phase 3: Safe to clean up channels.
 	// All work goroutines have finished — none will try to send events.
 	rm.mu.Lock()
-	for agentID := range rm.runtimes {
-		eventqueue.Unsubscribe(agentID)
+	for agentConfigID := range rm.runtimes {
+		eventqueue.Unsubscribe(agentConfigID)
 	}
 	rm.runtimes = make(map[int64]*agentRuntime)
 	rm.mu.Unlock()
@@ -139,9 +139,9 @@ func Shutdown(timeout time.Duration) {
 // StartRuntime creates and starts a runtime for the given agent.
 // Used when a new agent is created after initial startup.
 // Does nothing if the runtime already exists.
-func StartRuntime(agentID int64) {
+func StartRuntime(agentConfigID int64) {
 	if globalRuntimeManager != nil {
-		globalRuntimeManager.StartRuntime(agentID)
+		globalRuntimeManager.StartRuntime(agentConfigID)
 	}
 }
 
@@ -159,7 +159,7 @@ func StartRuntime(agentID int64) {
 //   - onPushMessage: new message content to stream to UI
 //   - onPushSSE: raw SSE events (notifications, etc.)
 func Start(
-	onStatusChange func(agentID, sessionID int64, status int),
+	onStatusChange func(agentConfigID, personID, sessionID int64, status int),
 	onPushMessage func(sessionID, messageID int64, content string),
 	onPushSSE func(sessionID int64, data string),
 ) {
@@ -178,15 +178,15 @@ func Start(
 		applogger.Error("Failed to reset stale participant statuses on startup", "error", err)
 	}
 
-	// Eagerly start runtimes for all agents
-	var agents []model.Agent
-	if err := database.DB.Find(&agents).Error; err != nil {
-		applogger.Error("Failed to load agents for runtime initialization", "error", err)
+	// Eagerly start runtimes for all agent configs
+	var configs []model.AgentConfig
+	if err := database.DB.Find(&configs).Error; err != nil {
+		applogger.Error("Failed to load agent configs for runtime initialization", "error", err)
 	} else {
-		for _, agent := range agents {
-			globalRuntimeManager.StartRuntime(agent.ID)
+		for _, ac := range configs {
+			globalRuntimeManager.StartRuntime(ac.ID)
 		}
-		applogger.Info("All agent runtimes started", "count", len(agents))
+		applogger.Info("All agent runtimes started", "count", len(configs))
 	}
 
 	// Recover scheduled events that were orphaned by the previous shutdown.

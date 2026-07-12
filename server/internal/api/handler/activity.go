@@ -64,21 +64,21 @@ func (h *Handler) GetSessionActivities(c *gin.Context) {
 		return
 	}
 
-	// Find the actual agent ID from the person_id
-	var agentID int64
-	if err := database.DB.Model(&model.Agent{}).
+	// Find the actual agent config ID from the person_id
+	var agentConfigID int64
+	if err := database.DB.Model(&model.AgentConfig{}).
 		Where("person_id = ?", agentPersonID).
-		Pluck("id", &agentID).Error; err != nil {
+		Pluck("id", &agentConfigID).Error; err != nil {
 		applogger.Error("GetSessionActivities: failed to find agent for person",
 			"person_id", agentPersonID, "error", err)
 		response.InternalError(c, "Failed to query activities")
 		return
 	}
 
-	// Build flat timeline of events and inject agent_id
+	// Build flat timeline of events and inject person_id as agent_id for frontend.
 	events := task.BuildActivityEvents(interactions)
 	for i := range events {
-		events[i].AgentID = agentID
+		events[i].PersonID = agentPersonID
 	}
 	response.Success(c, events)
 }

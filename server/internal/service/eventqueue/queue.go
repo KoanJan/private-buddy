@@ -33,7 +33,7 @@ const channelSize = 64 // Per-agent event channel buffer size
 // Thread-safe.  All public methods may be called concurrently.
 type eventQueue struct {
 	mu    sync.RWMutex
-	chans map[int64]chan *AgentEvent // agentID -> event channel
+	chans map[int64]chan *AgentEvent // agentConfigID -> event channel
 }
 
 // global is the singleton eventQueue instance.
@@ -47,18 +47,18 @@ func Init() {
 }
 
 // SendEvent sends an event to the given agent via the global event queue.
-func SendEvent(agentID int64, event *AgentEvent) {
-	global.SendEvent(agentID, event)
+func SendEvent(agentConfigID int64, event *AgentEvent) {
+	global.SendEvent(agentConfigID, event)
 }
 
 // Subscribe returns the event channel for the given agent via the global queue.
-func Subscribe(agentID int64) <-chan *AgentEvent {
-	return global.Subscribe(agentID)
+func Subscribe(agentConfigID int64) <-chan *AgentEvent {
+	return global.Subscribe(agentConfigID)
 }
 
 // Unsubscribe removes the event channel for the given agent via the global queue.
-func Unsubscribe(agentID int64) {
-	global.Unsubscribe(agentID)
+func Unsubscribe(agentConfigID int64) {
+	global.Unsubscribe(agentConfigID)
 }
 
 // newEventQueue creates a new eventQueue.
@@ -75,26 +75,26 @@ func newEventQueue() *eventQueue {
 // Returns a read-only channel.  The channel is buffered (channelSize) and is
 // unique per agent — calling Subscribe multiple times for the same agent
 // returns the same channel.
-func (q *eventQueue) Subscribe(agentID int64) <-chan *AgentEvent {
+func (q *eventQueue) Subscribe(agentConfigID int64) <-chan *AgentEvent {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	if ch, ok := q.chans[agentID]; ok {
+	if ch, ok := q.chans[agentConfigID]; ok {
 		return ch
 	}
 
 	ch := make(chan *AgentEvent, channelSize)
-	q.chans[agentID] = ch
+	q.chans[agentConfigID] = ch
 	return ch
 }
 
 // Unsubscribe removes the event channel for the given agent and drains any
 // remaining events.  Called when an agent runtime shuts down.
-func (q *eventQueue) Unsubscribe(agentID int64) {
+func (q *eventQueue) Unsubscribe(agentConfigID int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	ch, ok := q.chans[agentID]
+	ch, ok := q.chans[agentConfigID]
 	if !ok {
 		return
 	}
@@ -105,7 +105,7 @@ func (q *eventQueue) Unsubscribe(agentID int64) {
 		case <-ch:
 		default:
 			close(ch)
-			delete(q.chans, agentID)
+			delete(q.chans, agentConfigID)
 			return
 		}
 	}
@@ -117,21 +117,21 @@ func (q *eventQueue) Unsubscribe(agentID int64) {
 //
 // Uses recover to prevent panic on send to closed channel during shutdown
 // edge cases (work goroutine defer races with Unsubscribe).
-func (q *eventQueue) SendEvent(agentID int64, event *AgentEvent) {
+func (q *eventQueue) SendEvent(agentConfigID int64, event *AgentEvent) {
 	defer func() {
 		if r := recover(); r != nil {
 			applogger.Error("SendEvent recovered from panic (channel likely closed during shutdown)",
-				"agent_id", agentID, "event_type", event.Type, "panic", r)
+				"agent_config_id", agentConfigID, "event_type", event.Type, "panic", r)
 		}
 	}()
 
 	q.mu.RLock()
-	ch, ok := q.chans[agentID]
+	ch, ok := q.chans[agentConfigID]
 	q.mu.RUnlock()
 
 	if !ok {
 		applogger.Error("No subscriber for agent event, dropping",
-			"agent_id", agentID,
+			"agent_config_id", agentConfigID,
 			"event_type", event.Type,
 			"session_id", event.SessionID,
 		)
@@ -142,7 +142,7 @@ func (q *eventQueue) SendEvent(agentID int64, event *AgentEvent) {
 	case ch <- event:
 	default:
 		applogger.Error("Agent event channel full, dropping event",
-			"agent_id", agentID,
+			"agent_config_id", agentConfigID,
 			"event_type", event.Type,
 			"session_id", event.SessionID,
 		)

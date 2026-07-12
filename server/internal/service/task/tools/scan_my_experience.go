@@ -92,7 +92,7 @@ func (s *ScanExperienceTool) Execute(args map[string]interface{}) (string, error
 	)
 	if err != nil {
 		applogger.Error("scan_my_experience failed",
-			"agent_id", s.personID,
+			"person_id", s.personID,
 			"keyword", keyword,
 			"error", err,
 		)

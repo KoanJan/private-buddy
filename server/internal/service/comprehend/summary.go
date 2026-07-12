@@ -210,9 +210,9 @@ func getLatestSummaryByID(sessionID int64) *model.Summary {
 }
 
 // getLatestNarrativeByIDs returns the latest narrative for a (session, agent).
-func getLatestNarrativeByIDs(sessionID, agentID int64) *model.AgentNarrative {
+func getLatestNarrativeByIDs(sessionID, personID int64) *model.AgentNarrative {
 	var n model.AgentNarrative
-	err := database.DB.Where("session_id = ? AND agent_id = ?", sessionID, agentID).
+	err := database.DB.Where("session_id = ? AND person_id = ?", sessionID, personID).
 		Order("summary_version DESC").First(&n).Error
 	if err != nil {
 		return nil
@@ -220,11 +220,11 @@ func getLatestNarrativeByIDs(sessionID, agentID int64) *model.AgentNarrative {
 	return &n
 }
 
-// getAgentNarrative retrieves a specific narrative by (session_id, agent_id, summary_version).
-func getAgentNarrative(sessionID, agentID int64, summaryVersion int) *model.AgentNarrative {
+// getAgentNarrative retrieves a specific narrative by (session_id, agent_config_id, summary_version).
+func getAgentNarrative(sessionID, personID int64, summaryVersion int) *model.AgentNarrative {
 	var n model.AgentNarrative
-	err := database.DB.Where("session_id = ? AND agent_id = ? AND summary_version = ?",
-		sessionID, agentID, summaryVersion).First(&n).Error
+	err := database.DB.Where("session_id = ? AND person_id = ? AND summary_version = ?",
+		sessionID, personID, summaryVersion).First(&n).Error
 	if err != nil {
 		return nil
 	}

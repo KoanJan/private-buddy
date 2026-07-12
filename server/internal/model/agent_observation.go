@@ -5,7 +5,7 @@ import "time"
 // AgentObservation represents an agent's record of having observed an event.
 //
 // This table serves two layers:
-//   - Observation layer: the immutable fact that an agent experienced an event
+//   - Observation layer: the immutable fact that a person experienced an event
 //   - Memory layer: the agent's cognitive assessment of the event (scores),
 //     which can decay and be forgotten
 //
@@ -14,14 +14,14 @@ import "time"
 // Data constraints are enforced at the application layer, not via
 // database-level foreign keys.
 type AgentObservation struct {
-	ID              int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	AgentID         int64     `gorm:"not null;uniqueIndex:idx_observations_agent_event;column:agent_id" json:"agent_id"`
-	EventID         int64     `gorm:"not null;uniqueIndex:idx_observations_agent_event;column:event_id" json:"event_id"`
-	Importance      float64   `gorm:"not null;default:0.5" json:"importance"`
-	LastAccessedAt  time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;column:last_accessed_at" json:"last_accessed_at"`
-	LastScoredAt    time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;column:last_scored_at" json:"last_scored_at"`
-	CreatedAt       time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
-	UpdatedAt       time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
+	ID             int64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	PersonID       int64     `gorm:"not null;uniqueIndex:idx_observations_person_event;column:person_id" json:"person_id"`
+	EventID        int64     `gorm:"not null;uniqueIndex:idx_observations_person_event;column:event_id" json:"event_id"`
+	Importance     float64   `gorm:"not null;default:0.5" json:"importance"`
+	LastAccessedAt time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;column:last_accessed_at" json:"last_accessed_at"`
+	LastScoredAt   time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;column:last_scored_at" json:"last_scored_at"`
+	CreatedAt      time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`
 }
 
 // TableName returns the database table name for AgentObservation.

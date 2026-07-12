@@ -7,5 +7,5 @@ type ActivityEvent struct {
 	Content string `json:"content"`          // Raw content: thinking text, guidance text, or empty for tool_call
 	Tool    string `json:"tool,omitempty"`   // Only for tool_call: tool name
 	Target  string `json:"target,omitempty"` // Only for tool_call: extracted target from arguments
-	AgentID int64  `json:"agent_id"`         // Agent that produced this event
+	PersonID int64  `json:"agent_id"`        // Person that produced this event
 }

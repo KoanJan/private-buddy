@@ -85,10 +85,10 @@ func applyDecay(obs *model.AgentObservation) {
 }
 
 // newObservation creates a new AgentObservation with default scores.
-func newObservation(agentID, eventID int64) *model.AgentObservation {
+func newObservation(personID, eventID int64) *model.AgentObservation {
 	now := time.Now()
 	return &model.AgentObservation{
-		AgentID:        agentID,
+		PersonID:       personID,
 		EventID:        eventID,
 		Importance:     importanceInitial,
 		LastAccessedAt: now,

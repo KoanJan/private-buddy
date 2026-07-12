@@ -83,7 +83,7 @@ func (w *work) Run(ctx context.Context) {
 			}
 		}
 
-		eventqueue.SendEvent(w.agent.agentID, &eventqueue.AgentEvent{
+		eventqueue.SendEvent(w.agent.agentConfigID, &eventqueue.AgentEvent{
 			Type:      eventqueue.EventTypeWorkCompleted,
 			SessionID: w.sessionID,
 			Payload: &eventqueue.WorkCompletedPayload{
@@ -131,8 +131,8 @@ func (w *work) Run(ctx context.Context) {
 // TaskWork is pure execution — it does NOT generate a reply.
 // The event loop's workDoneCh handler will create a ChatWork to inform the user.
 func (w *work) runTask(ctx context.Context) {
-	session, agent, llmConfig := w.loadChatDependencies()
-	if session == nil || agent == nil || llmConfig == nil {
+	session, ac, llmConfig := w.loadChatDependencies()
+	if session == nil || ac == nil || llmConfig == nil {
 		w.abandon()
 		return
 	}
@@ -142,7 +142,7 @@ func (w *work) runTask(ctx context.Context) {
 	w.taskResult = task.RunTask(task.RunTaskParams{
 		LLMConfig:  llmConfig,
 		SessionID:  w.sessionID,
-		PersonID:   agent.PersonID,
+		PersonID:   ac.PersonID,
 		UserMsgID:  triggerMessageID,
 		WorkID:     w.ID,
 		Guidance:   w.plan.Guidance,
@@ -208,8 +208,8 @@ func (w *work) FeedGuidance(directive task.GuidanceDirective) {
 // runChat executes the chat path: context assembly + LLM response.
 // This is the only path that generates a reply to the user.
 func (w *work) runChat(ctx context.Context) {
-	session, agent, llmConfig := w.loadChatDependencies()
-	if session == nil || agent == nil || llmConfig == nil {
+	session, ac, llmConfig := w.loadChatDependencies()
+	if session == nil || ac == nil || llmConfig == nil {
 		w.handleChatError()
 		return
 	}
@@ -242,7 +242,7 @@ func (w *work) runChat(ctx context.Context) {
 	}
 
 	result, err := chat.ExecuteChat(
-		ctx, session, agent, llmConfig,
+		ctx, session, ac, llmConfig,
 		triggerMessageID, draftID,
 		triggerOverride, comprehensionInput,
 	)
@@ -318,27 +318,29 @@ func (w *work) abandon() {
 	}
 }
 
-// loadChatDependencies loads session, agent, and LLM config from the database.
-func (w *work) loadChatDependencies() (*model.Session, *model.Agent, *model.LLMConfig) {
+// loadChatDependencies loads session, agent config, and LLM config from the database.
+// Uses w.agent.agentConfigID (agent config PK from runtime) rather than the removed
+// sessions.agent_id column.
+func (w *work) loadChatDependencies() (*model.Session, *model.AgentConfig, *model.LLMConfig) {
 	session := service.GetSession(w.sessionID)
 	if session == nil {
 		applogger.Error("Session not found", "session_id", w.sessionID)
 		return nil, nil, nil
 	}
 
-	agent, err := service.GetAgent(session.AgentID)
+	ac, err := service.GetAgentConfig(w.agent.agentConfigID)
 	if err != nil {
-		applogger.Error("Failed to load agent", "agent_id", session.AgentID, "error", err)
+		applogger.Error("Failed to load agent config", "agent_config_id", w.agent.agentConfigID, "error", err)
 		return session, nil, nil
 	}
 
-	llmConfig, err := service.GetLLMConfig(agent.LLMConfigID)
+	llmConfig, err := service.GetLLMConfig(ac.LLMConfigID)
 	if err != nil {
-		applogger.Error("Failed to load LLM config", "config_id", agent.LLMConfigID, "error", err)
-		return session, agent, nil
+		applogger.Error("Failed to load LLM config", "config_id", ac.LLMConfigID, "error", err)
+		return session, ac, nil
 	}
 
-	return session, agent, llmConfig
+	return session, ac, llmConfig
 }
 
 // getTriggerMessageID extracts the trigger message ID from the work's
@@ -383,10 +385,17 @@ func removeWorkByID(works []*work, workID int64) []*work {
 // recoverActiveWorks loads active works from the database for agent recovery
 // after a service restart. Abandoned works are marked and no new Work objects
 // are returned since mid-execution resumption is not supported.
-func recoverActiveWorks(agentID int64) []*work {
+func recoverActiveWorks(agentConfigID int64) []*work {
+	// Resolve personID from agentConfigID — the works table is now keyed by person_id.
+	personID := service.GetAgentConfigPersonID(agentConfigID)
+	if personID == 0 {
+		applogger.Error("recoverActiveWorks: failed to resolve person ID from agent config", "agent_config_id", agentConfigID)
+		return nil
+	}
+
 	var workRecords []model.Work
-	if err := database.DB.Where("agent_id = ? AND status = ?", agentID, model.WorkStatusRunning).Find(&workRecords).Error; err != nil {
-		applogger.Error("recoverActiveWorks: failed to load work records", "agent_id", agentID, "error", err)
+	if err := database.DB.Where("person_id = ? AND status = ?", personID, model.WorkStatusRunning).Find(&workRecords).Error; err != nil {
+		applogger.Error("recoverActiveWorks: failed to load work records", "agent_config_id", agentConfigID, "error", err)
 		return nil
 	}
 
@@ -407,15 +416,15 @@ func recoverActiveWorks(agentID int64) []*work {
 		// Reset participant status to idle so the frontend doesn't show stuck "responding"
 		if err := database.DB.Model(&model.ParticipantSession{}).
 			Where("session_id = ? AND participant_id = ?",
-				wr.SessionID, service.GetAgentPersonID(agentID)).
+				wr.SessionID, personID).
 			Update("status", model.ParticipantStatusIdle).Error; err != nil {
 			applogger.Error("recoverActiveWorks: failed to reset participant status",
-				"session_id", wr.SessionID, "agent_id", agentID, "error", err)
+				"session_id", wr.SessionID, "agent_config_id", agentConfigID, "error", err)
 		}
 
 		applogger.Info("Recovered work marked as abandoned",
 			"work_id", wr.ID,
-			"agent_id", agentID,
+			"agent_config_id", agentConfigID,
 			"session_id", wr.SessionID,
 		)
 	}

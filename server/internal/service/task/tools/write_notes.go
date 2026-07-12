@@ -37,7 +37,7 @@ type WriteNotesTool struct {
 
 // NewWriteNotesTool creates a WriteNotesTool bound to the given metaDir.
 // The caller is responsible for resolving the metaDir via the workspace package
-// (workspace.GetMetaDir(agentID, sessionID)) so this tool stays layout-agnostic.
+// (workspace.GetMetaDir(agentConfigID, sessionID)) so this tool stays layout-agnostic.
 func NewWriteNotesTool(metaDir string, notesMaxChars int) *WriteNotesTool {
 	return &WriteNotesTool{
 		metaDir:       metaDir,

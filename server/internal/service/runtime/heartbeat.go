@@ -51,15 +51,15 @@ func (r *agentRuntime) handleHeartbeat(ctx context.Context) {
 // observations have accumulated around an entity to trigger EntityProfile
 // generation.
 func (r *agentRuntime) checkMemoryDensity(ctx context.Context) {
-	triggered := memory.CheckProfileDensity(ctx, r.agentID)
+	triggered := memory.CheckProfileDensity(ctx, r.agentPersonID)
 	if triggered > 0 {
 		applogger.Info("memory density check: EntityProfile generation triggered",
-			"agent_id", r.agentID,
+			"agent_config_id", r.agentConfigID,
 			"profiles_triggered", triggered,
 		)
 	} else {
 		applogger.Debug("memory density check: no profiles triggered",
-			"agent_id", r.agentID,
+			"agent_config_id", r.agentConfigID,
 		)
 	}
 }
@@ -68,9 +68,9 @@ func (r *agentRuntime) checkMemoryDensity(ctx context.Context) {
 // extraction via LLM reflection for sessions whose notes have changed since
 // the last reflection.
 func (r *agentRuntime) checkReflection(ctx context.Context) {
-	experience.CheckReflection(ctx, r.agentID)
+	experience.CheckReflection(ctx, r.agentPersonID)
 	applogger.Debug("reflection check completed",
-		"agent_id", r.agentID,
+		"agent_config_id", r.agentConfigID,
 	)
 }
 
@@ -84,14 +84,14 @@ func (r *agentRuntime) checkReflection(ctx context.Context) {
 func (r *agentRuntime) checkLearning(ctx context.Context) {
 	if !r.learningInProgress.CompareAndSwap(false, true) {
 		applogger.Debug("learning check skipped: already in progress",
-			"agent_id", r.agentID)
+			"agent_config_id", r.agentConfigID)
 		return
 	}
 	go func() {
 		defer r.learningInProgress.Store(false)
-		experience.CheckLearning(ctx, r.agentID)
+		experience.CheckLearning(ctx, r.agentPersonID)
 	}()
 	applogger.Debug("learning check dispatched",
-		"agent_id", r.agentID,
+		"agent_config_id", r.agentConfigID,
 	)
 }

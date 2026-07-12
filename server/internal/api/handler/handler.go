@@ -24,17 +24,17 @@ import (
 
 // Handler handles core API HTTP requests.
 type Handler struct {
-	crudLLM     *service.CRUDBase[model.LLMConfig]
-	crudAgent   *service.CRUDBase[model.Agent]
-	crudSession *service.CRUDBase[model.Session]
+	crudLLM         *service.CRUDBase[model.LLMConfig]
+	crudAgentConfig *service.CRUDBase[model.AgentConfig]
+	crudSession     *service.CRUDBase[model.Session]
 }
 
 // NewHandler creates a new Handler instance.
 func NewHandler() *Handler {
 	return &Handler{
-		crudLLM:     service.NewCRUDBase[model.LLMConfig]("LLM config"),
-		crudAgent:   service.NewCRUDBase[model.Agent]("Agent"),
-		crudSession: service.NewCRUDBase[model.Session]("Session"),
+		crudLLM:         service.NewCRUDBase[model.LLMConfig]("LLM config"),
+		crudAgentConfig: service.NewCRUDBase[model.AgentConfig]("AgentConfig"),
+		crudSession:     service.NewCRUDBase[model.Session]("Session"),
 	}
 }
 
@@ -130,14 +130,14 @@ func (h *Handler) DeleteLLMConfig(c *gin.Context) {
 		handleNotFound(c, "LLM config", id)
 		return
 	}
-	var referencingAgents []model.Agent
+	var referencingAgents []model.AgentConfig
 	if err := database.DB.Where("llm_config_id = ?", id).Find(&referencingAgents).Error; err != nil {
 		applogger.Error("failed to check referencing agents for LLM config", "id", id, "error", err)
 	}
 	if len(referencingAgents) > 0 {
 		names := make([]string, len(referencingAgents))
 		for i, a := range referencingAgents {
-			names[i] = service.GetAgentName(a.ID)
+			names[i] = service.GetAgentConfigName(a.ID)
 		}
 		response.BadRequest(c, "Cannot delete LLM config: it is referenced by "+strconv.Itoa(len(referencingAgents))+" agent(s): "+strings.Join(names, ", "))
 		return
@@ -280,15 +280,15 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 	})
 }
 
-// CreateAgent handles creating a new agent.
-func (h *Handler) CreateAgent(c *gin.Context) {
-	var req schema.AgentCreate
+// CreateAgentConfig handles creating a new agent config.
+func (h *Handler) CreateAgentConfig(c *gin.Context) {
+	var req schema.AgentConfigCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
-	entity, person, err := service.CreateAgentWithPerson(
+	entity, person, err := service.CreateAgentConfigWithPerson(
 		req.Name, req.Description, req.CharacterSettings,
 		req.LLMConfigID, req.Avatar, req.KnowledgeBaseIDs,
 	)
@@ -307,84 +307,126 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 	response.Success(c, schema.NewAgentResponse(entity, person))
 }
 
-// ListAgents handles listing all agents.
-func (h *Handler) ListAgents(c *gin.Context) {
+// ListAgentConfigs handles listing all agent configs.
+func (h *Handler) ListAgentConfigs(c *gin.Context) {
 	skip, limit := getPagination(c)
-	entities, err := h.crudAgent.GetMulti(skip, limit)
+	entities, err := h.crudAgentConfig.GetMulti(skip, limit)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
 	// Load all associated persons for names and bios
-	personsMap := loadAgentPersons(entities)
+	personsMap := loadAgentConfigPersons(entities)
 	response.Success(c, schema.NewAgentResponseList(entities, personsMap))
 }
 
-// ListAgentsWithSessions handles listing all agents with their sessions.
-func (h *Handler) ListAgentsWithSessions(c *gin.Context) {
-	var agents []model.Agent
-	if err := database.DB.Order("updated_at DESC").Find(&agents).Error; err != nil {
-		applogger.Error("failed to list agents with sessions", "error", err)
-		response.InternalError(c, "Failed to list agents")
+// ListAgentConfigsWithSessions handles listing all agent configs with their sessions.
+func (h *Handler) ListAgentConfigsWithSessions(c *gin.Context) {
+	var configs []model.AgentConfig
+	if err := database.DB.Order("updated_at DESC").Find(&configs).Error; err != nil {
+		applogger.Error("failed to list agent configs with sessions", "error", err)
+		response.InternalError(c, "Failed to list agent configs")
 		return
 	}
 
-	if len(agents) == 0 {
+	if len(configs) == 0 {
 		response.Success(c, []schema.AgentWithSessions{})
 		return
 	}
 
-	agentIDs := make([]int64, len(agents))
-	for i, a := range agents {
-		agentIDs[i] = a.ID
+	agentConfigIDs := make([]int64, len(configs))
+	for i, a := range configs {
+		agentConfigIDs[i] = a.ID
 	}
 
 	var allSessions []model.Session
-	if err := database.DB.Where("agent_id IN ?", agentIDs).Order("updated_at DESC").Find(&allSessions).Error; err != nil {
-		applogger.Error("failed to load sessions for agent list, returning without sessions", "error", err)
+	// Resolve sessions via participant_sessions instead of sessions.agent_config_id.
+	if err := database.DB.
+		Joins("JOIN participant_sessions ps ON ps.session_id = sessions.id").
+		Joins("JOIN agent_configs ac ON ac.person_id = ps.participant_id").
+		Where("ac.id IN ?", agentConfigIDs).
+		Group("sessions.id").
+		Order("MAX(sessions.updated_at) DESC").
+		Find(&allSessions).Error; err != nil {
+		applogger.Error("failed to load sessions for agent config list, returning without sessions", "error", err)
+	}
+
+	// Resolve session → agent mapping from participant_sessions.
+	sids := make([]int64, len(allSessions))
+	for i, s := range allSessions {
+		sids[i] = s.ID
+	}
+	type sm struct {
+		SessionID     int64
+		AgentConfigID int64
+	}
+	var sessionAgents []sm
+	database.DB.Raw(`SELECT ps.session_id, ac.id AS agent_config_id
+		FROM participant_sessions ps
+		JOIN agent_configs ac ON ac.person_id = ps.participant_id
+		WHERE ps.session_id IN ?`, sids).Scan(&sessionAgents)
+
+	agentSessions := make(map[int64]map[int64]bool) // agentConfigID → set of sessionIDs
+	for _, sa := range sessionAgents {
+		if agentSessions[sa.AgentConfigID] == nil {
+			agentSessions[sa.AgentConfigID] = make(map[int64]bool)
+		}
+		agentSessions[sa.AgentConfigID][sa.SessionID] = true
 	}
 
 	sessionsByAgent := make(map[int64][]model.Session)
 	for _, s := range allSessions {
-		sessionsByAgent[s.AgentID] = append(sessionsByAgent[s.AgentID], s)
+		for agentConfigID, sessSet := range agentSessions {
+			if sessSet[s.ID] {
+				sessionsByAgent[agentConfigID] = append(sessionsByAgent[agentConfigID], s)
+			}
+		}
 	}
 
-	personsMap := loadAgentPersons(agents)
+	personsMap := loadAgentConfigPersons(configs)
 
-	result := make([]schema.AgentWithSessions, 0, len(agents))
-	for i := range agents {
-		sessions := sessionsByAgent[agents[i].ID]
+	result := make([]schema.AgentWithSessions, 0, len(configs))
+	for i := range configs {
+		sessions := sessionsByAgent[configs[i].ID]
 		if sessions == nil {
 			sessions = []model.Session{}
 		}
 		result = append(result, schema.AgentWithSessions{
-			AgentResponse: *schema.NewAgentResponse(&agents[i], personsMap[agents[i].PersonID]),
+			AgentResponse: *schema.NewAgentResponse(&configs[i], personsMap[configs[i].PersonID]),
 			Sessions:      schema.NewSessionBriefList(sessions),
 		})
 	}
 	response.Success(c, result)
 }
 
-// GetAgent handles retrieving a single agent by ID.
-func (h *Handler) GetAgent(c *gin.Context) {
-	id := getPathID(c)
-	agent, person, err := service.GetAgentWithPerson(id)
+// GetAgentConfig handles retrieving a single agent config by ID.
+// The ID in the URL is the person_id (frontend's "agent id").
+func (h *Handler) GetAgentConfig(c *gin.Context) {
+	personID := getPathID(c)
+	ac, err := service.GetAgentConfigByPersonID(personID)
 	if err != nil {
-		handleNotFound(c, "Agent", id)
+		handleNotFound(c, "AgentConfig", personID)
 		return
 	}
-	response.Success(c, schema.NewAgentResponse(agent, person))
+	person, err := service.GetPerson(personID)
+	if err != nil {
+		applogger.Error("GetAgentConfig: person not found", "person_id", personID, "error", err)
+		response.InternalError(c, "Person not found")
+		return
+	}
+	response.Success(c, schema.NewAgentResponse(ac, person))
 }
 
-// UpdateAgent handles updating an existing agent.
-func (h *Handler) UpdateAgent(c *gin.Context) {
-	id := getPathID(c)
-	entity, err := h.crudAgent.Get(id)
+// UpdateAgentConfig handles updating an existing agent config.
+// The ID in the URL is the person_id (frontend's "agent id").
+func (h *Handler) UpdateAgentConfig(c *gin.Context) {
+	personID := getPathID(c)
+	entity, err := service.GetAgentConfigByPersonID(personID)
 	if err != nil {
-		handleNotFound(c, "Agent", id)
+		handleNotFound(c, "AgentConfig", personID)
 		return
 	}
-	var req schema.AgentUpdate
+	var req schema.AgentConfigUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -402,7 +444,7 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 
 		// Update person-level fields (name and bio) if provided
 		if req.Name != nil || req.Bio != nil {
-			person, err := service.GetPerson(entity.PersonID)
+			person, err := service.GetPerson(personID)
 			if err != nil {
 				return err
 			}
@@ -422,39 +464,46 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		applogger.Error("UpdateAgent: transaction failed", "id", id, "error", err)
-		response.InternalError(c, "Failed to update agent")
+		applogger.Error("UpdateAgentConfig: transaction failed", "person_id", personID, "error", err)
+		response.InternalError(c, "Failed to update agent config")
 		return
 	}
 
 	// Reload for response
-	agent, person, err := service.GetAgentWithPerson(id)
+	ac, err := service.GetAgentConfigByPersonID(personID)
 	if err != nil {
-		applogger.Error("UpdateAgent: failed to reload agent with person", "id", id, "error", err)
-		response.Success(c, schema.NewAgentResponse(entity, nil))
+		applogger.Error("UpdateAgentConfig: failed to reload agent config", "person_id", personID, "error", err)
+		response.InternalError(c, "Failed to reload agent config")
 		return
 	}
-	response.Success(c, schema.NewAgentResponse(agent, person))
+	person, err := service.GetPerson(personID)
+	if err != nil {
+		applogger.Error("UpdateAgentConfig: failed to reload person", "person_id", personID, "error", err)
+		response.InternalError(c, "Failed to reload person")
+		return
+	}
+	response.Success(c, schema.NewAgentResponse(ac, person))
 }
 
-// DeleteAgent handles deleting an agent and its resources.
-func (h *Handler) DeleteAgent(c *gin.Context) {
-	id := getPathID(c)
-	agent, err := h.crudAgent.Get(id)
+// DeleteAgentConfig handles deleting an agent config and its resources.
+// The ID in the URL is the person_id (frontend's "agent id").
+func (h *Handler) DeleteAgentConfig(c *gin.Context) {
+	personID := getPathID(c)
+	ac, err := service.GetAgentConfigByPersonID(personID)
 	if err != nil {
-		handleNotFound(c, "Agent", id)
+		handleNotFound(c, "AgentConfig", personID)
 		return
 	}
 
-	if agent.Avatar != "" {
-		avatarPath := getAvatarsDir() + "/" + agent.Avatar
+	if ac.Avatar != "" {
+		avatarPath := getAvatarsDir() + "/" + ac.Avatar
 		osRemoveIfExists(avatarPath)
 	}
 
-	personID, sessionIDs, err := service.DeleteAgentCascade(id)
+	sessionIDs, err := service.DeleteAgentConfigCascade(personID)
 	if err != nil {
-		applogger.Error("DeleteAgent: cascade delete failed", "agent_id", id, "error", err)
-		response.InternalError(c, "Failed to delete agent")
+		applogger.Error("DeleteAgentConfig: cascade delete failed", "person_id", personID, "error", err)
+		response.InternalError(c, "Failed to delete agent config")
 		return
 	}
 
@@ -464,7 +513,7 @@ func (h *Handler) DeleteAgent(c *gin.Context) {
 		workspace.RemoveAac(personID, sid)
 	}
 
-	response.SuccessMessage(c, "Agent deleted successfully", nil)
+	response.SuccessMessage(c, "Agent config deleted successfully", nil)
 }
 
 // CreateSession handles creating a new session.
@@ -478,15 +527,44 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	if req.Title != nil {
 		title = *req.Title
 	}
-	entity := model.Session{
-		Title:   title,
-		AgentID: req.AgentID,
+
+	// Use PersonID directly for participant_sessions record.
+	userPersonID, err := service.GetCurrentUserPersonID()
+	if err != nil {
+		response.BadRequest(c, "no user profile found")
+		return
 	}
-	if err := database.DB.Select("Title", "AgentID").Create(&entity).Error; err != nil {
+
+	entity := model.Session{Title: title}
+	err = database.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&entity).Error; err != nil {
+			return err
+		}
+		// Owner (human user)
+		if err := tx.Create(&model.ParticipantSession{
+			SessionID:     entity.ID,
+			ParticipantID: userPersonID,
+			Role:          model.ParticipantRoleOwner,
+			Status:        model.ParticipantStatusIdle,
+		}).Error; err != nil {
+			return err
+		}
+		// Member (AI agent)
+		if err := tx.Create(&model.ParticipantSession{
+			SessionID:     entity.ID,
+			ParticipantID: req.AgentID,
+			Role:          model.ParticipantRoleMember,
+			Status:        model.ParticipantStatusIdle,
+		}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
-	response.Success(c, schema.NewSessionResponse(&entity))
+	response.Success(c, schema.NewSessionResponse(&entity, req.AgentID))
 }
 
 // ListSessions handles listing all sessions.
@@ -497,7 +575,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
-	response.Success(c, schema.NewSessionResponseList(entities))
+	response.Success(c, schema.NewSessionResponseList(database.DB, entities))
 }
 
 // GetSession handles retrieving a single session by ID.
@@ -508,7 +586,8 @@ func (h *Handler) GetSession(c *gin.Context) {
 		handleNotFound(c, "Session", id)
 		return
 	}
-	response.Success(c, schema.NewSessionResponse(entity))
+	personID := resolveFirstAIPersonID(id)
+	response.Success(c, schema.NewSessionResponse(entity, personID))
 }
 
 // UpdateSession handles updating an existing session.
@@ -531,7 +610,8 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 			applogger.Error("failed to refresh session after update", "id", id, "error", err)
 		}
 	}
-	response.Success(c, schema.NewSessionResponse(entity))
+	personID := resolveFirstAIPersonID(id)
+	response.Success(c, schema.NewSessionResponse(entity, personID))
 }
 
 // DeleteSession handles deleting a session and its resources.
@@ -551,6 +631,29 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 		workspace.RemoveAac(personID, id)
 	}
 	response.SuccessMessage(c, "Session deleted successfully", nil)
+}
+
+// resolveFirstAIPersonID returns the person ID for the first AI participant
+// in a session, resolved via participant_sessions.
+func resolveFirstAIPersonID(sessionID int64) int64 {
+	var personID int64
+	database.DB.Raw(`SELECT ps.participant_id FROM participant_sessions ps
+		JOIN persons p ON p.id = ps.participant_id AND p.type = 1
+		WHERE ps.session_id = ?
+		LIMIT 1`, sessionID).Scan(&personID)
+	return personID
+}
+
+// resolveFirstAIAgentConfigID returns the agent_configs.id for the first AI participant
+// in a session. Used for event routing to the agent runtime.
+func resolveFirstAIAgentConfigID(sessionID int64) int64 {
+	var agentConfigID int64
+	database.DB.Raw(`SELECT ac.id FROM participant_sessions ps
+		JOIN persons p ON p.id = ps.participant_id AND p.type = 1
+		JOIN agent_configs ac ON ac.person_id = p.id
+		WHERE ps.session_id = ?
+		LIMIT 1`, sessionID).Scan(&agentConfigID)
+	return agentConfigID
 }
 
 // receivedFileEntry represents a file or directory in a delivery tree.

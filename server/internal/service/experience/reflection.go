@@ -40,14 +40,18 @@ type reflectOutput struct {
 //
 // This is the public entry point called from the agent heartbeat.
 // Safe to call when the embedding service is not configured — does nothing.
-func CheckReflection(ctx context.Context, agentID int64) {
+func CheckReflection(ctx context.Context, personID int64) {
 	if embeddingSvc == nil {
 		return
 	}
 
 	var sessions []model.Session
-	if err := database.DB.Where("agent_id = ?", agentID).Find(&sessions).Error; err != nil {
-		applogger.Error("CheckReflection: failed to list sessions", "agent_id", agentID, "error", err)
+	if err := database.DB.
+		Joins("JOIN participant_sessions ps ON ps.session_id = sessions.id").
+		Where("ps.participant_id = ?", personID).
+		Group("sessions.id").
+		Find(&sessions).Error; err != nil {
+		applogger.Error("CheckReflection: failed to list sessions", "person_id", personID, "error", err)
 		return
 	}
 
@@ -66,7 +70,18 @@ func CheckReflection(ctx context.Context, agentID int64) {
 			continue
 		}
 
-		metaDir := workspace.GetMetaDir(sess.AgentID, sess.ID)
+		// Verify personID is a participant in this session.
+		// Agent config references a Person record; workspace
+		// paths are keyed by person_id.
+		var participantCount int64
+		if err := database.DB.Model(&model.ParticipantSession{}).
+			Where("session_id = ? AND participant_id = ?", sess.ID, personID).
+			Count(&participantCount).Error; err != nil || participantCount == 0 {
+			applogger.Info("CheckReflection: agent person not a participant in session, skipping",
+				"person_id", personID, "session_id", sess.ID)
+			continue
+		}
+		metaDir := workspace.GetMetaDir(personID, sess.ID)
 		fpFile := filepath.Join(metaDir, "fingerprint.txt")
 		notesFile := filepath.Join(metaDir, "notes.md")
 
@@ -100,7 +115,7 @@ func CheckReflection(ctx context.Context, agentID int64) {
 			continue
 		}
 
-		go reflectSession(ctx, agentID, sess.ID, notesContent, currentFingerprint, fpFile)
+		go reflectSession(ctx, personID, sess.ID, notesContent, currentFingerprint, fpFile)
 	}
 }
 
@@ -113,19 +128,19 @@ func CheckReflection(ctx context.Context, agentID int64) {
 //
 // On LLM or parse failure, the fingerprint is NOT written, so the next
 // heartbeat will retry.
-func reflectSession(ctx context.Context, agentID, sessionID int64, notesContent, currentFingerprint, fpFile string) {
+func reflectSession(ctx context.Context, personID, sessionID int64, notesContent, currentFingerprint, fpFile string) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// Load agent LLM config from DB
-	ag, err := service.GetAgent(agentID)
-	if err != nil {
-		applogger.Error("Reflection: failed to load agent", "agent_id", agentID, "error", err)
+	// Load agent config LLM config from DB
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", personID).First(&ac).Error; err != nil {
+		applogger.Error("Reflection: failed to load agent config", "person_id", personID, "error", err)
 		return
 	}
-	llmCfg, err := service.GetLLMConfig(ag.LLMConfigID)
+	llmCfg, err := service.GetLLMConfig(ac.LLMConfigID)
 	if err != nil {
-		applogger.Error("Reflection: failed to load LLM config", "agent_id", agentID, "error", err)
+		applogger.Error("Reflection: failed to load LLM config", "person_id", personID, "error", err)
 		return
 	}
 	chatModel := llm.NewChatModelWithTemperature(
@@ -177,25 +192,25 @@ skip: true only if the log contains nothing transferable.
 
 	response, err := chatModel.ChatWithJSONSchema(ctx, messages, schemaDef)
 	if err != nil {
-		applogger.Error("Reflection: LLM call failed", "agent_id", agentID, "error", err)
+		applogger.Error("Reflection: LLM call failed", "person_id", personID, "error", err)
 		return
 	}
 
 	var output reflectOutput
 	if err := json.Unmarshal([]byte(response), &output); err != nil {
-		applogger.Error("Reflection: failed to parse LLM output", "agent_id", agentID, "error", err)
+		applogger.Error("Reflection: failed to parse LLM output", "person_id", personID, "error", err)
 		return
 	}
 
 	if output.Skip {
-		applogger.Info("Reflection: nothing worth extracting", "agent_id", agentID, "session_id", sessionID)
+		applogger.Info("Reflection: nothing worth extracting", "person_id", personID, "session_id", sessionID)
 		writeFingerprint(fpFile, currentFingerprint)
 		return
 	}
 
 	if output.Title == "" || output.Description == "" {
 		applogger.Error("Reflection: LLM output missing required fields",
-			"agent_id", agentID,
+			"person_id", personID,
 			"has_title", output.Title != "",
 			"has_description", output.Description != "",
 		)
@@ -206,18 +221,18 @@ skip: true only if the log contains nothing transferable.
 	// The LLM returns update_exp_id when it recognizes (from exp_ids it saw
 	// during task execution) that this lesson refines an existing one.
 	if output.UpdateExpID > 0 {
-		if err := updateExperience(ctx, output.UpdateExpID, agentID,
+		if err := updateExperience(ctx, output.UpdateExpID, personID,
 			output.Title, output.Description, output.WhenToUse,
 			output.Guidelines, output.Pitfalls, output.Procedure); err != nil {
 			applogger.Error("Reflection: failed to update experience",
-				"agent_id", agentID,
+				"person_id", personID,
 				"exp_id", output.UpdateExpID,
 				"error", err,
 			)
 			return
 		}
 		applogger.Info("Reflection: experience updated",
-			"agent_id", agentID,
+			"person_id", personID,
 			"exp_id", output.UpdateExpID,
 			"session_id", sessionID,
 		)
@@ -227,14 +242,14 @@ skip: true only if the log contains nothing transferable.
 
 	// source_id = session_id: the reflection pipeline can only pinpoint
 	// provenance down to the session granularity.
-	if _, err := createExperience(ctx, agentID, model.AgentExperienceSourceReflection, sessionID,
+	if _, err := createExperience(ctx, personID, model.AgentExperienceSourceReflection, sessionID,
 		output.Title, output.Description, output.WhenToUse, output.Guidelines, output.Pitfalls, output.Procedure); err != nil {
-		applogger.Error("Reflection: failed to save experience", "agent_id", agentID, "error", err)
+		applogger.Error("Reflection: failed to save experience", "person_id", personID, "error", err)
 		return
 	}
 
 	applogger.Info("Reflection: experience created",
-		"agent_id", agentID,
+		"person_id", personID,
 		"session_id", sessionID,
 	)
 	writeFingerprint(fpFile, currentFingerprint)

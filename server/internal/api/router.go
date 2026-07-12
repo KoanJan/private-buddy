@@ -74,12 +74,12 @@ func SetupRouter() *gin.Engine {
 
 		agents := api.Group("/agents")
 		{
-			agents.POST("", middleware.RequireEmbedding, h.CreateAgent)
-			agents.GET("", h.ListAgents)
-			agents.GET("/with-sessions", h.ListAgentsWithSessions)
-			agents.GET("/:id", h.GetAgent)
-			agents.PUT("/:id", h.UpdateAgent)
-			agents.DELETE("/:id", h.DeleteAgent)
+			agents.POST("", middleware.RequireEmbedding, h.CreateAgentConfig)
+			agents.GET("", h.ListAgentConfigs)
+			agents.GET("/with-sessions", h.ListAgentConfigsWithSessions)
+			agents.GET("/:id", h.GetAgentConfig)
+			agents.PUT("/:id", h.UpdateAgentConfig)
+			agents.DELETE("/:id", h.DeleteAgentConfig)
 		}
 
 		sessions := api.Group("/sessions")

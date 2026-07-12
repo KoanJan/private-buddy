@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.31] - 2026-07-13
+
+### Changed
+- **Chat Context Retrieval**: replaced vector-based semantic search with keyword-based retrieval for session history, eliminating the standalone vector store dependency; query preprocessing now extracts keywords alongside query rewriting
+- **Person-Centric Data Model**: internal model renamed from `Agent` to `AgentConfig` to clarify that Person is the first-class entity and Agent is its configuration; 8 business tables now reference Person directly via `person_id` instead of going through AgentConfig
+
+### Removed
+- **Dead Code**: `memory.Search` and `VectorStoreService` (single-consumer vector store) cleaned up; `OnRAGHit` renamed to `OnRetrievalHit` to reflect the new retrieval method
+
+
 ## [0.0.30] - 2026-07-12
 
 ### Added

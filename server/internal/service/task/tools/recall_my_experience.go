@@ -73,7 +73,7 @@ func (r *RecallExperienceTool) Execute(args map[string]interface{}) (string, err
 	}
 
 	var exp model.AgentExperience
-	if err := database.DB.Where("id = ? AND agent_id = ?", expID, r.personID).First(&exp).Error; err != nil {
+	if err := database.DB.Where("id = ? AND person_id = ?", expID, r.personID).First(&exp).Error; err != nil {
 		return "", fmt.Errorf("experience not found")
 	}
 

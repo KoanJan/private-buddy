@@ -70,10 +70,10 @@ func main() {
 	go memory.Start(memCtx)
 
 	// Initialize the Agent Runtime system with SSE callbacks
-	onStatusChange := func(agentID, sessionID int64, status int) {
+	onStatusChange := func(agentConfigID, personID, sessionID int64, status int) {
 		data := safeMarshalSSE(map[string]interface{}{
 			"type":       "agent_status",
-			"agent_id":   agentID,
+			"agent_id":   personID,
 			"session_id": sessionID,
 			"status":     status,
 		})

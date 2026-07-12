@@ -44,9 +44,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
 
   const { connect: sseConnect, disconnect: sseDisconnect } = useSSE({
     onMessage: (msg: Message) => {
-      // Fill in agent's person_id from currentAgent before appending
-      if (currentAgent?.person_id) {
-        msg.person_id = currentAgent.person_id;
+      // Fill in agent's id from currentAgent before appending
+      if (currentAgent?.id) {
+        msg.person_id = currentAgent.id;
       }
       setMessages(prev => [...prev, msg]);
     },
@@ -101,9 +101,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
       setCurrentAgent(null);
       return;
     }
-    agentApi.get(session.agent_id)
-      .then(res => setCurrentAgent(res.data))
-      .catch(err => logger.error('Failed to load agent:', err));
+    agentApi.list()
+      .then(res => {
+        const agent = res.data.find(a => a.id === session.agent_id);
+        setCurrentAgent(agent || null);
+      })
+      .catch(err => logger.error('Failed to load agents:', err));
   }, [session?.agent_id]);
 
   // Load current user

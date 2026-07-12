@@ -27,7 +27,7 @@ import (
 )
 
 // AppVersion is the current application version.
-const AppVersion = "0.0.30"
+const AppVersion = "0.0.31"
 
 // globalSettings is the singleton configuration instance.
 var globalSettings *Settings
@@ -78,11 +78,6 @@ func (s *Settings) GetDataRoot() string {
 // DatabaseURL returns the SQLite database file path.
 func (s *Settings) DatabaseURL() string {
 	return filepath.Join(s.DataRoot, "db", "private_buddy.db")
-}
-
-// VectorDBFile returns the vector database file path for RAG operations.
-func (s *Settings) VectorDBFile() string {
-	return filepath.Join(s.DataRoot, "db", "vectors_go.db")
 }
 
 // GetWorkspaceRoot returns the workspace root directory path.

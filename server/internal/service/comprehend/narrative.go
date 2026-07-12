@@ -15,14 +15,14 @@ import (
 )
 
 // narrativeManager coordinates per-(session, agent) narrative generation goroutines.
-// The key is "sessionID-agentID", so each agent in a session gets its own
+// The key is "sessionID-agentConfigID", so each agent in a session gets its own
 // independent narrative generation path, decoupled from summary generation.
 //
 // Goroutines are tracked with cancellable contexts so they can be aborted
 // when a session or agent is deleted.
 type narrativeManager struct {
 	mu      sync.Mutex
-	running map[string]context.CancelFunc // "sessionID-agentID" → cancel func
+	running map[string]context.CancelFunc // "sessionID-agentConfigID" → cancel func
 }
 
 var nm = &narrativeManager{
@@ -30,14 +30,14 @@ var nm = &narrativeManager{
 }
 
 // narrativeKey builds the unique key for the narrative manager map.
-func narrativeKey(sessionID, agentID int64) string {
-	return fmt.Sprintf("%d-%d", sessionID, agentID)
+func narrativeKey(sessionID, personID int64) string {
+	return fmt.Sprintf("%d-%d", sessionID, personID)
 }
 
 // SignalNarrative signals that the session-agent pair may need narrative generation.
 // If a goroutine is already running for this (session, agent), the call is a no-op.
-func SignalNarrative(sessionID, agentID int64) {
-	key := narrativeKey(sessionID, agentID)
+func SignalNarrative(sessionID, personID int64) {
+	key := narrativeKey(sessionID, personID)
 	nm.mu.Lock()
 	if _, ok := nm.running[key]; ok {
 		nm.mu.Unlock()
@@ -47,7 +47,7 @@ func SignalNarrative(sessionID, agentID int64) {
 	nm.running[key] = cancel
 	nm.mu.Unlock()
 
-	go nm.run(ctx, sessionID, agentID)
+	go nm.run(ctx, sessionID, personID)
 }
 
 // CancelNarrativesForSession cancels all running narrative goroutines for a
@@ -63,8 +63,8 @@ func CancelNarrativesForSession(sessionID int64) {
 	nm.mu.Unlock()
 }
 
-func (nm *narrativeManager) clearRunning(sessionID, agentID int64) {
-	key := narrativeKey(sessionID, agentID)
+func (nm *narrativeManager) clearRunning(sessionID, personID int64) {
+	key := narrativeKey(sessionID, personID)
 	nm.mu.Lock()
 	if cancel, ok := nm.running[key]; ok {
 		cancel() // release context resources
@@ -74,8 +74,8 @@ func (nm *narrativeManager) clearRunning(sessionID, agentID int64) {
 }
 
 // run decides whether to generate a narrative for the agent.
-func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
-	defer nm.clearRunning(sessionID, agentID)
+func (nm *narrativeManager) run(ctx context.Context, sessionID, personID int64) {
+	defer nm.clearRunning(sessionID, personID)
 
 	// Check cancellation before any work
 	if ctx.Err() != nil {
@@ -83,7 +83,7 @@ func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
 	}
 
 	// Step 1: compute the target version
-	latestNarrative := getLatestNarrativeByIDs(sessionID, agentID)
+	latestNarrative := getLatestNarrativeByIDs(sessionID, personID)
 	startSeq := 1
 	if latestNarrative != nil {
 		startSeq = latestNarrative.SummaryVersion + 1
@@ -108,14 +108,14 @@ func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
 		return
 	}
 
-	var agent model.Agent
-	if err := database.DB.First(&agent, agentID).Error; err != nil {
-		applogger.Error("SignalNarrative: agent not found", "agent_id", agentID, "error", err)
+	var ac model.AgentConfig
+	if err := database.DB.Where("person_id = ?", personID).First(&ac).Error; err != nil {
+		applogger.Error("SignalNarrative: agent config not found", "person_id", personID, "error", err)
 		return
 	}
 	var llmConfig model.LLMConfig
-	if err := database.DB.First(&llmConfig, agent.LLMConfigID).Error; err != nil {
-		applogger.Error("SignalNarrative: LLM config not found", "config_id", agent.LLMConfigID, "error", err)
+	if err := database.DB.First(&llmConfig, ac.LLMConfigID).Error; err != nil {
+		applogger.Error("SignalNarrative: LLM config not found", "config_id", ac.LLMConfigID, "error", err)
 		return
 	}
 
@@ -124,10 +124,10 @@ func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
 		return
 	}
 
-	narrativeContent := generateNarrativeFromSummary(ctx, &llmConfig, &agent, targetSummary.Content)
+	narrativeContent := generateNarrativeFromSummary(ctx, &llmConfig, &ac, targetSummary.Content)
 	if narrativeContent == "" {
 		applogger.Error("SignalNarrative: narrative generation returned empty content",
-			"session_id", sessionID, "agent_id", agentID)
+			"session_id", sessionID, "person_id", personID)
 		return
 	}
 
@@ -138,18 +138,18 @@ func (nm *narrativeManager) run(ctx context.Context, sessionID, agentID int64) {
 
 	narrative := model.AgentNarrative{
 		SessionID:      sessionID,
-		AgentID:        agentID,
+		PersonID:       personID,
 		SummaryVersion: targetSummary.Version,
 		Content:        narrativeContent,
 	}
 	if err := database.DB.Create(&narrative).Error; err != nil {
 		applogger.Error("SignalNarrative: failed to save narrative",
-			"session_id", sessionID, "agent_id", agentID, "error", err)
+			"session_id", sessionID, "person_id", personID, "error", err)
 		return
 	}
 
 	applogger.Info("Created agent narrative",
-		"session_id", sessionID, "agent_id", agentID, "summary_version", targetSummary.Version,
+		"session_id", sessionID, "person_id", personID, "summary_version", targetSummary.Version,
 		"length", len(narrativeContent))
 }
 
@@ -187,16 +187,16 @@ Output only the narrative content.`
 //
 // The agent's name and character settings are injected into the prompt so the
 // resulting narrative reflects that specific agent's voice and identity.
-func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfig, agent *model.Agent, summaryContent string) string {
+func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfig, ac *model.AgentConfig, summaryContent string) string {
 	if summaryContent == "" {
 		return ""
 	}
 
-	identityLine := fmt.Sprintf("Character settings: %s", agent.CharacterSettings)
-	if agent.CharacterSettings == "" {
+	identityLine := fmt.Sprintf("Character settings: %s", ac.CharacterSettings)
+	if ac.CharacterSettings == "" {
 		identityLine = ""
 	}
-	prompt := fmt.Sprintf(cachedNarrativePrompt, service.GetAgentName(agent.ID), identityLine, summaryContent)
+	prompt := fmt.Sprintf(cachedNarrativePrompt, service.GetAgentConfigName(ac.ID), identityLine, summaryContent)
 
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 

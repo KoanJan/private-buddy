@@ -28,7 +28,7 @@ const (
 // Three-layer model: Agent (long-lived entity) → Work (coherent goal) → Iteration (atomic ReAct step)
 type Work struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	AgentID     int64     `gorm:"not null;index:idx_agent_status" json:"agent_id"`
+	PersonID    int64     `gorm:"not null;index:idx_person_status" json:"person_id"`
 	SessionID   int64     `gorm:"not null" json:"session_id"`
 	DraftID     int64     `gorm:"column:draft_id;not null;default:0" json:"draft_id"`
 	Type        WorkType  `gorm:"not null" json:"type"`                                    // 1=chat, 2=task
