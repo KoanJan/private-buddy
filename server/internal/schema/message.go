@@ -30,7 +30,6 @@ func NewMessageResponse(m *model.Message) *MessageResponse {
 		SessionID: m.SessionID,
 		PersonID:  m.PersonID,
 		Content:   m.Content,
-		Status:    m.Status,
 		DraftID:   m.DraftID,
 		CreatedAt: m.CreatedAt,
 		UpdatedAt: m.UpdatedAt,

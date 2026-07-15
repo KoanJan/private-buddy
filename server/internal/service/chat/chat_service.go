@@ -24,8 +24,8 @@ import (
 
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/chat/chatcontext"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/llm"
@@ -154,7 +154,7 @@ func ExecuteChat(
 		return &ChatResult{Content: userFriendlyErrorMessage}, err
 	}
 
-	p.userName = service.GetUserName()
+	p.userName = dops.GetUserName()
 
 	// Skip preprocessing, inference, KB retrieval, and agent execution —
 	// all of these were done in the Comprehend phase.
@@ -274,7 +274,7 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 	)
 
 	recentMessages := comprehend.GetRecentMessages(
-		p.sessionID, int(p.messageCount), model.MessageStatusCompleted,
+		p.sessionID, int(p.messageCount),
 	)
 
 	// Signal narrative generation if recent messages have accumulated enough.
@@ -298,14 +298,11 @@ func (p *pipeline) assembleSimpleContext() ([]llm.Message, string, bool) {
 
 	messages := chatcontext.AssembleContext(
 		characterSettings,
-		"",
 		entityProfileSection,
 		"",
 		recentMessages,
 		p.kbSegments,
 		-1,
-		1,
-		len(recentMessages),
 		personStateDescription,
 		p.taskResult,
 		p.userName,
@@ -341,7 +338,7 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 	if p.preprocessingResult != nil && p.preprocessingResult.SkipRetrieval {
 		contextResult = chatcontext.GetContextWithoutRetrieval(p.sessionID, p.ac.PersonID, p.windowSize)
 	} else {
-		contextResult = chatcontext.GetContextForChat(p.sessionID, p.ac.PersonID, keywords, p.windowSize, 5)
+		contextResult = chatcontext.GetContextForChat(p.sessionID, p.ac.PersonID, keywords, p.windowSize, chatcontext.DefaultKeywordMatchCount)
 	}
 
 	// Merge knowledge base segments with chat history segments
@@ -374,8 +371,6 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 		summaryVersion = contextResult.SummaryVersion
 	}
 
-	recentStart := int(p.messageCount) - len(contextResult.RecentMessages) + 1
-
 	characterSettings := p.ac.CharacterSettings
 
 	// Apply RAG retrieval hits to the memory system: chat-history segments
@@ -398,14 +393,11 @@ func (p *pipeline) assembleEngineeredContext(ctx context.Context) ([]llm.Message
 
 	messages := chatcontext.AssembleContext(
 		characterSettings,
-		"",
 		entityProfileSection,
 		backgroundStory,
 		contextResult.RecentMessages,
 		relevantSegments,
 		summaryVersion,
-		recentStart,
-		int(p.messageCount),
 		personStateDescription,
 		p.taskResult,
 		p.userName,

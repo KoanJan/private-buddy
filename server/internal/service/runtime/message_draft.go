@@ -46,7 +46,6 @@ func (r *agentRuntime) commitDraft(req *draftCommitRequest) {
 		SessionID: draft.SessionID,
 		PersonID:  r.agentPersonID,
 		Content:   req.content,
-		Status:    model.MessageStatusCompleted,
 		DraftID:   &draft.ID,
 	}
 	if err := tx.Create(&msg).Error; err != nil {

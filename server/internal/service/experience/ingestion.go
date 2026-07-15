@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 )
 
@@ -165,7 +165,7 @@ func processIngestion(uploaded model.UploadedSkill, expID int64) {
 	}
 	defer processingLocks.Delete(uploaded.ID)
 
-	sysCfg := service.GetSystemLLMConfig()
+	sysCfg := dops.GetSystemLLMConfig()
 	if sysCfg == nil {
 		applogger.Error("processIngestion: system LLM config not configured",
 			"uploaded_skill_id", uploaded.ID,

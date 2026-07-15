@@ -69,7 +69,7 @@ func InitWorkspace(personID, sessionID int64) string {
 	notesFile := filepath.Join(metaDir, "notes.md")
 	if _, err := os.Stat(notesFile); err != nil {
 		applogger.Error("failed to stat notes file, attempting to create", "file", notesFile, "error", err)
-		os.WriteFile(notesFile, []byte("# Agent Notes\n\nStructured log of agent's work progress.\n\n"), 0644)
+		os.WriteFile(notesFile, []byte("# Work Notes\n\nStructured log of work progress.\n\n"), 0644)
 	}
 
 	outputDir := GetOutputDir(personID, sessionID)

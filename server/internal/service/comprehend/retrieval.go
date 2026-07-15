@@ -25,12 +25,8 @@ type Segment struct {
 // GetRecentMessages returns recent messages from a session in chronological order.
 // Messages are fetched in DESC order by ID and then reversed to ASC order.
 // If status >= 0, only messages with that status are returned; -1 means no filter.
-func GetRecentMessages(sessionID int64, limit int, status int) []model.Message {
+func GetRecentMessages(sessionID int64, limit int) []model.Message {
 	query := database.DB.Model(&model.Message{}).Where("session_id = ?", sessionID)
-
-	if status >= 0 {
-		query = query.Where("status = ?", status)
-	}
 
 	var messages []model.Message
 	if err := query.Order("id DESC").Limit(limit).Find(&messages).Error; err != nil {

@@ -4,38 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 
 	"private-buddy-server/internal/api/response"
-	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/memory"
-	"private-buddy-server/internal/service/runtime"
 	"private-buddy-server/internal/service/workspace"
 )
 
 // Handler handles core API HTTP requests.
-type Handler struct {
-	crudLLM         *service.CRUDBase[model.LLMConfig]
-	crudAgentConfig *service.CRUDBase[model.AgentConfig]
-	crudSession     *service.CRUDBase[model.Session]
-}
+type Handler struct{}
 
 // NewHandler creates a new Handler instance.
 func NewHandler() *Handler {
-	return &Handler{
-		crudLLM:         service.NewCRUDBase[model.LLMConfig]("LLM config"),
-		crudAgentConfig: service.NewCRUDBase[model.AgentConfig]("AgentConfig"),
-		crudSession:     service.NewCRUDBase[model.Session]("Session"),
-	}
+	return &Handler{}
 }
 
 // Root handles the API root endpoint.
@@ -45,175 +33,13 @@ func (h *Handler) Root(c *gin.Context) {
 
 // GetVersion handles retrieving the application version.
 func (h *Handler) GetVersion(c *gin.Context) {
-	var versionRecord model.DBVersion
-	err := database.DB.Order("id DESC").First(&versionRecord).Error
-	version := config.AppVersion
-	if err == nil {
-		version = versionRecord.Version
-	}
-	response.Success(c, gin.H{"version": version})
-}
-
-// CreateLLMConfig handles creating a new LLM configuration.
-func (h *Handler) CreateLLMConfig(c *gin.Context) {
-	var req schema.LLMConfigCreate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	entity := model.LLMConfig{
-		Name:        req.Name,
-		ModelID:     req.ModelID,
-		BaseURL:     req.BaseURL,
-		APIKey:      req.APIKey,
-		Description: derefString(req.Description),
-	}
-	if err := database.DB.Select(
-		"Name", "ModelID", "BaseURL", "APIKey", "Description",
-	).Create(&entity).Error; err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-	response.Success(c, schema.NewLLMConfigResponse(&entity))
-}
-
-// ListLLMConfigs handles listing all LLM configurations.
-func (h *Handler) ListLLMConfigs(c *gin.Context) {
-	skip, limit := getPagination(c)
-	entities, err := h.crudLLM.GetMulti(skip, limit)
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-	response.Success(c, schema.NewLLMConfigResponseList(entities))
-}
-
-// GetLLMConfig handles retrieving a single LLM configuration by ID.
-func (h *Handler) GetLLMConfig(c *gin.Context) {
-	id := getPathID(c)
-	entity, err := h.crudLLM.Get(id)
-	if err != nil {
-		handleNotFound(c, "LLM config", id)
-		return
-	}
-	response.Success(c, schema.NewLLMConfigResponse(entity))
-}
-
-// UpdateLLMConfig handles updating an existing LLM configuration.
-func (h *Handler) UpdateLLMConfig(c *gin.Context) {
-	id := getPathID(c)
-	entity, err := h.crudLLM.Get(id)
-	if err != nil {
-		handleNotFound(c, "LLM config", id)
-		return
-	}
-	var req schema.LLMConfigUpdate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	updates := req.BuildUpdates()
-	if len(updates) > 0 {
-		h.crudLLM.Update(entity, updates)
-		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.Error("failed to refresh LLM config after update", "id", id, "error", err)
-		}
-	}
-	response.Success(c, schema.NewLLMConfigResponse(entity))
-}
-
-// DeleteLLMConfig handles deleting an LLM configuration.
-func (h *Handler) DeleteLLMConfig(c *gin.Context) {
-	id := getPathID(c)
-	_, err := h.crudLLM.Get(id)
-	if err != nil {
-		handleNotFound(c, "LLM config", id)
-		return
-	}
-	var referencingAgents []model.AgentConfig
-	if err := database.DB.Where("llm_config_id = ?", id).Find(&referencingAgents).Error; err != nil {
-		applogger.Error("failed to check referencing agents for LLM config", "id", id, "error", err)
-	}
-	if len(referencingAgents) > 0 {
-		names := make([]string, len(referencingAgents))
-		for i, a := range referencingAgents {
-			names[i] = service.GetAgentConfigName(a.ID)
-		}
-		response.BadRequest(c, "Cannot delete LLM config: it is referenced by "+strconv.Itoa(len(referencingAgents))+" agent(s): "+strings.Join(names, ", "))
-		return
-	}
-	// Check if this LLM config is set as the system LLM.
-	sysCfg := service.GetSystemLLMConfig()
-	if sysCfg != nil && sysCfg.ID == id {
-		response.BadRequest(c, "Cannot delete LLM config: it is currently set as the system LLM")
-		return
-	}
-	h.crudLLM.Delete(id)
-	response.SuccessMessage(c, "LLM config deleted successfully", nil)
-}
-
-// GetEmbeddingConfig returns the global embedding configuration.
-// Returns nil fields (zero values) if no config exists.
-func (h *Handler) GetEmbeddingConfig(c *gin.Context) {
-	config := service.GetEmbeddingConfig()
-	if config == nil {
-		// Return empty config so the UI can show an empty form for initial setup
-		response.Success(c, schema.EmbeddingConfigResponse{})
-		return
-	}
-	response.Success(c, schema.NewEmbeddingConfigResponse(config))
-}
-
-// UpdateEmbeddingConfig updates the global embedding configuration (upsert).
-func (h *Handler) UpdateEmbeddingConfig(c *gin.Context) {
-	var req schema.EmbeddingConfigUpdate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	config := service.GetEmbeddingConfig()
-	if config == nil {
-		// Create new config
-		entity := model.EmbeddingConfig{
-			Name:        derefString(req.Name),
-			ModelID:     derefString(req.ModelID),
-			BaseURL:     derefString(req.BaseURL),
-			APIKey:      derefString(req.APIKey),
-			Description: derefString(req.Description),
-		}
-		config = service.UpdateEmbeddingConfig(entity)
-	} else {
-		entity := *config
-		if req.Name != nil {
-			entity.Name = *req.Name
-		}
-		if req.ModelID != nil {
-			entity.ModelID = *req.ModelID
-		}
-		if req.BaseURL != nil {
-			entity.BaseURL = *req.BaseURL
-		}
-		if req.APIKey != nil {
-			entity.APIKey = *req.APIKey
-		}
-		if req.Description != nil {
-			entity.Description = *req.Description
-		}
-		config = service.UpdateEmbeddingConfig(entity)
-	}
-
-	if config == nil {
-		response.InternalError(c, "Failed to update embedding config")
-		return
-	}
-	response.Success(c, schema.NewEmbeddingConfigResponse(config))
+	response.Success(c, gin.H{"version": dops.GetVersion()})
 }
 
 // GetUserProfile returns the current user's person profile.
 // Returns zero-value response if user hasn't been set up yet.
 func (h *Handler) GetUserProfile(c *gin.Context) {
-	person, err := service.GetCurrentUserPerson()
+	person, err := dops.GetCurrentUserPerson()
 	if err != nil {
 		response.Success(c, gin.H{})
 		return
@@ -239,16 +65,21 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 		return
 	}
 
-	existing, _ := service.GetCurrentUserPerson()
+	// check if exists
+	existing, _ := dops.GetCurrentUserPerson()
+
+	// update
 	if existing != nil {
 		// Update bio only (name is immutable)
-		updates := map[string]interface{}{"bio": req.Bio}
-		if err := database.DB.Model(existing).Updates(updates).Error; err != nil {
+		if err := dops.UpdateHumanPerson(existing.ID, req.Bio); err != nil {
 			response.InternalError(c, err.Error())
 			return
 		}
-		if err := database.DB.First(existing, existing.ID).Error; err != nil {
+		refreshed, err := dops.GetPerson(existing.ID)
+		if err != nil {
 			applogger.Error("failed to refresh user profile after update", "id", existing.ID, "error", err)
+		} else {
+			existing = refreshed
 		}
 		response.Success(c, gin.H{
 			"id":   existing.ID,
@@ -259,12 +90,9 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 		return
 	}
 
-	person := model.Person{
-		Name: req.Name,
-		Bio:  req.Bio,
-		Type: model.PersonTypeHuman,
-	}
-	if err := database.DB.Create(&person).Error; err != nil {
+	// create
+	person, err := dops.CreateHumanPerson(req.Name, req.Bio)
+	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			response.BadRequest(c, fmt.Sprintf("User name '%s' already exists", req.Name))
 			return
@@ -280,46 +108,7 @@ func (h *Handler) CreateOrUpdateUserProfile(c *gin.Context) {
 	})
 }
 
-// CreateAgentConfig handles creating a new agent config.
-func (h *Handler) CreateAgentConfig(c *gin.Context) {
-	var req schema.AgentConfigCreate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	entity, person, err := service.CreateAgentConfigWithPerson(
-		req.Name, req.Description, req.CharacterSettings,
-		req.LLMConfigID, req.Avatar, req.KnowledgeBaseIDs,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint") {
-			response.BadRequest(c, fmt.Sprintf("Agent name '%s' already exists", req.Name))
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	// Register and start the agent's runtime so it can receive events immediately.
-	runtime.StartRuntime(entity.ID)
-
-	response.Success(c, schema.NewAgentResponse(entity, person))
-}
-
-// ListAgentConfigs handles listing all agent configs.
-func (h *Handler) ListAgentConfigs(c *gin.Context) {
-	skip, limit := getPagination(c)
-	entities, err := h.crudAgentConfig.GetMulti(skip, limit)
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-	// Load all associated persons for names and bios
-	personsMap := loadAgentConfigPersons(entities)
-	response.Success(c, schema.NewAgentResponseList(entities, personsMap))
-}
-
+// DEPRECATED: it's not a good api
 // ListAgentConfigsWithSessions handles listing all agent configs with their sessions.
 func (h *Handler) ListAgentConfigsWithSessions(c *gin.Context) {
 	var configs []model.AgentConfig
@@ -399,263 +188,6 @@ func (h *Handler) ListAgentConfigsWithSessions(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// GetAgentConfig handles retrieving a single agent config by ID.
-// The ID in the URL is the person_id (frontend's "agent id").
-func (h *Handler) GetAgentConfig(c *gin.Context) {
-	personID := getPathID(c)
-	ac, err := service.GetAgentConfigByPersonID(personID)
-	if err != nil {
-		handleNotFound(c, "AgentConfig", personID)
-		return
-	}
-	person, err := service.GetPerson(personID)
-	if err != nil {
-		applogger.Error("GetAgentConfig: person not found", "person_id", personID, "error", err)
-		response.InternalError(c, "Person not found")
-		return
-	}
-	response.Success(c, schema.NewAgentResponse(ac, person))
-}
-
-// UpdateAgentConfig handles updating an existing agent config.
-// The ID in the URL is the person_id (frontend's "agent id").
-func (h *Handler) UpdateAgentConfig(c *gin.Context) {
-	personID := getPathID(c)
-	entity, err := service.GetAgentConfigByPersonID(personID)
-	if err != nil {
-		handleNotFound(c, "AgentConfig", personID)
-		return
-	}
-	var req schema.AgentConfigUpdate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	// Wrap agent + person updates in a transaction
-	err = database.DB.Transaction(func(tx *gorm.DB) error {
-		// Update agent-level fields
-		updates := req.BuildUpdates()
-		if len(updates) > 0 {
-			if err := tx.Model(entity).Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-
-		// Update person-level fields (name and bio) if provided
-		if req.Name != nil || req.Bio != nil {
-			person, err := service.GetPerson(personID)
-			if err != nil {
-				return err
-			}
-			personUpdates := make(map[string]interface{})
-			if req.Name != nil {
-				personUpdates["name"] = *req.Name
-			}
-			if req.Bio != nil {
-				personUpdates["bio"] = *req.Bio
-			}
-			if len(personUpdates) > 0 {
-				if err := tx.Model(person).Updates(personUpdates).Error; err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		applogger.Error("UpdateAgentConfig: transaction failed", "person_id", personID, "error", err)
-		response.InternalError(c, "Failed to update agent config")
-		return
-	}
-
-	// Reload for response
-	ac, err := service.GetAgentConfigByPersonID(personID)
-	if err != nil {
-		applogger.Error("UpdateAgentConfig: failed to reload agent config", "person_id", personID, "error", err)
-		response.InternalError(c, "Failed to reload agent config")
-		return
-	}
-	person, err := service.GetPerson(personID)
-	if err != nil {
-		applogger.Error("UpdateAgentConfig: failed to reload person", "person_id", personID, "error", err)
-		response.InternalError(c, "Failed to reload person")
-		return
-	}
-	response.Success(c, schema.NewAgentResponse(ac, person))
-}
-
-// DeleteAgentConfig handles deleting an agent config and its resources.
-// The ID in the URL is the person_id (frontend's "agent id").
-func (h *Handler) DeleteAgentConfig(c *gin.Context) {
-	personID := getPathID(c)
-	ac, err := service.GetAgentConfigByPersonID(personID)
-	if err != nil {
-		handleNotFound(c, "AgentConfig", personID)
-		return
-	}
-
-	if ac.Avatar != "" {
-		avatarPath := getAvatarsDir() + "/" + ac.Avatar
-		osRemoveIfExists(avatarPath)
-	}
-
-	sessionIDs, err := service.DeleteAgentConfigCascade(personID)
-	if err != nil {
-		applogger.Error("DeleteAgentConfig: cascade delete failed", "person_id", personID, "error", err)
-		response.InternalError(c, "Failed to delete agent config")
-		return
-	}
-
-	// Filesystem cleanup (not transactional)
-	for _, sid := range sessionIDs {
-		workspace.RemoveWorkspace(personID, sid)
-		workspace.RemoveAac(personID, sid)
-	}
-
-	response.SuccessMessage(c, "Agent config deleted successfully", nil)
-}
-
-// CreateSession handles creating a new session.
-func (h *Handler) CreateSession(c *gin.Context) {
-	var req schema.SessionCreate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	title := ""
-	if req.Title != nil {
-		title = *req.Title
-	}
-
-	// Use PersonID directly for participant_sessions record.
-	userPersonID, err := service.GetCurrentUserPersonID()
-	if err != nil {
-		response.BadRequest(c, "no user profile found")
-		return
-	}
-
-	entity := model.Session{Title: title}
-	err = database.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&entity).Error; err != nil {
-			return err
-		}
-		// Owner (human user)
-		if err := tx.Create(&model.ParticipantSession{
-			SessionID:     entity.ID,
-			ParticipantID: userPersonID,
-			Role:          model.ParticipantRoleOwner,
-			Status:        model.ParticipantStatusIdle,
-		}).Error; err != nil {
-			return err
-		}
-		// Member (AI agent)
-		if err := tx.Create(&model.ParticipantSession{
-			SessionID:     entity.ID,
-			ParticipantID: req.AgentID,
-			Role:          model.ParticipantRoleMember,
-			Status:        model.ParticipantStatusIdle,
-		}).Error; err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-	response.Success(c, schema.NewSessionResponse(&entity, req.AgentID))
-}
-
-// ListSessions handles listing all sessions.
-func (h *Handler) ListSessions(c *gin.Context) {
-	skip, limit := getPagination(c)
-	entities, err := h.crudSession.GetMulti(skip, limit)
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-	response.Success(c, schema.NewSessionResponseList(database.DB, entities))
-}
-
-// GetSession handles retrieving a single session by ID.
-func (h *Handler) GetSession(c *gin.Context) {
-	id := getPathID(c)
-	entity, err := h.crudSession.Get(id)
-	if err != nil {
-		handleNotFound(c, "Session", id)
-		return
-	}
-	personID := resolveFirstAIPersonID(id)
-	response.Success(c, schema.NewSessionResponse(entity, personID))
-}
-
-// UpdateSession handles updating an existing session.
-func (h *Handler) UpdateSession(c *gin.Context) {
-	id := getPathID(c)
-	entity, err := h.crudSession.Get(id)
-	if err != nil {
-		handleNotFound(c, "Session", id)
-		return
-	}
-	var req schema.SessionUpdate
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	updates := req.BuildUpdates()
-	if len(updates) > 0 {
-		h.crudSession.Update(entity, updates)
-		if err := database.DB.First(entity, id).Error; err != nil {
-			applogger.Error("failed to refresh session after update", "id", id, "error", err)
-		}
-	}
-	personID := resolveFirstAIPersonID(id)
-	response.Success(c, schema.NewSessionResponse(entity, personID))
-}
-
-// DeleteSession handles deleting a session and its resources.
-func (h *Handler) DeleteSession(c *gin.Context) {
-	id := getPathID(c)
-
-	personID, _, err := service.DeleteSessionCascade(id)
-	if err != nil {
-		applogger.Error("DeleteSession: cascade delete failed", "session_id", id, "error", err)
-		response.InternalError(c, "Failed to delete session")
-		return
-	}
-
-	// Filesystem cleanup
-	if personID > 0 {
-		workspace.RemoveWorkspace(personID, id)
-		workspace.RemoveAac(personID, id)
-	}
-	response.SuccessMessage(c, "Session deleted successfully", nil)
-}
-
-// resolveFirstAIPersonID returns the person ID for the first AI participant
-// in a session, resolved via participant_sessions.
-func resolveFirstAIPersonID(sessionID int64) int64 {
-	var personID int64
-	database.DB.Raw(`SELECT ps.participant_id FROM participant_sessions ps
-		JOIN persons p ON p.id = ps.participant_id AND p.type = 1
-		WHERE ps.session_id = ?
-		LIMIT 1`, sessionID).Scan(&personID)
-	return personID
-}
-
-// resolveFirstAIAgentConfigID returns the agent_configs.id for the first AI participant
-// in a session. Used for event routing to the agent runtime.
-func resolveFirstAIAgentConfigID(sessionID int64) int64 {
-	var agentConfigID int64
-	database.DB.Raw(`SELECT ac.id FROM participant_sessions ps
-		JOIN persons p ON p.id = ps.participant_id AND p.type = 1
-		JOIN agent_configs ac ON ac.person_id = p.id
-		WHERE ps.session_id = ?
-		LIMIT 1`, sessionID).Scan(&agentConfigID)
-	return agentConfigID
-}
-
 // receivedFileEntry represents a file or directory in a delivery tree.
 type receivedFileEntry struct {
 	Name      string              `json:"name"`
@@ -677,14 +209,14 @@ type receivedDeliveryEntry struct {
 func (h *Handler) GetReceivedDeliveries(c *gin.Context) {
 	sessionID := getPathID(c)
 
-	var session model.Session
-	if err := database.DB.First(&session, sessionID).Error; err != nil {
+	_, err := dops.GetSession(sessionID)
+	if err != nil {
 		response.NotFound(c, "Session not found")
 		return
 	}
 
 	// Get current user's PersonID for received directory
-	userPerson, err := service.GetCurrentUserPerson()
+	userPerson, err := dops.GetCurrentUserPerson()
 	if err != nil {
 		response.BadRequest(c, "No user profile found")
 		return
@@ -810,7 +342,7 @@ func (h *Handler) GetReceivedFile(c *gin.Context) {
 		return
 	}
 
-	userPerson, err := service.GetCurrentUserPerson()
+	userPerson, err := dops.GetCurrentUserPerson()
 	if err != nil {
 		response.BadRequest(c, "No user profile found")
 		return
@@ -851,8 +383,8 @@ func (h *Handler) GetReceivedFile(c *gin.Context) {
 // CreateMessage handles creating a new message in a session.
 func (h *Handler) CreateMessage(c *gin.Context) {
 	sessionID := getPathID(c)
-	var session model.Session
-	if err := database.DB.First(&session, sessionID).Error; err != nil {
+	_, err := dops.GetSession(sessionID)
+	if err != nil {
 		response.NotFound(c, "Session not found")
 		return
 	}
@@ -861,7 +393,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		applogger.Error("CreateMessage: failed to get current user person ID", "error", err)
 		response.InternalError(c, "Failed to identify current user")
@@ -871,9 +403,8 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		SessionID: sessionID,
 		PersonID:  userPersonID,
 		Content:   req.Content,
-		Status:    model.MessageStatusCompleted,
 	}
-	if err := database.DB.Create(&entity).Error; err != nil {
+	if err := dops.CreateMessage(&entity); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -891,13 +422,13 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 // ListMessages handles listing messages in a session.
 func (h *Handler) ListMessages(c *gin.Context) {
 	sessionID := getPathID(c)
-	var session model.Session
-	if err := database.DB.First(&session, sessionID).Error; err != nil {
+	_, err := dops.GetSession(sessionID)
+	if err != nil {
 		response.NotFound(c, "Session not found")
 		return
 	}
-	var messages []model.Message
-	if err := database.DB.Where("session_id = ?", sessionID).Order("created_at ASC").Find(&messages).Error; err != nil {
+	messages, err := dops.ListMessagesBySessionID(sessionID)
+	if err != nil {
 		applogger.Error("failed to list messages", "session_id", sessionID, "error", err)
 		response.InternalError(c, "Failed to list messages")
 		return
@@ -907,7 +438,7 @@ func (h *Handler) ListMessages(c *gin.Context) {
 
 // GetSearchConfig handles retrieving the search configuration.
 func (h *Handler) GetSearchConfig(c *gin.Context) {
-	config := service.GetSearchConfig()
+	config := dops.GetSearchConfig()
 	response.Success(c, schema.NewSearchConfigResponse(config))
 }
 
@@ -918,14 +449,14 @@ func (h *Handler) UpdateSearchConfig(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	config := service.UpdateSearchConfig(req.Provider, req.APIKey, req.Description, req.IsActive)
+	config := dops.UpdateSearchConfig(req.Provider, req.APIKey, req.Description, req.IsActive)
 	response.Success(c, schema.NewSearchConfigResponse(config))
 }
 
 // GetCurrentPerson returns the current user's person record.
 // GET /api/persons/me
 func (h *Handler) GetCurrentPerson(c *gin.Context) {
-	person, err := service.GetCurrentUserPerson()
+	person, err := dops.GetCurrentUserPerson()
 	if err != nil {
 		response.NotFound(c, "No user person record found. Please create a user profile first.")
 		return

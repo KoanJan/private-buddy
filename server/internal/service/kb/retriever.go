@@ -6,16 +6,16 @@ import (
 	"sync"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 )
 
 // getEmbeddingService creates an EmbeddingService from the global config.
 func getEmbeddingService() (*llm.EmbeddingService, error) {
-	config := service.GetEmbeddingConfig()
+	config := dops.GetEmbeddingConfig()
 	if config == nil {
 		return nil, fmt.Errorf("no global embedding config")
 	}
@@ -69,7 +69,7 @@ func searchKB(ctx context.Context, kbID int64, query string, topK int) ([]schema
 // then searches each KB in parallel.
 func searchMultiKB(ctx context.Context, kbIDs []int64, query string, topK int) ([]schema.SearchResult, error) {
 	if topK <= 0 {
-		topK = 5
+		topK = DefaultSearchTopK
 	}
 
 	embService, err := getEmbeddingService()

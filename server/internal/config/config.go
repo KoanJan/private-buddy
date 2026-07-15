@@ -27,22 +27,23 @@ import (
 )
 
 // AppVersion is the current application version.
-const AppVersion = "0.0.31"
+const AppVersion = "0.0.32"
 
 // globalSettings is the singleton configuration instance.
 var globalSettings *Settings
 
 // Settings holds all application configuration values.
 type Settings struct {
-	DataRoot                string // Root directory for all data storage
-	LogDir                  string // Directory for log files (default: logs/)
-	SummaryWindowSize       int    // Number of messages before triggering summary generation
-	SummaryTokenThreshold   int    // Token budget threshold for fallback summary trigger
-	LogLevel                string // Logging level (DEBUG, INFO, WARN, ERROR)
-	TaskMaxIterations       int    // Maximum iterations for task loop
-	WorkspaceRoot           string // Root directory for task workspace files
-	ContextWindowIterations int    // Number of recent iterations visible to agent
-	NotesMaxChars           int    // Maximum character limit for agent notes
+	DataRoot              string // Root directory for all data storage
+	LogDir                string // Directory for log files (default: logs/)
+	SummaryWindowSize     int    // Number of messages before triggering summary generation
+	SummaryTokenThreshold int    // Token budget threshold for fallback summary trigger
+	LogLevel              string // Logging level (DEBUG, INFO, WARN, ERROR)
+	TaskMaxIterations     int    // Maximum iterations for task loop
+	WorkspaceRoot         string // Root directory for task workspace files
+	MinIterationWindow    int    // Minimum iterations visible to agent (anchor size)
+	MaxIterationWindow    int    // Maximum iterations before bulk-shrink triggers
+	NotesMaxChars         int    // Maximum character limit for agent notes
 }
 
 // Init loads configuration from environment variables with defaults.
@@ -50,15 +51,16 @@ func Init() {
 	dataRoot := expandHome(getEnv("DATA_ROOT", filepath.Join("..", "data")))
 
 	globalSettings = &Settings{
-		DataRoot:                dataRoot,
-		LogDir:                  expandHome(getEnv("LOG_DIR", "logs")),
-		SummaryWindowSize:       getEnvInt("SUMMARY_WINDOW_SIZE", 50),
-		SummaryTokenThreshold:   getEnvInt("SUMMARY_TOKEN_THRESHOLD", 16000),
-		LogLevel:                getEnv("LOG_LEVEL", "INFO"),
-		TaskMaxIterations:       getEnvInt("TASK_MAX_ITERATIONS", 50),
-		WorkspaceRoot:           expandHome(getEnv("WORKSPACE_ROOT", "")),
-		ContextWindowIterations: getEnvInt("CONTEXT_WINDOW_ITERATIONS", 20),
-		NotesMaxChars:           getEnvInt("NOTES_MAX_CHARS", 10000),
+		DataRoot:              dataRoot,
+		LogDir:                expandHome(getEnv("LOG_DIR", "logs")),
+		SummaryWindowSize:     getEnvInt("SUMMARY_WINDOW_SIZE", 50),
+		SummaryTokenThreshold: getEnvInt("SUMMARY_TOKEN_THRESHOLD", 16000),
+		LogLevel:              getEnv("LOG_LEVEL", "INFO"),
+		TaskMaxIterations:     getEnvInt("TASK_MAX_ITERATIONS", 300),
+		WorkspaceRoot:         expandHome(getEnv("WORKSPACE_ROOT", "")),
+		MinIterationWindow:    getEnvInt("MIN_ITERATION_WINDOW", 10),
+		MaxIterationWindow:    getEnvInt("MAX_ITERATION_WINDOW", 100),
+		NotesMaxChars:         getEnvInt("NOTES_MAX_CHARS", 10000),
 	}
 }
 

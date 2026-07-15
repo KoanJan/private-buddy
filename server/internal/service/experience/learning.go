@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 )
 
@@ -84,7 +84,7 @@ func CheckLearning(ctx context.Context, personID int64) {
 			"person_id", personID, "error", err)
 		return
 	}
-	llmCfg, err := service.GetLLMConfig(ac.LLMConfigID)
+	llmCfg, err := dops.GetLLMConfig(ac.LLMConfigID)
 	if err != nil {
 		applogger.Error("CheckLearning: failed to load LLM config",
 			"person_id", personID, "error", err)

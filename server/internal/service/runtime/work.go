@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/chat"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
@@ -322,19 +322,19 @@ func (w *work) abandon() {
 // Uses w.agent.agentConfigID (agent config PK from runtime) rather than the removed
 // sessions.agent_id column.
 func (w *work) loadChatDependencies() (*model.Session, *model.AgentConfig, *model.LLMConfig) {
-	session := service.GetSession(w.sessionID)
-	if session == nil {
-		applogger.Error("Session not found", "session_id", w.sessionID)
+	session, err := dops.GetSession(w.sessionID)
+	if err != nil {
+		applogger.Error("get session error", "session_id", w.sessionID, "reason", err)
 		return nil, nil, nil
 	}
 
-	ac, err := service.GetAgentConfig(w.agent.agentConfigID)
+	ac, err := dops.Get[model.AgentConfig](w.agent.agentConfigID)
 	if err != nil {
 		applogger.Error("Failed to load agent config", "agent_config_id", w.agent.agentConfigID, "error", err)
 		return session, nil, nil
 	}
 
-	llmConfig, err := service.GetLLMConfig(ac.LLMConfigID)
+	llmConfig, err := dops.GetLLMConfig(ac.LLMConfigID)
 	if err != nil {
 		applogger.Error("Failed to load LLM config", "config_id", ac.LLMConfigID, "error", err)
 		return session, ac, nil
@@ -387,11 +387,12 @@ func removeWorkByID(works []*work, workID int64) []*work {
 // are returned since mid-execution resumption is not supported.
 func recoverActiveWorks(agentConfigID int64) []*work {
 	// Resolve personID from agentConfigID — the works table is now keyed by person_id.
-	personID := service.GetAgentConfigPersonID(agentConfigID)
-	if personID == 0 {
-		applogger.Error("recoverActiveWorks: failed to resolve person ID from agent config", "agent_config_id", agentConfigID)
+	ac, err := dops.Get[model.AgentConfig](agentConfigID)
+	if err != nil {
+		applogger.Error("recoverActiveWorks: failed to resolve person ID from agent config", "agent_config_id", agentConfigID, "error", err)
 		return nil
 	}
+	personID := ac.PersonID
 
 	var workRecords []model.Work
 	if err := database.DB.Where("person_id = ? AND status = ?", personID, model.WorkStatusRunning).Find(&workRecords).Error; err != nil {

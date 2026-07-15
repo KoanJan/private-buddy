@@ -9,34 +9,19 @@ import (
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/constants"
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/kb"
 
 	"private-buddy-server/internal/api/response"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-// KBHandler handles knowledge base related HTTP requests.
-type KBHandler struct {
-	crudKB  *service.CRUDBase[model.KnowledgeBase]
-	crudDoc *service.CRUDBase[model.Document]
-}
-
-// NewKBHandler creates a new KBHandler instance.
-func NewKBHandler() *KBHandler {
-	return &KBHandler{
-		crudKB:  service.NewCRUDBase[model.KnowledgeBase]("Knowledge base"),
-		crudDoc: service.NewCRUDBase[model.Document]("Document"),
-	}
-}
-
 // CreateKnowledgeBase handles creating a new knowledge base.
-func (h *KBHandler) CreateKnowledgeBase(c *gin.Context) {
+func (h *Handler) CreateKnowledgeBase(c *gin.Context) {
 	var req schema.KnowledgeBaseCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
@@ -57,9 +42,9 @@ func (h *KBHandler) CreateKnowledgeBase(c *gin.Context) {
 }
 
 // ListKnowledgeBases handles listing all knowledge bases.
-func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
+func (h *Handler) ListKnowledgeBases(c *gin.Context) {
 	skip, limit := getPagination(c)
-	entities, err := h.crudKB.GetMulti(skip, limit)
+	entities, err := dops.GetMulti[model.KnowledgeBase](skip, limit)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return
@@ -72,8 +57,8 @@ func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
 
 	results := make([]kbWithStats, 0)
 	for _, entity := range entities {
-		var count int64
-		if err := database.DB.Model(&model.Document{}).Where("knowledge_base_id = ?", entity.ID).Count(&count).Error; err != nil {
+		count, err := dops.CountDocumentsInKB(entity.ID)
+		if err != nil {
 			applogger.Error("failed to count documents for KB list", "kb_id", entity.ID, "error", err)
 		}
 		results = append(results, kbWithStats{
@@ -86,8 +71,8 @@ func (h *KBHandler) ListKnowledgeBases(c *gin.Context) {
 }
 
 // GetKnowledgeBase handles retrieving a single knowledge base by ID.
-func (h *KBHandler) GetKnowledgeBase(c *gin.Context) {
-	entity, err := h.crudKB.Get(getPathID(c))
+func (h *Handler) GetKnowledgeBase(c *gin.Context) {
+	entity, err := dops.Get[model.KnowledgeBase](getPathID(c))
 	if err != nil {
 		response.NotFound(c, err.Error())
 		return
@@ -96,7 +81,7 @@ func (h *KBHandler) GetKnowledgeBase(c *gin.Context) {
 }
 
 // UpdateKnowledgeBase handles updating an existing knowledge base.
-func (h *KBHandler) UpdateKnowledgeBase(c *gin.Context) {
+func (h *Handler) UpdateKnowledgeBase(c *gin.Context) {
 	var req schema.KnowledgeBaseUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
@@ -104,7 +89,7 @@ func (h *KBHandler) UpdateKnowledgeBase(c *gin.Context) {
 	}
 
 	id := getPathID(c)
-	entity, err := h.crudKB.Get(id)
+	entity, err := dops.Get[model.KnowledgeBase](id)
 	if err != nil {
 		response.NotFound(c, err.Error())
 		return
@@ -112,7 +97,7 @@ func (h *KBHandler) UpdateKnowledgeBase(c *gin.Context) {
 
 	updates := req.BuildUpdates()
 	if len(updates) > 0 {
-		if err := h.crudKB.Update(entity, updates); err != nil {
+		if err := dops.Update(entity, updates); err != nil {
 			response.InternalError(c, err.Error())
 			return
 		}
@@ -122,7 +107,7 @@ func (h *KBHandler) UpdateKnowledgeBase(c *gin.Context) {
 }
 
 // DeleteKnowledgeBase handles deleting a knowledge base and its resources.
-func (h *KBHandler) DeleteKnowledgeBase(c *gin.Context) {
+func (h *Handler) DeleteKnowledgeBase(c *gin.Context) {
 	id := getPathID(c)
 	if err := kb.DeleteKnowledgeBase(id); err != nil {
 		response.InternalError(c, err.Error())
@@ -132,10 +117,10 @@ func (h *KBHandler) DeleteKnowledgeBase(c *gin.Context) {
 }
 
 // ListDocuments handles listing documents in a knowledge base.
-func (h *KBHandler) ListDocuments(c *gin.Context) {
+func (h *Handler) ListDocuments(c *gin.Context) {
 	kbID := getPathID(c)
-	var documents []model.Document
-	if err := database.DB.Where("knowledge_base_id = ?", kbID).Order("created_at DESC").Find(&documents).Error; err != nil {
+	documents, err := dops.ListDocumentsInKB(kbID)
+	if err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -143,7 +128,7 @@ func (h *KBHandler) ListDocuments(c *gin.Context) {
 }
 
 // UploadDocument handles uploading a document to a knowledge base.
-func (h *KBHandler) UploadDocument(c *gin.Context) {
+func (h *Handler) UploadDocument(c *gin.Context) {
 	kbID := getPathID(c)
 
 	file, header, err := c.Request.FormFile("file")
@@ -186,8 +171,7 @@ func (h *KBHandler) UploadDocument(c *gin.Context) {
 		FilePath:        filePath,
 		Status:          model.DocumentStatusPending,
 	}
-
-	if err := database.DB.Create(&doc).Error; err != nil {
+	if err := dops.Create(&doc); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -198,9 +182,9 @@ func (h *KBHandler) UploadDocument(c *gin.Context) {
 }
 
 // GetDocument handles retrieving a single document by ID.
-func (h *KBHandler) GetDocument(c *gin.Context) {
+func (h *Handler) GetDocument(c *gin.Context) {
 	docID := getPathIDByParam(c, "doc_id")
-	entity, err := h.crudDoc.Get(docID)
+	entity, err := dops.Get[model.Document](docID)
 	if err != nil {
 		response.NotFound(c, err.Error())
 		return
@@ -209,10 +193,10 @@ func (h *KBHandler) GetDocument(c *gin.Context) {
 }
 
 // DeleteDocument handles deleting a document and its chunks.
-func (h *KBHandler) DeleteDocument(c *gin.Context) {
+func (h *Handler) DeleteDocument(c *gin.Context) {
 	docID := getPathIDByParam(c, "doc_id")
-	var doc model.Document
-	if err := database.DB.First(&doc, docID).Error; err != nil {
+	doc, err := dops.Get[model.Document](docID)
+	if err != nil {
 		response.NotFound(c, err.Error())
 		return
 	}
@@ -228,16 +212,15 @@ func (h *KBHandler) DeleteDocument(c *gin.Context) {
 		return
 	}
 	if chunkCount > 0 {
-		if err := database.DB.Model(&model.DocumentChunk{}).Where("document_id = ? AND deleted = 0", docID).Update("deleted", 1).Error; err != nil {
+		if err := dops.MarkDocumentChunksDeleted(docID); err != nil {
 			applogger.Error("failed to soft-delete document chunks", "doc_id", docID, "error", err)
 		}
-		if err := database.DB.Model(&model.KnowledgeBase{}).Where("id = ?", doc.KnowledgeBaseID).
-			Update("deleted_count", gorm.Expr("deleted_count + ?", chunkCount)).Error; err != nil {
+		if err := dops.AddDeletedDocumentChunksCountOfKB(doc.KnowledgeBaseID, chunkCount); err != nil {
 			applogger.Error("failed to update KB deleted_count after document delete", "kb_id", doc.KnowledgeBaseID, "error", err)
 		}
 	}
 
-	if err := database.DB.Delete(&doc).Error; err != nil {
+	if err := dops.Delete[model.Document](doc.ID); err != nil {
 		applogger.Error("failed to delete document", "doc_id", docID, "error", err)
 		response.InternalError(c, "Failed to delete document")
 		return
@@ -247,7 +230,7 @@ func (h *KBHandler) DeleteDocument(c *gin.Context) {
 }
 
 // SearchKB handles searching within a knowledge base.
-func (h *KBHandler) SearchKB(c *gin.Context) {
+func (h *Handler) SearchKB(c *gin.Context) {
 	kbID := getPathID(c)
 	var req schema.SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -264,7 +247,7 @@ func (h *KBHandler) SearchKB(c *gin.Context) {
 }
 
 // SearchMultiKB handles searching across multiple knowledge bases.
-func (h *KBHandler) SearchMultiKB(c *gin.Context) {
+func (h *Handler) SearchMultiKB(c *gin.Context) {
 	var req schema.MultiKBSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())

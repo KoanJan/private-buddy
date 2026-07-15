@@ -3,12 +3,6 @@ package model
 
 import "time"
 
-// Message status constants.
-const (
-	MessageStatusStreaming = 0 // Message is currently being generated (SSE streaming)
-	MessageStatusCompleted = 1 // Message generation is complete
-)
-
 // Message represents a chat message in a session.
 // PersonID identifies who sent the message (AI agent or human user).
 // Assistant messages go through a streaming phase before being completed.
@@ -17,7 +11,6 @@ type Message struct {
 	SessionID int64     `gorm:"not null;index;column:session_id" json:"session_id"`
 	PersonID  int64     `gorm:"not null;index;column:person_id;default:0" json:"person_id"`
 	Content   string    `gorm:"type:text;not null" json:"content"`
-	Status    int       `gorm:"not null;default:0" json:"status"`
 	DraftID   *int64    `gorm:"column:draft_id" json:"draft_id"` // References message_drafts.id, NULL for user messages
 	CreatedAt time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"not null;autoUpdateTime" json:"updated_at"`

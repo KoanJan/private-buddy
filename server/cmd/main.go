@@ -15,8 +15,8 @@ import (
 	"private-buddy-server/internal/api/handler"
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/logger"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/experience"
 	"private-buddy-server/internal/service/kb"
@@ -103,7 +103,7 @@ func main() {
 	// have subscribed to the event queue.
 	runtime.Start(onStatusChange, onPushMessage, handler.PushSSEToSession)
 
-	kb.Init(1536, 0)
+	kb.Init(kb.DefaultEmbeddingDim, 0)
 	kb.RecoverProcessingDocuments()
 
 	r := api.SetupRouter()
@@ -158,12 +158,12 @@ func main() {
 // getEmbeddingService creates an EmbeddingService from the global embedding config.
 // Returns nil if no embedding config exists.
 func getEmbeddingService() *llm.EmbeddingService {
-	embConfig := service.GetEmbeddingConfig()
+	embConfig := dops.GetEmbeddingConfig()
 	if embConfig == nil {
 		return nil
 	}
 
-	embSvc := llm.NewEmbeddingService(embConfig.BaseURL, embConfig.APIKey, embConfig.ModelID, 1536)
+	embSvc := llm.NewEmbeddingService(embConfig.BaseURL, embConfig.APIKey, embConfig.ModelID, kb.DefaultEmbeddingDim)
 	applogger.Info("Embedding service created",
 		"config_name", embConfig.Name,
 		"model", embConfig.ModelID,

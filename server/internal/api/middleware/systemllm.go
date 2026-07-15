@@ -2,14 +2,14 @@ package middleware
 
 import (
 	"private-buddy-server/internal/api/response"
-	"private-buddy-server/internal/service"
+	"private-buddy-server/internal/dops"
 
 	"github.com/gin-gonic/gin"
 )
 
 // RequireSystemLLM blocks requests when the system-level LLM config is not set up.
 func RequireSystemLLM(c *gin.Context) {
-	if !service.IsSystemLLMConfigured() {
+	if !dops.IsSystemLLMConfigured() {
 		response.BadRequest(c, "System LLM config is required but not configured")
 		c.Abort()
 		return

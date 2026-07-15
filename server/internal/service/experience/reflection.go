@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/workspace"
 )
@@ -58,7 +58,7 @@ func CheckReflection(ctx context.Context, personID int64) {
 	for _, sess := range sessions {
 		// Check whether this session has any task interactions.
 		// If not, notes.md is not expected to exist — skip without error.
-		hasInteractions, err := service.HasInteractions(sess.ID)
+		hasInteractions, err := dops.HasInteractions(sess.ID)
 		if err != nil {
 			applogger.Error("CheckReflection: failed to check interactions",
 				"session_id", sess.ID, "error", err)
@@ -101,15 +101,20 @@ func CheckReflection(ctx context.Context, personID int64) {
 		notesContent := string(notesBytes)
 		currentFingerprint := sha256Hex(notesContent)
 
-		// Compare against the last reflection's fingerprint. Missing file or
-		// differing content means reflection should run.
+		// Compare against the last reflection's fingerprint.
+		// Missing file → first reflection, run it.
+		// Matching fingerprint → no change since last reflection, skip.
+		// Differing fingerprint → notes changed, run again.
 		lastFingerprintBytes, err := os.ReadFile(fpFile)
 		if err != nil {
-			applogger.Error("CheckReflection: failed to read fingerprint file",
-				"file", fpFile,
-				"error", err,
-			)
-			continue
+			if !os.IsNotExist(err) {
+				applogger.Error("CheckReflection: failed to read fingerprint file",
+					"file", fpFile,
+					"error", err,
+				)
+				continue
+			}
+			// File does not exist — first reflection for this session, proceed.
 		} else if string(lastFingerprintBytes) == currentFingerprint {
 			// No change since the last reflection — skip.
 			continue
@@ -138,7 +143,7 @@ func reflectSession(ctx context.Context, personID, sessionID int64, notesContent
 		applogger.Error("Reflection: failed to load agent config", "person_id", personID, "error", err)
 		return
 	}
-	llmCfg, err := service.GetLLMConfig(ac.LLMConfigID)
+	llmCfg, err := dops.GetLLMConfig(ac.LLMConfigID)
 	if err != nil {
 		applogger.Error("Reflection: failed to load LLM config", "person_id", personID, "error", err)
 		return

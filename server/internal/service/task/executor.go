@@ -22,7 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strings"
 
 	"private-buddy-server/internal/config"
@@ -153,7 +152,7 @@ type TaskParams struct {
 func Execute(params TaskParams) *TaskResult {
 	maxIterations := params.MaxIterations
 	if maxIterations <= 0 {
-		maxIterations = defaultMaxIterations
+		maxIterations = config.Get().TaskMaxIterations
 	}
 
 	applogger.Info("TaskExecutor starting",
@@ -164,7 +163,8 @@ func Execute(params TaskParams) *TaskResult {
 	ws := workspace.InitWorkspace(params.PersonID, params.SessionID)
 
 	settings := config.Get()
-	iterationWindow := settings.ContextWindowIterations
+	iterationWindow := settings.MinIterationWindow
+	maxIterationWindow := settings.MaxIterationWindow
 	notesMaxChars := settings.NotesMaxChars
 
 	metaDir := workspace.GetMetaDir(params.PersonID, params.SessionID)
@@ -173,15 +173,33 @@ func Execute(params TaskParams) *TaskResult {
 
 	toolList := buildToolList(params.SessionID, params.PersonID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
 
-	// Build the system prompt AFTER the tool list so that tool descriptions
-	// can be generated from the registered tools.
-	systemPrompt := buildSystemPrompt(params.PersonID, params.SessionID, params.Background, params.Guidance, params.Metadata, toolList)
+	// Build tool descriptions string (moved to last user message for cache optimization).
+	toolDescLines := []string{"Available tools:"}
+	for _, t := range toolList {
+		toolDescLines = append(toolDescLines, fmt.Sprintf("- %s: %s", t.Name(), t.Description()))
+	}
+	toolDescStr := strings.Join(toolDescLines, "\n")
+
+	systemPrompt := buildSystemPrompt(params.Background, params.Metadata)
+
+	workspaceDir := workspace.GetWorkspacePath(params.PersonID, params.SessionID)
+	outputDir := workspace.GetOutputDir(params.PersonID, params.SessionID)
 
 	contextManager := taskcontext.NewContextManager(
 		systemPrompt,
 		iterationWindow,
+		maxIterationWindow,
 		notesContent,
+		workspaceDir,
+		outputDir,
+		toolDescStr,
 	)
+
+	// Initial task directive from Decide phase — recorded in guidance history
+	// (last user message) instead of the static system prompt for cache optimization.
+	if params.Guidance != "" {
+		contextManager.AddGuidance(params.Guidance, "")
+	}
 
 	llmClient := llm.NewChatModelWithTemperature(
 		params.LLMConfig.BaseURL,
@@ -248,33 +266,15 @@ func Execute(params TaskParams) *TaskResult {
 }
 
 // buildSystemPrompt constructs the static system prompt for the task loop.
-// Built once at task start; includes basic rules, tool descriptions (generated
-// from the registered tool list), working directory, delivery guidance,
-// static instruction blocks, an experience hint, and the execution directive.
-//
-// Dynamic content (iteration counts, notes length) is appended separately by
-// ContextManager at each iteration to preserve LLM prefix caching.
-func buildSystemPrompt(personID, sessionID int64, background, guidance string, metadata *Metadata, toolList []tools.Tool) string {
-	sessionDir := workspace.GetWorkspacePath(personID, sessionID)
-	outputDir := workspace.GetOutputDir(personID, sessionID)
-
-	// Generate tool descriptions from the registered tools.
-	toolLines := []string{"Available tools:"}
-	for _, t := range toolList {
-		toolLines = append(toolLines, fmt.Sprintf("- %s: %s", t.Name(), t.Description()))
-	}
-
+// Built once at task start; includes background context, basic rules, and
+// static instruction blocks. Directives (from Decide phase and routeWork)
+// are managed separately by ContextManager and injected into the last user
+// message to preserve LLM prefix caching on the system prompt.
+func buildSystemPrompt(background string, metadata *Metadata) string {
 	parts := []string{
-		"You can execute tasks using tools.",
-		"",
-	}
-	parts = append(parts, toolLines...)
-
-	parts = append(parts,
-		"",
 		"[Background]",
 		background,
-	)
+	}
 
 	// Inject Metadata as a [Metadata] section if available.
 	if metadata != nil {
@@ -293,12 +293,7 @@ func buildSystemPrompt(personID, sessionID int64, background, guidance string, m
 		"",
 		"Always verify your actions by checking the results.",
 		"",
-		fmt.Sprintf("Your session directory is: %s", sessionDir),
-		fmt.Sprintf("Your default working directory is: %s", outputDir),
-		fmt.Sprintf("Operating system: %s", runtime.GOOS),
-		"",
 		"WORKSPACE ORGANIZATION:",
-		fmt.Sprintf("- Your default working directory is: %s", outputDir),
 		"- Before creating files, consider whether this task relates to an existing project:",
 		"  - If starting a new project (e.g., building an app, writing a report), create a dedicated subdirectory for it",
 		"  - If continuing or modifying existing work, first check what subdirectories exist and work within the appropriate one",
@@ -358,17 +353,6 @@ func buildSystemPrompt(personID, sessionID int64, background, guidance string, m
 		"[Past Experience]",
 		"You have past experiences (lessons learned from prior tasks). Use scan_my_experience to search for relevant experiences by keyword, then recall_my_experience to read the full content of a specific one.",
 	)
-
-	// Inject Guidance as a self-directive in the system prompt.
-	// This is the execution intent from the Decide phase — the agent's
-	// own understanding of what it should accomplish.
-	if guidance != "" {
-		parts = append(parts,
-			"",
-			"[Execution Directive]",
-			guidance,
-		)
-	}
 
 	return strings.Join(parts, "\n")
 }

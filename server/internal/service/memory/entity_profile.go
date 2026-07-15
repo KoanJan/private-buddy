@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -167,7 +167,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 	var participants []model.ParticipantSession
 	if len(sids) > 0 {
 		var pErr error
-		participants, pErr = service.GetSessionParticipantsByPersonTypeMulti(sids, model.PersonTypeHuman)
+		participants, pErr = dops.GetSessionParticipantsByPersonTypeMulti(sids, model.PersonTypeHuman)
 		if pErr != nil {
 			applogger.Error("resolveEntityDirections: failed to load participants", "error", pErr)
 		}

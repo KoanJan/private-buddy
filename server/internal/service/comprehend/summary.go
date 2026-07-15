@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -71,7 +71,7 @@ func (sm *summaryManager) run(ctx context.Context, sessionID int64) {
 		return
 	}
 
-	llmConfig := service.GetSystemLLMConfig()
+	llmConfig := dops.GetSystemLLMConfig()
 	if llmConfig == nil {
 		applogger.Error("SignalSummary: system LLM not configured")
 		return
@@ -251,7 +251,7 @@ func getMessagesByRange(sessionID int64, startSeq, endSeq int) []*model.Message 
 // userName is the actual name of the other party, agentName is the agent's own name.
 // Kept for backward compatibility with narrative generation which needs named roles.
 func formatMessagesForSummary(messages []model.Message, personName, agentName string) string {
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		applogger.Error("formatMessagesForSummary: failed to get current user person ID", "error", err)
 	}
@@ -277,11 +277,11 @@ func formatMessagesForSummary(messages []model.Message, personName, agentName st
 // formatMessagesForSummaryGeneric formats messages using role-based labels
 // (User/Assistant) suitable for a session-level factual summary.
 func formatMessagesForSummaryGeneric(messages []*model.Message) string {
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		applogger.Error("formatMessagesForSummaryGeneric: failed to get current user person ID", "error", err)
 	}
-	userName := service.GetUserName()
+	userName := dops.GetUserName()
 	var formatted []string
 	for _, msg := range messages {
 		role := userName

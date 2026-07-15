@@ -8,6 +8,9 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
+// DefaultKeywordMatchCount is the default number of keyword-matched segments retrieved from chat history.
+const DefaultKeywordMatchCount = 5
+
 // RetrievalResult holds all context components retrieved for chat processing.
 type RetrievalResult struct {
 	RecentMessages   []model.Message      `json:"recent_messages"`
@@ -63,7 +66,7 @@ func GetContextWithoutRetrieval(sessionID, personID int64, recentCount int) *Ret
 		RelevantSegments: []comprehend.Segment{},
 	}
 
-	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
+	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount)
 
 	result.SummaryVersion, result.Narrative = buildSummaryAndNarrative(sessionID, personID)
 
@@ -77,17 +80,17 @@ func GetContextWithoutRetrieval(sessionID, personID int64, recentCount int) *Ret
 //  2. Keyword-matched segments from session history
 //  3. Latest summary (if available)
 //  4. Cached narrative from agent_narratives (if available)
-func GetContextForChat(sessionID, personID int64, keywords []string, recentCount int, ragCount int) *RetrievalResult {
+func GetContextForChat(sessionID, personID int64, keywords []string, recentCount int, keywordMatchCount int) *RetrievalResult {
 	result := &RetrievalResult{
 		RecentMessages:   []model.Message{},
 		RelevantSegments: []comprehend.Segment{},
 	}
 
-	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount, model.MessageStatusCompleted)
+	result.RecentMessages = comprehend.GetRecentMessages(sessionID, recentCount)
 
 	// Keyword-based retrieval: search messages in this session
 	if len(keywords) > 0 {
-		result.RelevantSegments = SearchMessagesByKeywords([]int64{sessionID}, keywords, ragCount)
+		result.RelevantSegments = SearchMessagesByKeywords([]int64{sessionID}, keywords, keywordMatchCount)
 		applogger.Info("Keyword retrieval completed",
 			"session_id", sessionID,
 			"keywords", keywords,

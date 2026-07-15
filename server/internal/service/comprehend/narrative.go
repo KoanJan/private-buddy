@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -158,14 +158,9 @@ func (nm *narrativeManager) run(ctx context.Context, sessionID, personID int64) 
 //
 // The agent's name and character settings are injected so the LLM generates the
 // narrative from that specific agent's perspective — not a generic rephrasing.
-const cachedNarrativePrompt = `You are %s.
-
-%s
+const cachedNarrativePrompt = `You are %s, %s.
 
 Rewrite the following conversation summary as a first-hand background narrative from YOUR perspective — as if you are recalling your own lived experience.
-
-Conversation summary:
-%s
 
 Requirements:
 1. Write in first-person perspective. You ARE the person who lived through this conversation.
@@ -180,7 +175,8 @@ IMPORTANT: The narrative MUST preserve the original language of the conversation
 - If the conversation contains multiple languages, the narrative may also contain multiple languages.
 - Do NOT translate between languages. Maintain information fidelity.
 
-Output only the narrative content.`
+Conversation summary:
+%s`
 
 // generateNarrativeFromSummary generates a cached narrative from summary content,
 // written from the perspective of the given agent.
@@ -192,11 +188,7 @@ func generateNarrativeFromSummary(ctx context.Context, llmConfig *model.LLMConfi
 		return ""
 	}
 
-	identityLine := fmt.Sprintf("Character settings: %s", ac.CharacterSettings)
-	if ac.CharacterSettings == "" {
-		identityLine = ""
-	}
-	prompt := fmt.Sprintf(cachedNarrativePrompt, service.GetAgentConfigName(ac.ID), identityLine, summaryContent)
+	prompt := fmt.Sprintf(cachedNarrativePrompt, dops.GetAgentConfigName(ac.ID), ac.CharacterSettings, summaryContent)
 
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureControlled)
 

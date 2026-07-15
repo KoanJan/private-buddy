@@ -239,9 +239,9 @@ export const kbApi = {
 
 /** API client for system-level LLM configuration. */
 export const systemLLMConfigApi = {
-  get: () => api.get<SystemLLMConfig>('/public-experiences/system-llm-config'),
+  get: () => api.get<SystemLLMConfig>('/system-llm-config'),
   update: (data: { llm_config_id: number }) =>
-    api.put<SystemLLMConfig>('/public-experiences/system-llm-config', data),
+    api.put<SystemLLMConfig>('/system-llm-config', data),
 };
 
 /** API client for public experience management. */

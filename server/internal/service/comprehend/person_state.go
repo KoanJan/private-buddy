@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -18,11 +18,6 @@ import (
 // The role context ensures the LLM correctly interprets the conversation as role-playing
 // rather than treating casual questions (e.g., "Are you asleep?") as needing real-time information.
 const personStateInferencePrompt = `You are %s, %s. You are inferring the current state of the person you are talking to.
-
-Based on the following recent conversation, infer the current state of the person you are talking to.
-
-Recent conversation:
-%s
 
 Analyze their emotional tone, conversational purpose, and any clues about their physical situation.
 
@@ -35,7 +30,10 @@ Also determine if their request requires interaction with the external world:
   answering questions, giving advice, explaining concepts, casual chat, 
   expressing opinions, or any response that only requires reasoning and language.
 
-IMPORTANT: You are the person named above(%s). Questions directed at you (e.g., "Are you asleep?", "How are you?", "What do you think?") are casual chat and do NOT require world interaction. Only set needs_world_interaction=true when the person explicitly asks you to perform actions that require tools or external data.`
+IMPORTANT: You are the person named above(%s). Questions directed at you (e.g., "Are you asleep?", "How are you?", "What do you think?") are casual chat and do NOT require world interaction. Only set needs_world_interaction=true when the person explicitly asks you to perform actions that require tools or external data.
+
+Recent conversation:
+%s`
 
 // PersonState represents the inferred person state from conversation context.
 //
@@ -106,7 +104,7 @@ func (ps *PersonState) ToNaturalLanguage(personName string) string {
 // formatRecentMessages formats recent messages into text for the inference prompt.
 // personName is the actual name of the other party, agentName is the agent's own name.
 func formatRecentMessages(recentMessages []model.Message, personName, agentName string) string {
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		applogger.Error("formatRecentMessages: failed to get current user person ID", "error", err)
 	}
@@ -117,7 +115,7 @@ func formatRecentMessages(recentMessages []model.Message, personName, agentName 
 		if userPersonID != 0 && msg.PersonID != userPersonID {
 			role = agentName
 		}
-		lines = append(lines, fmt.Sprintf("%s: %s", role, msg.Content))
+		lines = append(lines, fmt.Sprintf("%s [%s]: %s", role, msg.CreatedAt.Format("2006-01-02 15:04:05"), msg.Content))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -145,7 +143,7 @@ func InferPersonState(
 	chatModel := llm.NewChatModelWithTemperature(llmConfig.BaseURL, llmConfig.APIKey, llmConfig.ModelID, llm.TemperatureDeterministic)
 
 	dialogText := formatRecentMessages(recentMessages, personName, agentName)
-	prompt := fmt.Sprintf(personStateInferencePrompt, agentName, characterSettings, dialogText, agentName)
+	prompt := fmt.Sprintf(personStateInferencePrompt, agentName, characterSettings, agentName, dialogText)
 
 	// Inject active works context for self-awareness.
 	// When the agent knows what it is currently doing, it can correctly

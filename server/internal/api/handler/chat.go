@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/memory"
 
@@ -33,7 +33,6 @@ import (
 	"private-buddy-server/internal/api/response"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 // userFriendlyErrorMessage is the default error message shown to users on internal errors.
@@ -160,7 +159,7 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		agentConfigID = ac.ID
 	}
 
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		response.BadRequest(c, "No user profile found. Please set up your profile in Settings first.")
 		return
@@ -183,46 +182,9 @@ func (h *Handler) CreateAndSend(c *gin.Context) {
 		SessionID: session.ID,
 		PersonID:  userPersonID,
 		Content:   message,
-		Status:    model.MessageStatusCompleted,
 	}
 
-	// Create all session resources in a single transaction
-	err = database.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&session).Error; err != nil {
-			return err
-		}
-		userMsg.SessionID = session.ID
-
-		if err := tx.Create(&model.ParticipantSession{
-			SessionID:     session.ID,
-			ParticipantID: userPersonID,
-			Role:          model.ParticipantRoleOwner,
-			Status:        model.ParticipantStatusIdle,
-		}).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Create(&model.ParticipantSession{
-			SessionID:     session.ID,
-			ParticipantID: agentPersonID,
-			Role:          model.ParticipantRoleMember,
-			Status:        model.ParticipantStatusIdle,
-		}).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Select("SessionID", "PersonID", "Content", "Status").Create(&userMsg).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Model(&model.ParticipantSession{}).
-			Where("session_id = ? AND participant_id = ?", session.ID, userPersonID).
-			Update("last_read_message_id", userMsg.ID).Error; err != nil {
-			return err
-		}
-
-		return nil
-	})
+	err = dops.CreateSession(&session, &userMsg, userPersonID, agentPersonID)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return
@@ -271,7 +233,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		response.BadRequest(c, "No user profile found. Please set up your profile in Settings first.")
 		return
@@ -281,9 +243,8 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		SessionID: sessionID,
 		PersonID:  userPersonID,
 		Content:   message,
-		Status:    model.MessageStatusCompleted,
 	}
-	if err := database.DB.Select("SessionID", "PersonID", "Content", "Status").Create(&userMsg).Error; err != nil {
+	if err := dops.CreateMessage(&userMsg); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -295,14 +256,12 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	})
 
 	// Update user's last_read_message_id — user has seen all messages up to this point
-	if err := database.DB.Model(&model.ParticipantSession{}).
-		Where("session_id = ? AND participant_id = ?", sessionID, userPersonID).
-		Update("last_read_message_id", userMsg.ID).Error; err != nil {
+	if err := dops.UpdateLastReadMessageID(sessionID, userPersonID, userMsg.ID); err != nil {
 		applogger.Error("failed to update last_read_message_id on continue", "session_id", sessionID, "error", err)
 	}
 
 	// Send event to Agent Runtime — resolve AI participant from participant_sessions.
-	agentConfigID := resolveFirstAIAgentConfigID(sessionID)
+	agentConfigID := dops.GetFirstAgentConfigIDBySessionID(sessionID)
 	h.sendEventToRuntime(agentConfigID, sessionID, userMsg.ID, message)
 
 	response.Success(c, gin.H{
@@ -326,8 +285,8 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	var session model.Session
-	if err := database.DB.First(&session, sessionID).Error; err != nil {
+	_, err := dops.GetSession(sessionID)
+	if err != nil {
 		errorData, _ := json.Marshal(map[string]string{"type": "error", "message": "Session not found"})
 		c.SSEvent("", string(errorData))
 		return
@@ -373,7 +332,7 @@ func (h *Handler) sendEventToRuntime(agentConfigID, sessionID, messageID int64, 
 		Payload: &eventqueue.NewMessagePayload{
 			MessageID:      messageID,
 			MessageContent: messageContent,
-			SpeakerName:    service.GetUserName(),
+			SpeakerName:    dops.GetUserName(),
 		},
 	}
 	eventqueue.SendEvent(agentConfigID, event)
@@ -398,28 +357,25 @@ func (h *Handler) GetSessionAgents(c *gin.Context) {
 	}
 
 	// Find all AI participants in this session by joining persons table (type=1)
-	var participants []model.ParticipantSession
-	if err := database.DB.
-		Joins("JOIN persons ON persons.id = participant_sessions.participant_id AND persons.type = ?", model.PersonTypeAI).
-		Where("participant_sessions.session_id = ?", sessionID).
-		Find(&participants).Error; err != nil {
+	participants, err := dops.ListAIParticipants(sessionID)
+	if err != nil {
 		response.InternalError(c, "failed to query participants")
 		return
 	}
 
+	// todo avatart should be in person table
 	result := make([]sessionAgentStatus, 0, len(participants))
 	for _, p := range participants {
-		// Find agent by PersonID
-		var ac model.AgentConfig
-		if err := database.DB.Where("person_id = ?", p.ParticipantID).First(&ac).Error; err != nil {
+		person, err := dops.GetPerson(p.ParticipantID)
+		if err != nil {
 			applogger.Error("failed to find agent by person ID for session participants", "person_id", p.ParticipantID, "error", err)
 			continue
 		}
 
 		result = append(result, sessionAgentStatus{
 			AgentID: p.ParticipantID,
-			Name:    service.GetAgentConfigName(ac.ID),
-			Avatar:  ac.Avatar,
+			Name:    person.Name,
+			Avatar:  person.Avatar,
 			Status:  p.Status, // Read directly from ParticipantSession.Status
 		})
 	}

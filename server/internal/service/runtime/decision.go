@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/llm"
@@ -91,13 +91,9 @@ type DecisionResult struct {
 
 // decidePromptTemplate is the LLM prompt template for decision making.
 // Parameters: agent_name, agent_description, message_content, comprehension_context, active_works_context
-const decidePromptTemplate = `You are %s, deciding how to respond to an incoming event.
+const decidePromptTemplate = `You are %s, %s. Your job is to decide how to handle incoming events.
 
-Role description: %s
-
-Event: %s
-
-%s%sDecide what to do with this event. Return a list of actions — each action is independent and self-contained.
+Decide what to do with this event. Return a list of actions — each action is independent and self-contained.
 
 Action types (use the integer value for the "type" field):
 1. 0 (create) — Create new work plan(s). Use when the event is a new request or topic.
@@ -130,6 +126,12 @@ Decision rules (apply in order):
 2. If the event refers to an active work listed above (correction, follow-up, cancellation of an ONGOING work), use type=1 (route) or type=2 (cancel) with the corresponding work ID.
 3. If the comprehension says "needs world interaction: false" and no active work is relevant, create a single chat work (type=0 with work_plan.type=1).
 4. When in doubt and no comprehension hint is available, prefer a single chat work.
+
+---
+
+Event: %s
+
+%s%s
 
 Write background, guidance, reason, and plan in the same language as the event content.`
 
@@ -246,12 +248,12 @@ func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, ac *model.
 	activeWorksContext := buildActiveWorksContext(sameSessionWorks)
 
 	agentDescription := ac.CharacterSettings
-	person, err := service.GetPerson(ac.PersonID)
+	person, err := dops.GetPerson(ac.PersonID)
 	if err == nil && person.Bio != "" {
 		agentDescription = person.Bio
 	}
 
-	prompt := fmt.Sprintf(decidePromptTemplate, service.GetAgentConfigName(ac.ID), agentDescription, eventDescription, comprehensionContext, activeWorksContext)
+	prompt := fmt.Sprintf(decidePromptTemplate, dops.GetAgentConfigName(ac.ID), agentDescription, eventDescription, comprehensionContext, activeWorksContext)
 
 	// Active work IDs are listed in the prompt via buildActiveWorksContext so the
 	// LLM knows which values are valid for target_work_id. We do NOT use schema enum
@@ -287,6 +289,7 @@ func decideWithLLM(ctx context.Context, event *eventqueue.AgentEvent, ac *model.
 		applogger.Error("Decision LLM output parse failed, ignoring",
 			"agent_config_id", ac.ID,
 			"error", err,
+			"raw_output", result,
 		)
 		return DecisionResult{}
 	}

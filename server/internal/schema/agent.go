@@ -7,16 +7,8 @@ import (
 	"private-buddy-server/internal/model"
 )
 
-// AgentConfigBase contains the common fields shared by agent config create and update schemas.
-type AgentConfigBase struct {
-	CharacterSettings string  `json:"character_settings"`
-	LLMConfigID       int64   `json:"llm_config_id" binding:"required"`
-	Avatar            string  `json:"avatar"`
-	KnowledgeBaseIDs  []int64 `json:"knowledge_base_ids"`
-}
-
-// AgentConfigCreate represents the input for creating an agent config.
-type AgentConfigCreate struct {
+// AgentCreate represents the input for creating an agent config.
+type AgentCreate struct {
 	Name              string  `json:"name" binding:"required"`
 	Description       string  `json:"description"`
 	CharacterSettings string  `json:"character_settings"`
@@ -25,9 +17,8 @@ type AgentConfigCreate struct {
 	KnowledgeBaseIDs  []int64 `json:"knowledge_base_ids"`
 }
 
-// AgentConfigUpdate allows updating mutable agent config fields and person-level fields.
-type AgentConfigUpdate struct {
-	Name              *string  `json:"name"`
+// AgentUpdate allows updating mutable agent config fields and person-level fields.
+type AgentUpdate struct {
 	Bio               *string  `json:"bio"`
 	CharacterSettings *string  `json:"character_settings"`
 	LLMConfigID       *int64   `json:"llm_config_id"`
@@ -85,7 +76,7 @@ func NewAgentResponse(m *model.AgentConfig, person *model.Person) *AgentResponse
 		Bio:               bio,
 		CharacterSettings: m.CharacterSettings,
 		LLMConfigID:       m.LLMConfigID,
-		Avatar:            m.Avatar,
+		Avatar:            person.Avatar,
 		KnowledgeBaseIDs:  kbIDs,
 		CreatedAt:         m.CreatedAt,
 		UpdatedAt:         m.UpdatedAt,
@@ -116,7 +107,7 @@ func NewSessionBriefList(entities []model.Session) []SessionBrief {
 }
 
 // BuildUpdates builds a map of non-nil update fields from AgentConfigUpdate.
-func (req *AgentConfigUpdate) BuildUpdates() map[string]interface{} {
+func (req *AgentUpdate) BuildUpdates() map[string]interface{} {
 	updates := make(map[string]interface{})
 	if req.CharacterSettings != nil {
 		updates["character_settings"] = *req.CharacterSettings

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/llm"
 
@@ -26,24 +26,22 @@ import (
 //     to preserve narrative flow while guiding response strategy
 //   - Guidance (from Decide phase) placed after person state, before response directive,
 //     representing the agent's self-instruction on what to do
-const oneBigMessageTemplate = `%s%s%sBackground context from earlier in the conversation (messages 1-%d):
+const oneBigMessageTemplate = `%s%sBackground context from earlier in the conversation:
 
 %s
 
-%s---
-
-Recent conversation (messages %d-%d):
+Recent conversation:
 
 %s
 
 ---
 
-%s%s%sRespond to the person you are talking to. Use the same language as the conversation. Do not use parenthetical action descriptions or non-verbal content.`
+%s%s%s%sRespond to the person you are talking to. Use the same language as the conversation. Do not use parenthetical action descriptions or non-verbal content.`
 
 // Template for simple context without background story (V < N case).
 // Used when there are not enough messages to generate a summary.
 // Segments section is included when KB-retrieved content is available.
-const oneBigMessageNoStoryTemplate = `%s%s%sConversation record (messages %d-%d):
+const oneBigMessageNoStoryTemplate = `%s%sConversation record:
 
 %s
 
@@ -175,8 +173,6 @@ func formatTaskResultSection(taskResult *TaskResultForAssembly) string {
 //   - recentMessages: recent completed messages (including trigger_message as the latest)
 //   - relevantSegments: RAG-retrieved historical segments (independent section)
 //   - summaryVersion: version number of the summary (covers messages 1 to summaryVersion)
-//   - recentStart: starting message sequence number for recent messages
-//   - recentEnd: ending message sequence number for recent messages
 //   - personStateDescription: natural language description of inferred person state,
 //     placed in instruction area to guide response strategy
 //   - taskResult: agent execution result for world-interaction tasks,
@@ -185,14 +181,11 @@ func formatTaskResultSection(taskResult *TaskResultForAssembly) string {
 //     after person state and before the response directive
 func AssembleContext(
 	characterSettings string,
-	memories string,
 	entityProfiles string,
 	backgroundStory string,
 	recentMessages []model.Message,
 	relevantSegments []comprehend.Segment,
 	summaryVersion int,
-	recentStart int,
-	recentEnd int,
 	personStateDescription string,
 	taskResult *TaskResultForAssembly,
 	userName string,
@@ -205,7 +198,7 @@ func AssembleContext(
 
 	userRole := userName
 
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		applogger.Error("AssembleContext: failed to get current user person ID", "error", err)
 	}
@@ -225,14 +218,10 @@ func AssembleContext(
 	if backgroundStory != "" && summaryVersion != -1 {
 		oneBigMessage = fmt.Sprintf(oneBigMessageTemplate,
 			characterSection,
-			memories,
 			entityProfiles,
-			summaryVersion,
 			backgroundStory,
-			segmentsSection,
-			recentStart,
-			recentEnd,
 			dialogSection,
+			segmentsSection,
 			taskResultSection,
 			personStateInstruction,
 			guidanceSection,
@@ -240,10 +229,7 @@ func AssembleContext(
 	} else {
 		oneBigMessage = fmt.Sprintf(oneBigMessageNoStoryTemplate,
 			characterSection,
-			memories,
 			entityProfiles,
-			recentStart,
-			recentEnd,
 			dialogSection,
 			segmentsSection,
 			taskResultSection,

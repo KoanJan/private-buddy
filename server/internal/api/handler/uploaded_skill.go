@@ -2,7 +2,7 @@ package handler
 
 import (
 	"private-buddy-server/internal/api/response"
-	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
 
@@ -14,11 +14,11 @@ import (
 func (h *Handler) GetUploadedSkill(c *gin.Context) {
 	id := getPathID(c)
 
-	var entity model.UploadedSkill
-	if err := database.DB.First(&entity, id).Error; err != nil {
+	entity, err := dops.Get[model.UploadedSkill](id)
+	if err != nil {
 		handleNotFound(c, "Uploaded skill", id)
 		return
 	}
 
-	response.Success(c, schema.NewUploadedSkillResponse(&entity))
+	response.Success(c, schema.NewUploadedSkillResponse(entity))
 }

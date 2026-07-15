@@ -17,13 +17,21 @@ import (
 
 	"private-buddy-server/internal/config"
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/schema"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	_ "github.com/glebarez/go-sqlite/compat"
+)
+
+const (
+	// DefaultEmbeddingDim is the default embedding vector dimension (e.g., text-embedding-3-large).
+	DefaultEmbeddingDim = 1536
+
+	// DefaultSearchTopK is the default number of top results returned by KB search.
+	DefaultSearchTopK = 5
 )
 
 var (
@@ -231,7 +239,7 @@ func processDocument(ctx context.Context, kbID, docID int64) {
 		return
 	}
 
-	embConfig := service.GetEmbeddingConfig()
+	embConfig := dops.GetEmbeddingConfig()
 	if embConfig == nil {
 		if err := database.DB.Model(&model.Document{}).Where("id = ?", docID).Updates(map[string]interface{}{
 			"status":        model.DocumentStatusFailed,

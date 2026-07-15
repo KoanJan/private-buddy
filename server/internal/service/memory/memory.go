@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/llm"
 
 	applogger "private-buddy-server/internal/logger"
@@ -80,7 +80,7 @@ func ingestMessage(ctx context.Context, messageID, sessionID int64, content stri
 	// Agents are identified by Person type=AI via join with persons table.
 	var participants []model.ParticipantSession
 	var partErr error
-	participants, partErr = service.GetSessionParticipantsByPersonType(sessionID, model.PersonTypeAI)
+	participants, partErr = dops.GetSessionParticipantsByPersonType(sessionID, model.PersonTypeAI)
 	if partErr != nil {
 		applogger.Error("failed to load participants for observation creation", "session_id", sessionID, "error", partErr)
 		return

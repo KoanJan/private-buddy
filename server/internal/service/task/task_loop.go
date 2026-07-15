@@ -14,9 +14,6 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-// defaultMaxIterations is the default maximum number of ReAct loop iterations.
-const defaultMaxIterations = 90
-
 // hardOutputLimit is the system-level byte fallback threshold for tool outputs.
 // If a tool's total output exceeds this, the content is discarded and replaced
 // with a notice. This is a safety net only — tools are expected to self-truncate
@@ -164,44 +161,28 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 
 		switch finishReason {
 		case "stop":
-			contentPreview := content
-			if len(contentPreview) > 500 {
-				contentPreview = contentPreview[:500]
-			}
 			applogger.Debug("TaskLoop LLM response",
 				"finish_reason", "stop",
-				"content", contentPreview,
+				"content", content,
 			)
 		case "tool_calls":
 			tcSummary := make([]map[string]interface{}, 0, len(toolCalls))
 			for _, tc := range toolCalls {
-				argsPreview := tc.Function.Arguments
-				if len(argsPreview) > 200 {
-					argsPreview = argsPreview[:200]
-				}
 				tcSummary = append(tcSummary, map[string]interface{}{
 					"id":   tc.ID,
 					"name": tc.Function.Name,
-					"args": argsPreview,
+					"args": tc.Function.Arguments,
 				})
-			}
-			contentPreview := content
-			if len(contentPreview) > 500 {
-				contentPreview = contentPreview[:500]
 			}
 			applogger.Debug("TaskLoop LLM response",
 				"finish_reason", "tool_calls",
-				"content", contentPreview,
+				"content", content,
 				"tool_calls", fmt.Sprintf("%v", tcSummary),
 			)
 		case "length":
-			contentPreview := content
-			if len(contentPreview) > 500 {
-				contentPreview = contentPreview[:500]
-			}
 			applogger.Debug("TaskLoop LLM response",
 				"finish_reason", "length",
-				"content", contentPreview,
+				"content", content,
 			)
 		}
 
@@ -327,7 +308,11 @@ func (tl *TaskLoop) observeNewGuidance(iteration int) {
 				"reason":   directive.Reason,
 			})
 
-			// 2. Inject as an observation in the ReAct cycle.
+			// 2. Record in guidance history — persists in the last user message
+			// across all iterations, never dropped by the dynamic window.
+			tl.contextManager.AddGuidance(directive.Guidance, directive.Reason)
+
+			// 3. Inject as an observation in the ReAct cycle.
 			// Both guidance (what to do) and reason (why) are included so the
 			// LLM has the full cognitive context, not just the bare directive.
 			tl.contextManager.AddIteration(llm.Message{

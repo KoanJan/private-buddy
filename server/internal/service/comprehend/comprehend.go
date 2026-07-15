@@ -6,9 +6,9 @@ import (
 	"sync"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/kb"
 	"private-buddy-server/internal/service/llm"
@@ -152,7 +152,7 @@ func Comprehend(
 				ac.CharacterSettings,
 				sessionInfo.WindowSize,
 				sessionInfo.UserName,
-				service.GetAgentConfigName(ac.ID),
+				dops.GetAgentConfigName(ac.ID),
 			)
 			// Extract preprocessing results
 			result.ProcessedQuery = preprocessingResult.ProcessedQuery
@@ -170,7 +170,7 @@ func Comprehend(
 					query = result.ProcessedQuery
 				}
 
-				kbResults, err := kb.SearchMultiKB(ctx, sessionInfo.KBIDs, query, 5)
+				kbResults, err := kb.SearchMultiKB(ctx, sessionInfo.KBIDs, query, kb.DefaultSearchTopK)
 				if err != nil {
 					applogger.Error("Comprehend: KB retrieval failed",
 						"session_id", sessionInfo.SessionID,
@@ -197,14 +197,13 @@ func Comprehend(
 		recentMessagesForState := GetRecentMessages(
 			sessionInfo.SessionID,
 			min(int(sessionInfo.MessageCount), sessionInfo.WindowSize),
-			model.MessageStatusCompleted,
 		)
 		result.PersonState = InferPersonState(
 			ctx,
 			llmConfig,
 			recentMessagesForState,
 			sessionInfo.UserName,
-			service.GetAgentConfigName(ac.ID),
+			dops.GetAgentConfigName(ac.ID),
 			ac.CharacterSettings,
 			result.ActiveWorksSummary,
 		)
@@ -248,7 +247,7 @@ func getPreprocessingHistory(sessionID int64, limit int) []llm.Message {
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 
-	userPersonID, err := service.GetCurrentUserPersonID()
+	userPersonID, err := dops.GetCurrentUserPersonID()
 	if err != nil {
 		applogger.Error("getPreprocessingHistory: failed to get current user person ID", "error", err)
 	}
@@ -273,13 +272,13 @@ func buildSessionInfo(sessionID int64, ac *model.AgentConfig) *SessionInfo {
 	info := &SessionInfo{
 		SessionID:  sessionID,
 		WindowSize: 50, // Default window size
-		UserName:   service.GetUserName(),
+		UserName:   dops.GetUserName(),
 	}
 
 	// Get message count for this session
 	var messageCount int64
 	if err := database.DB.Model(&model.Message{}).
-		Where("session_id = ? AND status = ?", sessionID, model.MessageStatusCompleted).
+		Where("session_id = ?", sessionID).
 		Count(&messageCount).Error; err != nil {
 		applogger.Error("buildSessionInfo: failed to count messages",
 			"session_id", sessionID, "error", err,

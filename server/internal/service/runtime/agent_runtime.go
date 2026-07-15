@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"private-buddy-server/internal/database"
+	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service"
 	"private-buddy-server/internal/service/comprehend"
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/task"
@@ -216,12 +216,12 @@ func (r *agentRuntime) Run(ctx context.Context) {
 			// Decision: how should the agent respond to this event?
 			// After the cognitive order refactoring, we Comprehend first,
 			// then Decide based on the comprehension results.
-			ac, err := service.GetAgentConfig(r.agentConfigID)
+			ac, err := dops.Get[model.AgentConfig](r.agentConfigID)
 			if err != nil {
 				applogger.Error("Failed to load agent config in handleEvent", "agent_config_id", r.agentConfigID, "error", err)
 				continue
 			}
-			llmConfig, err := service.GetLLMConfig(ac.LLMConfigID)
+			llmConfig, err := dops.GetLLMConfig(ac.LLMConfigID)
 			if err != nil {
 				applogger.Error("Failed to load LLM config in handleEvent", "agent_config_id", r.agentConfigID, "llm_config_id", ac.LLMConfigID, "error", err)
 				continue
@@ -659,7 +659,7 @@ func createAgentRuntime(agentConfigID int64, onStatusChange func(agentConfigID, 
 	runtime := newAgentRuntime(agentConfigID, eventCh, 30*time.Second, onStatusChange)
 
 	// Resolve agent's PersonID for participant_session queries
-	ac, err := service.GetAgentConfig(agentConfigID)
+	ac, err := dops.Get[model.AgentConfig](agentConfigID)
 	if err != nil {
 		return nil, fmt.Errorf("createAgentRuntime: failed to load agent config %d: %w", agentConfigID, err)
 	}

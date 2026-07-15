@@ -78,11 +78,21 @@ func runDarwin(workspace string, personID, sessionID int64, cmd []string) (*exec
 		strconv.FormatInt(personID, 10), strconv.FormatInt(sessionID, 10))
 	policyPath := filepath.Join(policyDir, "sandbox.sb")
 
+	// Resolve to absolute path: the bash tool sets cmd.Dir to the output
+	// directory, so a relative policy path would resolve incorrectly when
+	// sandbox-exec runs in that working directory.
+	absPolicyPath, err := filepath.Abs(policyPath)
+	if err != nil {
+		applogger.Error("sandbox: failed to resolve absolute policy path, falling back to plain exec",
+			"path", policyPath, "error", err)
+		return fallbackExec(cmd), false, nil
+	}
+
 	// Generate policy file once per session
-	if _, err := os.Stat(policyPath); err != nil {
+	if _, err := os.Stat(absPolicyPath); err != nil {
 		if !os.IsNotExist(err) {
 			applogger.Error("sandbox: failed to stat policy file, falling back to plain exec",
-				"path", policyPath, "error", err)
+				"path", absPolicyPath, "error", err)
 			return fallbackExec(cmd), false, nil
 		}
 		if err := os.MkdirAll(policyDir, 0700); err != nil {
@@ -91,16 +101,16 @@ func runDarwin(workspace string, personID, sessionID int64, cmd []string) (*exec
 			return fallbackExec(cmd), false, nil
 		}
 		policy := generatePolicy(workspace)
-		if err := os.WriteFile(policyPath, []byte(policy), 0600); err != nil {
+		if err := os.WriteFile(absPolicyPath, []byte(policy), 0600); err != nil {
 			applogger.Error("sandbox: failed to write policy file, falling back to plain exec",
-				"path", policyPath, "error", err)
+				"path", absPolicyPath, "error", err)
 			return fallbackExec(cmd), false, nil
 		}
 		applogger.Info("sandbox: generated Seatbelt policy",
-			"path", policyPath, "workspace", workspace)
+			"path", absPolicyPath, "workspace", workspace)
 	}
 
-	sandboxArgs := []string{"-f", policyPath, "bash", "-c", strings.Join(cmd, " ")}
+	sandboxArgs := []string{"-f", absPolicyPath, "bash", "-c", strings.Join(cmd, " ")}
 	applogger.Debug("sandbox: active — Seatbelt (sandbox-exec)")
 	return exec.Command("/usr/bin/sandbox-exec", sandboxArgs...), true, nil
 }

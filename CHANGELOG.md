@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.32] - 2026-07-16
+
+### Changed
+- **Prompt Cache Optimization**: restructured prompt templates across all LLM call sites — static instructions front-loaded, dynamic content moved to end; task loop sliding window replaced with dynamic shrink anchor strategy, guidance history now persisted independently
+
+
 ## [0.0.31] - 2026-07-13
 
 ### Changed

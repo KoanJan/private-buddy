@@ -22,7 +22,6 @@ func SetupRouter() *gin.Engine {
 	r.Use(middleware.CORS())
 
 	h := handler.NewHandler()
-	kbHandler := handler.NewKBHandler()
 
 	r.GET("/", h.Root)
 	r.GET("/api/version", h.GetVersion)
@@ -74,17 +73,16 @@ func SetupRouter() *gin.Engine {
 
 		agents := api.Group("/agents")
 		{
-			agents.POST("", middleware.RequireEmbedding, h.CreateAgentConfig)
-			agents.GET("", h.ListAgentConfigs)
+			agents.POST("", middleware.RequireEmbedding, h.CreateAgent)
+			agents.GET("", h.ListAgents)
 			agents.GET("/with-sessions", h.ListAgentConfigsWithSessions)
-			agents.GET("/:id", h.GetAgentConfig)
-			agents.PUT("/:id", h.UpdateAgentConfig)
-			agents.DELETE("/:id", h.DeleteAgentConfig)
+			agents.GET("/:id", h.GetAgent)
+			agents.PUT("/:id", h.UpdateAgent)
+			agents.DELETE("/:id", h.DeleteAgent)
 		}
 
 		sessions := api.Group("/sessions")
 		{
-			sessions.POST("", middleware.RequireEmbedding, h.CreateSession)
 			sessions.GET("", h.ListSessions)
 			sessions.GET("/:id", h.GetSession)
 			sessions.GET("/:id/activities", h.GetSessionActivities)
@@ -119,16 +117,19 @@ func SetupRouter() *gin.Engine {
 			uploads.POST("/avatar", h.UploadAvatar)
 		}
 
+		systemLLMConfig := api.Group("/system-llm-config")
+		{
+			systemLLMConfig.GET("", h.GetSystemLLMConfigHandler)
+			systemLLMConfig.PUT("", h.UpdateSystemLLMConfigHandler)
+		}
+
 		publicExperiences := api.Group("/public-experiences")
 		{
 			publicExperiences.GET("", h.ListPublicExperiences)
 			publicExperiences.GET("/:id", h.GetPublicExperience)
 			publicExperiences.DELETE("/:id", h.DeletePublicExperience)
 			publicExperiences.POST("/ingest", middleware.RequireSystemLLM, h.IngestPublicExperience)
-			publicExperiences.POST("/search", h.SearchPublicExperiences)
 			publicExperiences.POST("/:id/redistill", middleware.RequireSystemLLM, h.RedistillPublicExperience)
-			publicExperiences.GET("/system-llm-config", h.GetSystemLLMConfigHandler)
-			publicExperiences.PUT("/system-llm-config", h.UpdateSystemLLMConfigHandler)
 		}
 
 		uploadedSkills := api.Group("/uploaded-skills")
@@ -138,17 +139,17 @@ func SetupRouter() *gin.Engine {
 
 		kbGroup := api.Group("/kb")
 		{
-			kbGroup.POST("", middleware.RequireEmbedding, kbHandler.CreateKnowledgeBase)
-			kbGroup.GET("", kbHandler.ListKnowledgeBases)
-			kbGroup.GET("/:id", kbHandler.GetKnowledgeBase)
-			kbGroup.PUT("/:id", kbHandler.UpdateKnowledgeBase)
-			kbGroup.DELETE("/:id", kbHandler.DeleteKnowledgeBase)
-			kbGroup.GET("/:id/documents", kbHandler.ListDocuments)
-			kbGroup.POST("/:id/documents", kbHandler.UploadDocument)
-			kbGroup.GET("/:id/documents/:doc_id", kbHandler.GetDocument)
-			kbGroup.DELETE("/:id/documents/:doc_id", kbHandler.DeleteDocument)
-			kbGroup.POST("/:id/search", kbHandler.SearchKB)
-			kbGroup.POST("/search", kbHandler.SearchMultiKB)
+			kbGroup.POST("", middleware.RequireEmbedding, h.CreateKnowledgeBase)
+			kbGroup.GET("", h.ListKnowledgeBases)
+			kbGroup.GET("/:id", h.GetKnowledgeBase)
+			kbGroup.PUT("/:id", h.UpdateKnowledgeBase)
+			kbGroup.DELETE("/:id", h.DeleteKnowledgeBase)
+			kbGroup.GET("/:id/documents", h.ListDocuments)
+			kbGroup.POST("/:id/documents", h.UploadDocument)
+			kbGroup.GET("/:id/documents/:doc_id", h.GetDocument)
+			kbGroup.DELETE("/:id/documents/:doc_id", h.DeleteDocument)
+			kbGroup.POST("/:id/search", h.SearchKB)
+			kbGroup.POST("/search", h.SearchMultiKB)
 		}
 	}
 
