@@ -118,8 +118,8 @@ Important: "Active works" only includes works currently running. If the event re
 If no action is needed, return an empty actions list.
 
 You can return multiple actions. Examples (note: IDs in examples are placeholders; always use the actual work IDs from "Active works" above):
-- Cancel an old task and create a new one: [{"type":2, "target_work_id":<ID from Active works>, "guidance":"I should save my progress and stop", "reason":"They said 'stop searching' — they want a direct answer instead"}, {"type":0, "work_plan":{"type":1, "background":"Alice just told me to stop searching and give a direct answer. She originally asked about X.","guidance":"I stopped searching and now I should give them a direct answer about X..."}}]
-- Route a follow-up to an existing work: [{"type":1, "target_work_id":<ID from Active works>, "guidance":"I should switch from Python to Go", "reason":"They said 'use Go instead' — they want the same task done in a different language"}]
+- Cancel an old task and create a new one: [{"type":2, "work_guidance":{"target_work_id":<ID from Active works>, "guidance":"I should save my progress and stop", "reason":"They said 'stop searching' — they want a direct answer instead"}}, {"type":0, "work_plan":{"type":1, "background":"Alice just told me to stop searching and give a direct answer. She originally asked about X.","guidance":"I stopped searching and now I should give them a direct answer about X..."}}]
+- Route a follow-up to an existing work: [{"type":1, "work_guidance":{"target_work_id":<ID from Active works>, "guidance":"I should switch from Python to Go", "reason":"They said 'use Go instead' — they want the same task done in a different language"}}]
 
 Decision rules (apply in order):
 1. If the comprehension says "needs world interaction: true", the event requires tool usage or multi-step execution. Create a task work (type=0 with work_plan.type=2). If a direct response is also expected, create both chat + task in parallel.
