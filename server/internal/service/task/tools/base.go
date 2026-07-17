@@ -87,4 +87,9 @@ type Tool interface {
 	Schema() llm.FunctionDefinition
 	// Execute runs the tool with the given arguments and returns the result as a string.
 	Execute(args map[string]interface{}) (string, error)
+	// CycleDetect checks for cyclical patterns after each call.
+	// Each tool defines its own "sameness" semantics and manages its own
+	// detection state. Returns a warning to append to the result, and
+	// whether the tool should be blocked (triggering a forced checkpoint).
+	CycleDetect(args map[string]interface{}, result string) CycleStatus
 }

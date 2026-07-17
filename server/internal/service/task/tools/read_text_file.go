@@ -21,8 +21,9 @@ import (
 //   - Binary files are rejected (extension blacklist + null-byte sniffing)
 //   - Files larger than 10MB are rejected
 type ReadTextFileTool struct {
-	personID  int64
-	sessionID int64
+	personID      int64
+	sessionID     int64
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewReadTextFileTool creates a ReadTextFileTool bound to the given person and session.

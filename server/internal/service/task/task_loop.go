@@ -52,6 +52,8 @@ type TaskLoop struct {
 	checkpointClient *llm.ChatModel              // Lazy-initialized LLM client for checkpoint iterations
 	lastNotesIter    int                         // Last iteration where write_notes was called (voluntary or forced)
 	guidanceCh       <-chan GuidanceDirective    // Channel for observing new guidance during execution
+	forceCheckpoint  bool                        // Set by cycle detection to force a checkpoint
+	blockReason      string                      // Reason for forced checkpoint (from cycle detection)
 }
 
 // NewTaskLoop creates a new TaskLoop instance.
@@ -116,6 +118,13 @@ func (tl *TaskLoop) Run(ctx context.Context) *LoopResult {
 				"iteration", iteration,
 			)
 			return &LoopResult{Status: "failure", Reason: "task cancelled"}
+		}
+
+		// If cycle detection triggered a forced checkpoint, run it now.
+		// The agent must reflect on the cycle and write notes before the work terminates.
+		if tl.forceCheckpoint {
+			result := tl.runCycleBlockedCheckpoint(ctx, iteration, tl.blockReason)
+			return result
 		}
 
 		// Observe new guidance from the channel at each iteration boundary.
@@ -561,6 +570,94 @@ This will help you continue work if changes are requested later.`
 	applogger.Info("Notes updated on task stop")
 }
 
+// runCycleBlockedCheckpoint handles the forced checkpoint triggered by cycle detection.
+//
+// When a tool's CycleDetect returns Blocked=true, the task loop enters this
+// special checkpoint mode instead of continuing normal execution. Only
+// write_notes is available. The agent is asked to reflect on why it was
+// blocked and record its findings, then the work terminates with failure.
+//
+// Unlike regular checkpoints (which continue the loop), a cycle-blocked
+// checkpoint always ends the work — the agent cannot retry the same
+// approach that caused the cycle.
+func (tl *TaskLoop) runCycleBlockedCheckpoint(ctx context.Context, iteration int, reason string) *LoopResult {
+	applogger.Info("Running cycle-blocked checkpoint",
+		"iteration", iteration,
+		"reason", reason,
+	)
+
+	if tl.writeNotesTool == nil {
+		return &LoopResult{Status: "failure", Reason: reason}
+	}
+
+	if tl.checkpointClient == nil {
+		tl.checkpointClient = llm.NewChatModelWithTemperature(tl.llmConfig.BaseURL, tl.llmConfig.APIKey, tl.llmConfig.ModelID, llm.TemperatureCreative)
+	}
+
+	messages := tl.contextManager.BuildMessages()
+
+	checkpointMsg := fmt.Sprintf(`[Cycle Detection - Forced Checkpoint]
+You have been repeating the same actions without making progress.
+The system detected a cycle: %s
+
+You must stop and reflect on what happened:
+1. What were you trying to do?
+2. Why did it keep failing or returning the same result?
+3. What alternative approaches could work?
+
+Use write_notes to record your reflection. This is the ONLY tool available.
+The task will end after you save your notes.`, reason)
+
+	messagesWithCheckpoint := append(messages, llm.Message{
+		Role:    "user",
+		Content: checkpointMsg,
+	})
+
+	tl.weakWriteInteraction(iteration, model.InteractionTypeRequest, map[string]interface{}{
+		"messages":      messagesWithCheckpoint,
+		"is_checkpoint": true,
+		"cycle_blocked": true,
+	})
+
+	toolDefs := []llm.FunctionDefinition{tl.writeNotesTool.Schema()}
+	response, err := tl.checkpointClient.ChatWithTools(ctx, messagesWithCheckpoint, toolDefs)
+	if err != nil {
+		applogger.Error("Cycle-blocked checkpoint LLM error", "error", err)
+		return &LoopResult{Status: "failure", Reason: reason}
+	}
+
+	finishReason := response.FinishReason
+	content := response.Content
+	toolCalls := response.ToolCalls
+
+	tl.weakWriteInteraction(iteration, model.InteractionTypeResponse, map[string]interface{}{
+		"content":       content,
+		"tool_calls":    toolCalls,
+		"finish_reason": finishReason,
+		"is_checkpoint": true,
+		"cycle_blocked": true,
+	})
+
+	if finishReason == "tool_calls" {
+		for _, tc := range toolCalls {
+			if tc.Function.Name != tools.ToolNameWriteNotes.String() {
+				continue
+			}
+			var args map[string]interface{}
+			json.Unmarshal([]byte(tc.Function.Arguments), &args)
+			tl.writeNotesTool.Execute(args)
+		}
+		tl.contextManager.RefreshNotes(tl.writeNotesTool.ReadNotes())
+	}
+
+	applogger.Info("Cycle-blocked checkpoint completed", "iteration", iteration)
+
+	return &LoopResult{
+		Status: "failure",
+		Reason: fmt.Sprintf("Task terminated due to detected cycle: %s. Notes have been saved for next execution.", reason),
+	}
+}
+
 // invokeLLM calls the LLM with the current messages and all registered tools.
 // Converts internal message format and binds tool schemas.
 func (tl *TaskLoop) invokeLLM(ctx context.Context, messages []llm.Message) (llm.ToolResponse, error) {
@@ -618,6 +715,21 @@ func (tl *TaskLoop) executeToolCall(tc llm.ToolCall) llm.Message {
 		result = fmt.Sprintf(
 			"[OUTPUT TOO LARGE: %d bytes. This tool did not truncate its own output. "+
 				"Use a more targeted command or smaller scope.]", len(result))
+	}
+
+	// Cycle detection: check for cyclical patterns after each tool call.
+	// The tool manages its own detection state and defines its own "sameness" semantics.
+	cs := tool.CycleDetect(args, result)
+	if cs.Warning != "" {
+		result += "\n" + cs.Warning
+	}
+	if cs.Blocked {
+		tl.forceCheckpoint = true
+		tl.blockReason = cs.Reason
+		applogger.Info("Cycle detection: forced checkpoint triggered",
+			"tool", toolName,
+			"reason", cs.Reason,
+		)
 	}
 
 	return llm.Message{

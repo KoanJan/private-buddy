@@ -18,7 +18,8 @@ const defaultSearchNumResults = 5
 // Currently supports Tavily as the search provider.
 // Returns a list of search results with title, URL, and snippet.
 type WebSearchTool struct {
-	searchConfig *model.SearchConfig // Search configuration containing provider and API key
+	searchConfig  *model.SearchConfig // Search configuration containing provider and API key
+	CycleDetector                     // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewWebSearchTool creates a WebSearchTool with the given search configuration.

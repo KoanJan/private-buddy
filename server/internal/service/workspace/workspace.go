@@ -3,7 +3,7 @@
 // The workspace layout is:
 //
 //	{workspaceRoot}/{person_id}/{session_id}/
-//	  ├── .meta/       — system-managed files (notes.md, fingerprint.txt)
+//	  ├── .meta/       — system-managed files (notes.jsonl, fingerprint.txt)
 //	  ├── output/      — agent's working output directory (read-write)
 //	  └── received/    — files delivered from other persons (read-only copies)
 //	      ├── delivery_1/
@@ -20,8 +20,6 @@ import (
 	"strconv"
 
 	"private-buddy-server/internal/config"
-
-	applogger "private-buddy-server/internal/logger"
 )
 
 // getRoot returns the workspace root directory resolved to an absolute path,
@@ -59,18 +57,12 @@ func GetReceivedDir(personID, sessionID int64) string {
 	return filepath.Join(GetWorkspacePath(personID, sessionID), "received")
 }
 
-// InitWorkspace creates the workspace directory structure for a session and
-// initializes notes.md if it doesn't exist. Returns the workspace path.
+// InitWorkspace creates the workspace directory structure for a session.
+// Notes (notes.jsonl) are created on first write, not pre-initialized.
 func InitWorkspace(personID, sessionID int64) string {
 	ws := GetWorkspacePath(personID, sessionID)
 	metaDir := filepath.Join(ws, ".meta")
 	os.MkdirAll(metaDir, 0755)
-
-	notesFile := filepath.Join(metaDir, "notes.md")
-	if _, err := os.Stat(notesFile); err != nil {
-		applogger.Error("failed to stat notes file, attempting to create", "file", notesFile, "error", err)
-		os.WriteFile(notesFile, []byte("# Work Notes\n\nStructured log of work progress.\n\n"), 0644)
-	}
 
 	outputDir := GetOutputDir(personID, sessionID)
 	os.MkdirAll(outputDir, 0755)

@@ -22,8 +22,9 @@ import (
 // subdirectory (delivery_1, delivery_2, ...) to avoid conflicts between
 // multiple deliveries in the same session.
 type DeliverToTool struct {
-	personID  int64
-	sessionID int64
+	personID      int64
+	sessionID     int64
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewDeliverToTool creates a DeliverToTool for the given person and session.

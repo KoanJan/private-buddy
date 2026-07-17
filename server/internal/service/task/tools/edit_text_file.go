@@ -26,8 +26,9 @@ import (
 //   - If old_str matches multiple locations and replace_all is false, returns an error
 //   - If replace_all is true, replaces all occurrences
 type EditTextFileTool struct {
-	personID  int64
-	sessionID int64
+	personID      int64
+	sessionID     int64
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewEditTextFileTool creates an EditTextFileTool bound to the given person and session.

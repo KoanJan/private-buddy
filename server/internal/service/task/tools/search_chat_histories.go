@@ -15,7 +15,8 @@ import (
 // participates in. Results are filtered by keyword match (case-insensitive
 // substring) and grouped by session in the output.
 type SearchChatHistoriesTool struct {
-	personID int64
+	personID      int64
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewSearchChatHistoriesTool creates a SearchChatHistoriesTool for the given person.

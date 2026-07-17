@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
@@ -12,6 +13,7 @@ import (
 	"private-buddy-server/internal/service/eventqueue"
 	"private-buddy-server/internal/service/llm"
 	"private-buddy-server/internal/service/task"
+	"private-buddy-server/internal/service/workspace"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -105,9 +107,10 @@ Action types (use the integer value for the "type" field):
    - Both type 1 + type 2: acknowledge (chat) then execute (task). These run in parallel with no ordering guarantee.
    - When cancelling an existing work AND creating a new one in the same decision, the new work's guidance should naturally acknowledge the transition (e.g., "I stopped doing X and now I should help them with Y instead...").
 
-2. 1 (route) — Route the event to an existing active work listed above. Use when the event modifies, corrects, or continues an ONGOING work (e.g., "change the approach", "try again", "use a different method"). Only works currently listed in "Active works" can be routed to.
+2. 1 (route) — Route the event to an existing active work listed above. Route when the event carries a new instruction or constraint that changes what an active work should do — a shift in direction, approach, scope, or requirements (e.g., "use Go instead", "don't install anything new", "also add dark mode"). The event tells the work to do something different from what it's currently doing. Only works currently listed in "Active works" can be routed to.
    - MUST include "guidance" (what I now want the target work to focus on, written in first-person as my own intention) and "reason" (WHY I made this decision, including the original message and inferred intent).
    - The target work will see both guidance and reason, enabling it to understand the full context of the change.
+   - Do NOT route events that merely mention or ask about an active work (e.g., status questions like "how's it going?"). These belong to chat.
 
 3. 2 (cancel) — Request an existing active work to stop. Use when the event explicitly requests stopping an ONGOING work. Only works currently listed in "Active works" can be cancelled.
    - MUST include "guidance" (how I want the target work to wrap up, written in first-person, e.g., "I should save my progress to notes and stop") and "reason" (WHY, including the original message).
@@ -123,7 +126,7 @@ You can return multiple actions. Examples (note: IDs in examples are placeholder
 
 Decision rules (apply in order):
 1. If the comprehension says "needs world interaction: true", the event requires tool usage or multi-step execution. Create a task work (type=0 with work_plan.type=2). If a direct response is also expected, create both chat + task in parallel.
-2. If the event refers to an active work listed above (correction, follow-up, cancellation of an ONGOING work), use type=1 (route) or type=2 (cancel) with the corresponding work ID.
+2. If the event carries a new instruction or constraint for an active work listed above (changing its direction, approach, or scope), use type=1 (route). If the event explicitly requests stopping an active work, use type=2 (cancel).
 3. If the comprehension says "needs world interaction: false" and no active work is relevant, create a single chat work (type=0 with work_plan.type=1).
 4. When in doubt and no comprehension hint is available, prefer a single chat work.
 
@@ -430,18 +433,43 @@ func filterWorksBySession(works []*work, sessionID int64) []*work {
 // Only TaskWorks are shown — ChatWorks are one-shot and cannot be routed to
 // or cancelled (no iteration loop), so listing them would mislead the LLM
 // into producing invalid route/cancel actions.
+//
+// For each active work, the latest notes checkpoint is read from disk and
+// included as "progress". This gives the Decide LLM real insight into what
+// the work is actually doing — not just a counter, but the agent's own
+// record of its current state, blockers, and next steps.
 func buildActiveWorksContext(works []*work) string {
 	var parts []string
 	for _, w := range works {
 		if w.plan.Type != model.WorkTypeTask {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("- [Work #%d, type=task] %s", w.ID, w.plan.Guidance))
+		duration := time.Since(w.startedAt).Round(time.Second)
+		progress := readLastNotesEntry(w.agent.agentPersonID, w.sessionID)
+		entry := fmt.Sprintf("- [Work #%d, type=task, running %s] %s",
+			w.ID, duration, w.plan.Guidance)
+		if progress != "" {
+			entry += "\n  Latest progress: " + progress
+		}
+		parts = append(parts, entry)
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return fmt.Sprintf("Active works:\n%s\n\n", strings.Join(parts, "\n"))
+}
+
+// readLastNotesEntry reads the most recent note entry and formats it as
+// a progress summary for the Decide LLM. A single notes entry is naturally
+// bounded in size, so no truncation is applied.
+func readLastNotesEntry(personID, sessionID int64) string {
+	entry := workspace.ReadLastNote(personID, sessionID)
+	if entry == nil {
+		return ""
+	}
+
+	ts := entry.DisplayTimestamp()
+	return fmt.Sprintf("## [%s] %s\n\n%s", ts, entry.Type.String(), entry.Content)
 }
 
 // buildComprehensionContext formats comprehension results for the Decide prompt.

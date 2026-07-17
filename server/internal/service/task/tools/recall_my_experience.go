@@ -17,7 +17,8 @@ import (
 // content of only the experiences it judges relevant. The full content is
 // returned without truncation — a truncated experience is unusable.
 type RecallExperienceTool struct {
-	personID int64
+	personID      int64
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewRecallExperienceTool creates a RecallExperienceTool for the given person.

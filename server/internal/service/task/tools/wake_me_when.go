@@ -33,6 +33,7 @@ type WakeMeWhenTool struct {
 	personID         int64
 	sessionID        int64
 	triggerMessageID int64 // The user message that triggered this tool call
+	CycleDetector          // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewWakeMeWhenTool creates a WakeMeWhenTool for the given person, session,

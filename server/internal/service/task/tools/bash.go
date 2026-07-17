@@ -34,8 +34,9 @@ const (
 //   - Sandbox enforces filesystem write isolation at the kernel level
 //   - Falls back to plain exec if the sandbox is unavailable (availability over security)
 type BashTool struct {
-	personID  int64 // Person ID for workspace path derivation and sandbox policy generation
-	sessionID int64 // Session ID for workspace path derivation and sandbox policy generation
+	personID      int64 // Person ID for workspace path derivation and sandbox policy generation
+	sessionID     int64 // Session ID for workspace path derivation and sandbox policy generation
+	CycleDetector       // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewBashTool creates a BashTool with the given session context.

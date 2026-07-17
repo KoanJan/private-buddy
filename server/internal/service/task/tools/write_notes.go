@@ -2,45 +2,33 @@ package tools
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/workspace"
 )
 
 // WriteNotesTool implements an append-only, structured notes system for persisting agent's working memory.
 //
-// Each note entry has:
-//   - Timestamp: when the entry was written
-//   - Type: observation/decision/finding/correction/progress
-//   - Content: the main note text
-//   - References: optional links to workspace files
-//   - Conflict marker: optional note about conflicting with a previous entry
+// Notes are stored as JSONL (notes.jsonl) via the workspace package.
+// The tool is a thin adapter: it parses LLM tool arguments, constructs a
+// workspace.NoteEntry, and delegates storage to workspace.AppendNote.
 //
-// Design principles:
-//   - Append-only: never overwrite, always add new entries
-//   - Structured: consistent format for traceability
-//   - Traceable: each entry can reference files and mark conflicts
-//   - LLM stateless: each LLM call is independent, notes bridge the gap
-//
-// The notes are stored in a system-managed location (.meta/notes.md) that the
-// agent should not directly access. Use this tool to interact with notes.
-//
-// The caller supplies the resolved .meta directory path so this tool stays
-// decoupled from workspace layout details (see service/workspace).
+// Rendering (markdown format for LLM consumption) is handled by this tool,
+// not by the storage layer — different callers may want different formats.
 type WriteNotesTool struct {
-	metaDir       string // Resolved .meta directory path for this session
-	notesMaxChars int    // Maximum character limit for notes file
+	personID      int64
+	sessionID     int64
+	notesMaxChars int
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
-// NewWriteNotesTool creates a WriteNotesTool bound to the given metaDir.
-// The caller is responsible for resolving the metaDir via the workspace package
-// (workspace.GetMetaDir(agentConfigID, sessionID)) so this tool stays layout-agnostic.
-func NewWriteNotesTool(metaDir string, notesMaxChars int) *WriteNotesTool {
+// NewWriteNotesTool creates a WriteNotesTool bound to the given person and session.
+func NewWriteNotesTool(personID, sessionID int64, notesMaxChars int) *WriteNotesTool {
 	return &WriteNotesTool{
-		metaDir:       metaDir,
+		personID:      personID,
+		sessionID:     sessionID,
 		notesMaxChars: notesMaxChars,
 	}
 }
@@ -49,7 +37,7 @@ func NewWriteNotesTool(metaDir string, notesMaxChars int) *WriteNotesTool {
 func (w *WriteNotesTool) Name() ToolName { return ToolNameWriteNotes }
 
 // Description returns a brief description of the tool.
-func (w *WriteNotesTool) Description() string { return "Append structured entries to your notes.md" }
+func (w *WriteNotesTool) Description() string { return "Append structured entries to your notes" }
 
 // Schema returns the LLM function definition for the tool.
 func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
@@ -73,6 +61,10 @@ func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
 			"- correction: A fix or change to a previous entry (use conflicts_with)\n" +
 			"- progress: Current status and next steps\n" +
 			"\n" +
+			"When you repeatedly attempt the same action (e.g., same tool call, same approach), " +
+			"record the attempt count and the fact that it keeps failing. " +
+			"Example: \"[Attempt #12] npm run dev — failed again with same empty stdout. " +
+			"This approach is not working.\"\n\n" +
 			"Always include:\n" +
 			"- Concise, self-contained content\n" +
 			"- File references when relevant (paths relative to your working directory)\n" +
@@ -113,9 +105,8 @@ func (w *WriteNotesTool) Schema() llm.FunctionDefinition {
 }
 
 // Execute appends a structured entry to the agent's notes.
-// Validates required fields (entry_type, content) and returns a confirmation message.
 func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
-	entryType, _ := args["entry_type"].(string)
+	entryTypeStr, _ := args["entry_type"].(string)
 	content, _ := args["content"].(string)
 
 	var references []string
@@ -129,11 +120,27 @@ func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 
 	conflictsWith, _ := args["conflicts_with"].(string)
 
-	if entryType == "" || content == "" {
+	if entryTypeStr == "" || content == "" {
 		return "", fmt.Errorf("entry_type and content are required")
 	}
 
-	w.appendNote(entryType, content, references, conflictsWith)
+	// Convert LLM-provided string type to NoteType at the API boundary.
+	noteType, err := workspace.ParseNoteType(entryTypeStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid entry_type: %w", err)
+	}
+
+	entry := workspace.NoteEntry{
+		Timestamp:     time.Now().Format(time.RFC3339),
+		Type:          noteType,
+		Content:       content,
+		References:    references,
+		ConflictsWith: conflictsWith,
+	}
+
+	if err := workspace.AppendNote(w.personID, w.sessionID, entry); err != nil {
+		return "", fmt.Errorf("failed to write note: %w", err)
+	}
 
 	refCount := len(references)
 	conflictMarker := ""
@@ -142,78 +149,84 @@ func (w *WriteNotesTool) Execute(args map[string]interface{}) (string, error) {
 	}
 
 	return fmt.Sprintf("Successfully appended %s entry to your NOTES. Content: %d chars, References: %d%s",
-		entryType, len(content), refCount, conflictMarker), nil
+		noteType.String(), len(content), refCount, conflictMarker), nil
 }
 
-// getMetaDir returns the .meta directory path bound at construction time.
-// Path layout is owned by the workspace package; this tool just uses it.
-func (w *WriteNotesTool) getMetaDir() string {
-	return w.metaDir
+// ReadNotes returns the full notes content rendered as markdown for LLM consumption.
+// The task loop calls this to include notes in the system prompt.
+func (w *WriteNotesTool) ReadNotes() string {
+	entries := workspace.ReadAllNotes(w.personID, w.sessionID)
+	if len(entries) == 0 {
+		return ""
+	}
+
+	result := renderNoteEntries(entries)
+	if len(result) <= w.notesMaxChars {
+		return result
+	}
+
+	// Enforce max size: trim from the beginning, preserving recent entries
+	trimmed := result[len(result)-w.notesMaxChars:]
+	if idx := strings.Index(trimmed, "\n## ["); idx >= 0 {
+		trimmed = trimmed[idx+1:]
+	}
+	return "[notes trimmed: older entries discarded]\n\n" + trimmed
 }
 
-// appendNote appends a structured entry to the notes.md file.
-// Format: "## [TIMESTAMP] TYPE\n\ncontent\n\n---\n\n"
-func (w *WriteNotesTool) appendNote(entryType, content string, references []string, conflictsWith string) {
-	notesFile := filepath.Join(w.getMetaDir(), "notes.md")
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
+// TrimNotes truncates the notes file if the rendered content exceeds the limit.
+// Removes oldest entries until under the limit.
+func (w *WriteNotesTool) TrimNotes() {
+	entries := workspace.ReadAllNotes(w.personID, w.sessionID)
+	if len(entries) == 0 {
+		return
+	}
+
+	rendered := renderNoteEntries(entries)
+	if len(rendered) <= w.notesMaxChars {
+		return
+	}
+
+	// Remove oldest entries until under limit
+	for len(entries) > 1 {
+		entries = entries[1:]
+		rendered = renderNoteEntries(entries)
+		if len(rendered) <= w.notesMaxChars {
+			break
+		}
+	}
+
+	workspace.RewriteNotes(w.personID, w.sessionID, entries)
+}
+
+// renderNoteEntry renders a single NoteEntry as a markdown section.
+func renderNoteEntry(e workspace.NoteEntry) string {
+	ts := e.DisplayTimestamp()
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## [%s] %s\n\n", timestamp, strings.ToUpper(entryType)))
-	sb.WriteString(content)
+	sb.WriteString(fmt.Sprintf("## [%s] %s\n\n", ts, e.Type.String()))
+	sb.WriteString(e.Content)
 	sb.WriteString("\n")
 
-	if len(references) > 0 {
+	if len(e.References) > 0 {
 		sb.WriteString("\n**References:**\n")
-		for _, ref := range references {
+		for _, ref := range e.References {
 			sb.WriteString(fmt.Sprintf("- `%s`\n", ref))
 		}
 	}
 
-	if conflictsWith != "" {
-		sb.WriteString(fmt.Sprintf("\n⚠️ **Conflicts with:** %s\n", conflictsWith))
+	if e.ConflictsWith != "" {
+		sb.WriteString(fmt.Sprintf("\n⚠️ **Conflicts with:** %s\n", e.ConflictsWith))
 		sb.WriteString("_See above for the previous entry that this corrects or supersedes._\n")
 	}
 
-	sb.WriteString("\n---\n\n")
-
-	f, err := os.OpenFile(notesFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(sb.String())
+	return sb.String()
 }
 
-// ReadNotes reads the full content of the notes.md file.
-// Returns empty string if the file doesn't exist.
-func (w *WriteNotesTool) ReadNotes() string {
-	notesFile := filepath.Join(w.getMetaDir(), "notes.md")
-	data, err := os.ReadFile(notesFile)
-	if err != nil {
-		return ""
+// renderNoteEntries converts a slice of NoteEntry to markdown.
+func renderNoteEntries(entries []workspace.NoteEntry) string {
+	parts := make([]string, len(entries))
+	for i, e := range entries {
+		parts[i] = renderNoteEntry(e)
 	}
-	return string(data)
-}
-
-// TrimNotes truncates the notes file if it exceeds the maximum character limit.
-// Trims from the beginning, preserving the most recent entries.
-// Attempts to align to entry boundaries (## [timestamp]) to avoid partial entries.
-func (w *WriteNotesTool) TrimNotes() {
-	notesFile := filepath.Join(w.getMetaDir(), "notes.md")
-	data, err := os.ReadFile(notesFile)
-	if err != nil {
-		return
-	}
-	content := string(data)
-	if len(content) <= w.notesMaxChars {
-		return
-	}
-
-	trimmed := content[len(content)-w.notesMaxChars:]
-	entryBoundary := strings.Index(trimmed, "\n## [")
-	if entryBoundary > 0 {
-		trimmed = trimmed[entryBoundary+1:]
-	}
-
-	os.WriteFile(notesFile, []byte("[notes.md trimmed: older entries discarded]\n\n"+trimmed), 0644)
+	return strings.Join(parts, "\n---\n\n")
 }

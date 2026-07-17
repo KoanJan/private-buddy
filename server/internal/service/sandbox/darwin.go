@@ -58,10 +58,11 @@ func checkDarwinSandbox() bool {
 // $WORKSPACE is replaced at runtime with the actual session workspace path.
 //
 // Design principle (availability over security):
-//   - file-read* and process-exec are fully allowed
+//   - file-read* and process-exec are fully allowed (via allow default)
 //   - file-write* is restricted to workspace + tmp dirs + /dev nodes
-//   - network-outbound TCP is fully allowed; UDP restricted to DNS port 53
-//   - mach-lookup uses a whitelist for essential services
+//   - network-outbound and socket operations are fully allowed (via allow default)
+//   - mach-lookup is NOT covered by (allow default) — explicit allow rules
+//     are required for DNS (mDNSResponder) and network config (configd)
 
 // runDarwin executes the command inside macOS sandbox-exec with a Seatbelt policy.
 //
@@ -110,7 +111,7 @@ func runDarwin(workspace string, personID, sessionID int64, cmd []string) (*exec
 			"path", absPolicyPath, "workspace", workspace)
 	}
 
-	sandboxArgs := []string{"-f", absPolicyPath, "bash", "-c", strings.Join(cmd, " ")}
+	sandboxArgs := append([]string{"-f", absPolicyPath}, cmd...)
 	applogger.Debug("sandbox: active — Seatbelt (sandbox-exec)")
 	return exec.Command("/usr/bin/sandbox-exec", sandboxArgs...), true, nil
 }

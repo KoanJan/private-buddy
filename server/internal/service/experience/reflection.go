@@ -2,11 +2,11 @@ package experience
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"private-buddy-server/internal/database"
@@ -30,12 +30,12 @@ type reflectOutput struct {
 }
 
 // CheckReflection iterates all sessions owned by the agent and triggers
-// reflection for sessions whose notes.md has changed since the last
+// reflection for sessions whose notes.jsonl has changed since the last
 // successful reflection.
 //
 // Dedup is file-based: <workspace>/.meta/fingerprint.txt stores the SHA-256
-// hash of notes.md as it was at the end of the last reflection. If the
-// current notes.md hash matches, the session is skipped. If fingerprint.txt
+// hash of notes.jsonl as it was at the end of the last reflection. If the
+// current notes.jsonl hash matches, the session is skipped. If fingerprint.txt
 // is missing (first reflection) or differs, reflection runs.
 //
 // This is the public entry point called from the agent heartbeat.
@@ -57,7 +57,7 @@ func CheckReflection(ctx context.Context, personID int64) {
 
 	for _, sess := range sessions {
 		// Check whether this session has any task interactions.
-		// If not, notes.md is not expected to exist — skip without error.
+		// If not, notes.jsonl is not expected to exist — skip without error.
 		hasInteractions, err := dops.HasInteractions(sess.ID)
 		if err != nil {
 			applogger.Error("CheckReflection: failed to check interactions",
@@ -83,23 +83,21 @@ func CheckReflection(ctx context.Context, personID int64) {
 		}
 		metaDir := workspace.GetMetaDir(personID, sess.ID)
 		fpFile := filepath.Join(metaDir, "fingerprint.txt")
-		notesFile := filepath.Join(metaDir, "notes.md")
 
-		// Session has interactions, so notes.md should exist.
+		// Session has interactions, so notes.jsonl should exist.
 		// Any read error here is a real problem — log as ERROR.
-		notesBytes, err := os.ReadFile(notesFile)
+		currentFingerprint, err := workspace.NotesFingerprint(personID, sess.ID)
 		if err != nil {
 			applogger.Error("CheckReflection: failed to read notes file",
-				"file", notesFile,
+				"person_id", personID,
+				"session_id", sess.ID,
 				"error", err,
 			)
 			continue
 		}
-		if len(notesBytes) == 0 {
+		if currentFingerprint == "" {
 			continue
 		}
-		notesContent := string(notesBytes)
-		currentFingerprint := sha256Hex(notesContent)
 
 		// Compare against the last reflection's fingerprint.
 		// Missing file → first reflection, run it.
@@ -120,6 +118,13 @@ func CheckReflection(ctx context.Context, personID int64) {
 			continue
 		}
 
+		// Read all notes and format as markdown for the reflection prompt.
+		// The reflection pipeline decides its own format — simple markdown
+		// with timestamp and type headers, joined by separators.
+		notesContent := formatNotesForReflection(workspace.ReadAllNotes(personID, sess.ID))
+		if notesContent == "" {
+			continue
+		}
 		go reflectSession(ctx, personID, sess.ID, notesContent, currentFingerprint, fpFile)
 	}
 }
@@ -261,7 +266,7 @@ skip: true only if the log contains nothing transferable.
 }
 
 // writeFingerprint persists the given fingerprint to fpFile so the next
-// heartbeat can detect whether notes.md has changed since this reflection.
+// heartbeat can detect whether notes.jsonl has changed since this reflection.
 // Failures are logged but do not abort the caller — a missed write only
 // causes a redundant re-reflection on the next heartbeat, which is safe.
 func writeFingerprint(fpFile, fingerprint string) {
@@ -273,8 +278,17 @@ func writeFingerprint(fpFile, fingerprint string) {
 	}
 }
 
-// sha256Hex returns the hex-encoded SHA-256 hash of s.
-func sha256Hex(s string) string {
-	hash := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(hash[:])
+// formatNotesForReflection renders note entries as markdown for the reflection
+// LLM prompt. The reflection pipeline uses its own format — full content with
+// timestamp and type headers — independent of how other callers format notes.
+func formatNotesForReflection(entries []workspace.NoteEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	parts := make([]string, len(entries))
+	for i, e := range entries {
+		ts := e.DisplayTimestamp()
+		parts[i] = fmt.Sprintf("## [%s] %s\n\n%s", ts, e.Type.String(), e.Content)
+	}
+	return strings.Join(parts, "\n---\n\n")
 }

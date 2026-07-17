@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"time"
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/dops"
@@ -43,6 +44,10 @@ type work struct {
 	taskResult     *task.TaskResult                // Task execution result (only set for TaskWork)
 	guidanceCh     chan task.GuidanceDirective     // Channel for sending guidance/cancel directives to TaskLoop
 	done           chan struct{}                   // Closed when work finishes (normal or abandoned)
+
+	// startedAt is set when work begins running, read by buildActiveWorksContext
+	// so the Decide LLM can see how long a work has been running.
+	startedAt time.Time // Set in Run(), read by Decide
 }
 
 // Run executes the work. After the cognitive order refactoring, the execution
@@ -57,7 +62,8 @@ type work struct {
 // On completion, commits the draft and signals the event loop to remove this work.
 // Respects context cancellation: exits early if the work is cancelled.
 func (w *work) Run(ctx context.Context) {
-	defer close(w.done) // Signal completion regardless of how work exits
+	w.startedAt = time.Now() // Record start time for Decide-phase duration awareness
+	defer close(w.done)      // Signal completion regardless of how work exits
 
 	defer func() {
 		// Only transition to Completed if still Running.

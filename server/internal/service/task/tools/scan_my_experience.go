@@ -28,7 +28,8 @@ const (
 // This replaces the old approach of injecting all experiences into the
 // system prompt, which polluted the context and could not be self-corrected.
 type ScanExperienceTool struct {
-	personID int64
+	personID      int64
+	CycleDetector // Embedded: cycle detection on (args, result) pairs
 }
 
 // NewScanExperienceTool creates a ScanExperienceTool for the given person.

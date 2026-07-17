@@ -37,14 +37,13 @@ import (
 
 // TaskResult represents the outcome of a task execution.
 // On success, Output contains the final content. On failure, Error contains the reason.
-// Notes, Workspace, and NotesPath are always populated for observability.
+// Notes and Workspace are always populated for observability.
 type TaskResult struct {
 	Status      string `json:"status"`
 	Output      string `json:"output,omitempty"`
 	Error       string `json:"error,omitempty"`
 	Notes       string `json:"notes,omitempty"`
 	Workspace   string `json:"workspace,omitempty"`
-	NotesPath   string `json:"notes_path,omitempty"`
 	NotesLength int    `json:"notes_length,omitempty"`
 }
 
@@ -167,11 +166,10 @@ func Execute(params TaskParams) *TaskResult {
 	maxIterationWindow := settings.MaxIterationWindow
 	notesMaxChars := settings.NotesMaxChars
 
-	metaDir := workspace.GetMetaDir(params.PersonID, params.SessionID)
-	writeNotesTool := tools.NewWriteNotesTool(metaDir, notesMaxChars)
+	writeNotesTool := tools.NewWriteNotesTool(params.PersonID, params.SessionID, notesMaxChars)
 	notesContent := writeNotesTool.ReadNotes()
 
-	toolList := buildToolList(params.SessionID, params.PersonID, params.UserMsgID, params.SearchConfig, metaDir, notesMaxChars)
+	toolList := buildToolList(params.SessionID, params.PersonID, params.UserMsgID, params.SearchConfig, notesMaxChars)
 
 	// Build tool descriptions string (moved to last user message for cache optimization).
 	toolDescLines := []string{"Available tools:"}
@@ -228,13 +226,12 @@ func Execute(params TaskParams) *TaskResult {
 	// Note: <workspace>/.meta/fingerprint.txt is no longer written here.
 	// Its responsibility moved to the reflection pipeline (reflectSession),
 	// which writes it at the end of each reflection to mark "this is what
-	// notes.md looked like when I last processed it". The heartbeat then
-	// compares the current notes.md hash against this file to decide whether
+	// notes.jsonl looked like when I last processed it". The heartbeat then
+	// compares the current notes.jsonl hash against this file to decide whether
 	// to re-trigger reflection.
 
 	result := &TaskResult{
 		Workspace: ws,
-		NotesPath: fmt.Sprintf("%s/.meta/notes.md", ws),
 		Notes:     finalNotes,
 	}
 
@@ -344,6 +341,10 @@ func buildSystemPrompt(background string, metadata *Metadata) string {
 		"- Include file references when relevant",
 		"- Use conflicts_with when correcting earlier decisions",
 		"- Write self-contained entries (future LLM calls have no memory)",
+		"- When you repeatedly attempt the same action (e.g., same tool call, same approach),",
+		"  record the attempt count and the fact that it keeps failing.",
+		"  Example: \"[Attempt #12] npm run dev — failed again with same empty stdout.",
+		"  This approach is not working.\"",
 		"",
 		"[Critical Identifiers]",
 		"- If you encounter an identifier that cannot be recovered through filesystem inspection (ls, find, git log, etc.), record it explicitly in your notes.",
@@ -361,16 +362,13 @@ func buildSystemPrompt(background string, metadata *Metadata) string {
 // Always includes read_text_file, write_text_file, edit_text_file, bash,
 // write_notes, wake_me_when, scan_my_experience, and recall_my_experience;
 // adds web_search if search config is available.
-//
-// metaDir is the resolved .meta directory (caller-provided) so this function
-// stays decoupled from workspace layout details.
-func buildToolList(sessionID, personID, triggerMessageID int64, searchConfig *model.SearchConfig, metaDir string, notesMaxChars int) []tools.Tool {
+func buildToolList(sessionID, personID, triggerMessageID int64, searchConfig *model.SearchConfig, notesMaxChars int) []tools.Tool {
 	toolList := []tools.Tool{
 		tools.NewReadTextFileTool(personID, sessionID),
 		tools.NewWriteTextFileTool(personID, sessionID),
 		tools.NewEditTextFileTool(personID, sessionID),
 		tools.NewBashTool(personID, sessionID),
-		tools.NewWriteNotesTool(metaDir, notesMaxChars),
+		tools.NewWriteNotesTool(personID, sessionID, notesMaxChars),
 		tools.NewWakeMeWhenTool(personID, sessionID, triggerMessageID),
 		tools.NewScanExperienceTool(personID),
 		tools.NewRecallExperienceTool(personID),

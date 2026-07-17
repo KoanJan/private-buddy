@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.33] - 2026-07-17
+
+### Added
+- **Cycle Detection**: each tool now embeds a CycleDetector that tracks consecutive identical `(args, result)` pairs via SHA256 signature; after 3 consecutive repeats a soft warning is appended to the tool result guiding the agent to self-reflect, after 8 the work enters a forced checkpoint (write_notes only) then terminates — detecting behavioral loops without interpreting content
+
+### Changed
+- **Decision Route Semantics**: route trigger tightened from "modifies, corrects, or continues an active work" to "carries a new instruction or constraint that changes what the work should do" — events that mention an active work without changing its direction (e.g., progress queries) now fall through to chat, giving users immediate responses
+- **Active Works Context**: Decide LLM now sees each active work's running duration and latest notes entry, not just work ID and guidance — enabling better judgment of work state when deciding whether to route new events
+- **Notes Structured Storage**: notes migrated from markdown (`notes.md`) to append-only JSONL (`notes.jsonl`), with each entry a self-contained JSON object (timestamp, int type enum, content, references, conflicts_with); storage layer provides stateless read/write APIs keyed by person ID + session ID, and callers render notes independently for their own format needs
+
+### Fixed
+- **macOS Sandbox DNS**: Seatbelt `(allow default)` does not cover `mach-lookup` — added explicit allow rules for `mDNSResponder` (DNS resolution) and `configd` (network configuration), fixing all network access failures inside sandboxed processes
+- **macOS Sandbox Command Execution**: `darwin.go` was double-wrapping commands in `bash -c`, causing quoting and escaping issues; now passes the command slice directly to `sandbox-exec`, matching the Linux bwrap implementation
+
+
 ## [0.0.32] - 2026-07-16
 
 ### Changed

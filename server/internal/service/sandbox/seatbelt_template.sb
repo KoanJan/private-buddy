@@ -1,8 +1,18 @@
 ;; private-buddy Seatbelt sandbox policy
 ;; Design: availability over security. Restrict writes only;
-;; everything else (reads, execution, network, mach-lookup) is allowed by default.
+;; everything else (reads, execution, network) is allowed by default.
+;; mach-lookup is NOT covered by (allow default) and must be listed explicitly.
 (version 1)
 (allow default)
+
+;; === Mach IPC: DNS resolution and network configuration ===
+;; (allow default) does not cover mach-lookup. Without these rules,
+;; DNS resolution via mDNSResponder fails, breaking all network access.
+(allow mach-lookup
+    (global-name "com.apple.mDNSResponder")
+    (global-name "com.apple.mDNSResponder.service")
+    (global-name "com.apple.SystemConfiguration.configd")
+)
 
 ;; === Write: deny protected directories ===
 (deny file-write*
