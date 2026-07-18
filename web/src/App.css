@@ -1204,9 +1204,11 @@
 
 .activity-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 16px 12px;
+  flex: 1;
   color: var(--color-text-placeholder, #9ca3af);
   font-size: 13px;
 }

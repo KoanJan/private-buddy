@@ -20,16 +20,16 @@ type KnowledgeBaseUpdate struct {
 
 // KnowledgeBaseResponse represents the API response for a knowledge base.
 type KnowledgeBaseResponse struct {
-	ID            int64     `json:"id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	IndexType     int       `json:"index_type"`
-	IndexFilePath string    `json:"index_file_path"`
-	DocumentCount int       `json:"document_count"`
-	VectorCount   int       `json:"vector_count"`
-	DeletedCount  int       `json:"deleted_count"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            int64                        `json:"id"`
+	Name          string                       `json:"name"`
+	Description   string                       `json:"description"`
+	IndexType     model.KnowledgeBaseIndexType `json:"index_type"`
+	IndexFilePath string                       `json:"index_file_path"`
+	DocumentCount int                          `json:"document_count"`
+	VectorCount   int                          `json:"vector_count"`
+	DeletedCount  int                          `json:"deleted_count"`
+	CreatedAt     time.Time                    `json:"created_at"`
+	UpdatedAt     time.Time                    `json:"updated_at"`
 }
 
 // NewKnowledgeBaseResponse converts a model.KnowledgeBase to a KnowledgeBaseResponse.

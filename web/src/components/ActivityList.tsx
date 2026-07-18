@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Spin } from 'antd';
 import { ClipboardList } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -49,6 +49,7 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedIndices, setExpandedIndices] = useState<Set<number>>(new Set());
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchActivities = async () => {
@@ -65,6 +66,12 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
 
     fetchActivities();
   }, [sessionId]);
+
+  // Scroll to the latest (bottom) activity record after events are loaded.
+  useEffect(() => {
+    if (loading || events.length === 0 || !contentRef.current) return;
+    contentRef.current.scrollTop = contentRef.current.scrollHeight;
+  }, [loading, events.length]);
 
   const toggleExpand = useCallback((idx: number) => {
     setExpandedIndices(prev => {
@@ -108,7 +115,7 @@ const ActivityList: React.FC<ActivityListProps> = ({ sessionId, agents }) => {
 
   return (
     <div className="activity-list">
-      <div className="activity-content">
+      <div className="activity-content" ref={contentRef}>
         {events.map((event, idx) => {
           const agent = agentMap[event.agent_id];
           const displayName = agent?.name || 'AI';

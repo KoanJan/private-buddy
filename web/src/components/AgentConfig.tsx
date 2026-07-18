@@ -109,6 +109,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({ showCreate, onCreateClose, on
       setAgents([newAgent, ...agents]);
       setModalVisible(false);
       form.resetFields();
+      onCreateClose?.();
       setCreateAvatarFile(null);
       setCreateAvatarPreview('');
       message.success(t('agent.createSuccess'));

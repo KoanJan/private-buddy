@@ -1,6 +1,6 @@
-// Package vectorstore provides utility functions for vector operations
+// Package vectorutils provides utility functions for vector operations
 // used by the memory, kb, and experience modules.
-package vectorstore
+package vectorutils
 
 import (
 	"math"

@@ -8,7 +8,7 @@ import (
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 )
 
 // SearchResult wraps an AgentExperience with its cosine similarity score.
@@ -77,7 +77,7 @@ func SearchExperiences(ctx context.Context, personID int64, taskDescription stri
 			)
 			continue
 		}
-		sim := vectorstore.CosineSimilarity(queryVec, vectorstore.BlobToFloat32Slice(v.Embedding))
+		sim := vectorutils.CosineSimilarity(queryVec, vectorutils.BlobToFloat32Slice(v.Embedding))
 		if sim >= minScore {
 			entries = append(entries, scoreEntry{
 				result: SearchResult{Experience: exp, Score: sim},

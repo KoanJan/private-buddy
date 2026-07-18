@@ -1,79 +1,59 @@
-// Package memory implements the agent-level long-term memory system.
+// Package memory implements the agent's long-term memory system.
 //
-// This is NOT the session-level conversation summary (Summary).
-// Summary provides per-session compressed text — non-retrievable,
-// non-updatable per fact, non-reusable across sessions. The memory system
-// provides cross-session, retrievable, score-driven persistent memory at
-// the agent level: an agent in session B can recall what happened in session A.
+// This is a package-level singleton service. Call Init(embeddingSvc) once at startup,
+// then Start(ctx) to launch background services. Package-level functions are safe to
+// call afterwards.
 //
-// # Core paradigm: forgetting model
+// # Event-Observation-EntityProfile pipeline
 //
-// By default, nothing is remembered. Retention is use-driven:
-//   - Every external event is mechanically mirrored as an observation
-//     (no LLM, importance=0.5).
-//   - When an observation is retrieved and injected into context, its
-//     importance increases (asymptote toward 1.0) with anti-hot protection.
-//   - All observations undergo daily multiplicative decay: importance *= 0.98.
-//     This ensures unused observations slowly fade, asymptotically approaching
-//     but never reaching zero. Actively retrieved observations can outpace
-//     decay through retrieval boosts and relevance propagation.
+// The memory system transforms raw messages into structured knowledge in three stages:
 //
-// # Layers
+//  1. Event creation (ingestMessage, doc.go): each message creates an Event record
+//     with an embedding (EventVector) for semantic retrieval. Observations are
+//     automatically created for every AI participant in the session, giving each
+//     agent its own perspective on the same event.
 //
-//   - observation: mechanical record of "what happened" — zero LLM.
-//     Event content is loaded on demand via event_id, not cached here.
-//   - EntityProfile: LLM-generated reflection triggered by density detection:
-//     when >= 5 observations point to the same entity (user/agent/session),
-//     the top 50 are selected by importance for LLM reflection.
+//  2. Observation scoring (score.go): each observation has an importance score that
+//     starts at 0.5 and evolves through three mechanisms:
+//     - Retrieval hit: when a chat-history segment is retrieved and injected into
+//     context, onRetrievalHit applies an anti-hot cooldown (10 minutes) and
+//         pushes importance asymptotically toward 1.0 (delta = α × (1 - importance)).
+//     - Relevance propagation (propagateRelevance): the delta spreads to related
+//     observations via three rules — temporal adjacency (±1: 0.5x, ±2: 0.2x),
+//     semantic similarity (cosine > 0.8: 0.2x), same-session (0.15x). This is
+//     the v4 replacement for v2's Semantic layer clustering.
+//     - Daily decay (runDailyMaintenance): all observations multiply by 0.98 daily,
+//     providing a gradual forgetting mechanism. Observations near zero are skipped.
 //
-// # Scoring
+//  3. EntityProfile generation (entity_profile.go): when observations for a given
+//     entity direction (session or person) exceed profileTriggerMin (10), an
+//     asynchronous LLM reflection synthesizes a narrative. Rate-limited to one
+//     generation per 6 hours per entity. MD5 of input text is compared to skip
+//     unchanged inputs. Two entity directions are tracked:
+//     - EntityTypeSession: what happened in this session
+//     - EntityTypePerson: what we know about this person (user or other participant)
 //
-// Only one continuous dimension: importance (0.0–1.0).
-// Updated on retrieval hit with anti-hot protection (cooldown: 10 minutes).
-// Composite retrieval score: 0.7*similarity + 0.2*importance + 0.1*recency.
-// Key moments are flagged at importance >= 0.85.
+//     LoadProfileForEntity() exposes these narratives to the chat context engine.
 //
-// Relevance propagation: when an observation is hit, a fraction of the
-// importance delta spreads to temporally adjacent, semantically similar,
-// and same-session observations (one-way, increase only).
+// # Background services (Start)
 //
-// # File layout
+//   - Event vectorization goroutine: queues embeddings for newly created events.
+//   - Daily cron: runs maintenance immediately on start, then every 24 hours,
+//     applying multiplicative importance decay to all active observations.
 //
-//   - memory.go: package API (Init/Start/OnRetrievalHit/CheckProfileDensity),
-//     ingestion, retrieval hit processing.
-//   - event_vector.go: SubmitVectorization entry point and background
-//     goroutine for event → embedding → observation creation.
-//   - ingester.go: event table writes, embedding storage, observation creation.
-//   - score.go: importance algorithm, relevance propagation, cosine similarity.
-//   - cron.go: daily cleanup of stale observations (importance zeroing).
-//   - entity_profile.go: EntityProfile density detection and LLM-generated
-//     narrative reflection.
+// # Thread safety
 //
-// # API surface
+// Init/Start are guarded by sync.Once. Package-level read functions (LoadProfileForEntity,
+// CheckProfileDensity, OnRetrievalHit) are safe to call concurrently. Relevance
+// propagation runs in goroutines per hit.
 //
-//   - Init(embeddingSvc): sets the embedding service reference. Idempotent.
-//   - Start(ctx): launches background goroutines (vectorization, daily cron)
-//     bound to ctx. Cancelling ctx shuts them down gracefully.
-//   - SubmitVectorization(task): enqueues a message for event vectorization.
-//     Non-blocking; drops if queue is full.
-//   - OnRetrievalHit(agentConfigID, messageIDs): applies retrieval hits from
-//     context engineering to the memory system's observations.
-//   - CheckProfileDensity(ctx, agentConfigID): scans long-term observations and
-//     triggers EntityProfile generation when density thresholds are met.
+// # OnRetrievalHit — the bridging function
 //
-// # Background services
+// OnRetrievalHit is called by the chat context engine after chat-history retrieval.
+// Given the personID and messageIDs, it:
+//   - Finds corresponding events and observations
+//   - Applies retrieval hit scoring to matching observations
+//   - Launches background goroutines for relevance propagation (temporal + semantic + same-session)
 //
-//   - Vectorization goroutine: serialises event → vector work on a dedicated
-//     goroutine. Callers submit tasks; the goroutine owns the queue and lifecycle.
-//   - Daily cron: runs immediately on startup, then every 24 hours.
-//     Applies multiplicative importance decay (importance *= 0.98) to all
-//     active observations.
-//
-// # Interaction with other modules
-//
-//   - cmd/main.go: Init + Start during application startup.
-//   - api/handler/*.go: SubmitVectorization for user/agent messages.
-//   - service/runtime/agent_runtime.go: SubmitVectorization for agent messages.
-//   - service/runtime/heartbeat_checks.go: CheckProfileDensity during heartbeat.
-//   - service/chat/chat_service.go: OnRetrievalHit from session-level retrieval.
+// This is the point where the chat pipeline feeds back into the memory system.
 package memory

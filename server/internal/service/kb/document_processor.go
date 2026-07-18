@@ -39,7 +39,7 @@ func newDocumentProcessor(embService *llm.EmbeddingService) *documentProcessor {
 }
 
 // Process executes the full document processing pipeline.
-// Steps: extract → split → embed → store chunks → store vectors → update index.
+// Steps: extract → split → store chunks → embed → store vectors.
 func (dp *documentProcessor) Process(ctx context.Context, kbID int64, doc *model.Document) error {
 	dp.updateStatus(doc.ID, model.DocumentStatusProcessing, "")
 

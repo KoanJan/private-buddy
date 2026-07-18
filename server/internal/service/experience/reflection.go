@@ -104,15 +104,14 @@ func CheckReflection(ctx context.Context, personID int64) {
 		// Matching fingerprint → no change since last reflection, skip.
 		// Differing fingerprint → notes changed, run again.
 		lastFingerprintBytes, err := os.ReadFile(fpFile)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				applogger.Error("CheckReflection: failed to read fingerprint file",
-					"file", fpFile,
-					"error", err,
-				)
-				continue
-			}
+		if os.IsNotExist(err) {
 			// File does not exist — first reflection for this session, proceed.
+		} else if err != nil {
+			applogger.Error("CheckReflection: failed to read fingerprint file",
+				"file", fpFile,
+				"error", err,
+			)
+			continue
 		} else if string(lastFingerprintBytes) == currentFingerprint {
 			// No change since the last reflection — skip.
 			continue

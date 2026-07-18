@@ -10,7 +10,7 @@ import (
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 )
 
 // Package-level state for the experience system singleton.
@@ -68,7 +68,7 @@ func createExperience(ctx context.Context, personID int64, source int, sourceID 
 
 	vec := &model.AgentExperienceVector{
 		ExperienceID: exp.ID,
-		Embedding:    vectorstore.Float32SliceToBlob(emb),
+		Embedding:    vectorutils.Float32SliceToBlob(emb),
 	}
 	if err := database.DB.Create(vec).Error; err != nil {
 		applogger.Error("Failed to insert agent_experience_vector, orphaned experience row",
@@ -125,7 +125,7 @@ func updateExperience(ctx context.Context, expID, personID int64, title, descrip
 		}
 		if err := database.DB.Model(&model.AgentExperienceVector{}).
 			Where("experience_id = ?", expID).
-			Update("embedding", vectorstore.Float32SliceToBlob(emb)).Error; err != nil {
+			Update("embedding", vectorutils.Float32SliceToBlob(emb)).Error; err != nil {
 			return fmt.Errorf("update agent_experience_vector: %w", err)
 		}
 	}

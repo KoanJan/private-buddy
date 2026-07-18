@@ -37,6 +37,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const isInitialLoadRef = useRef<boolean>(true);
 
+  // Reset initial-load flag and view mode when the session changes.
+  useEffect(() => {
+    isInitialLoadRef.current = true;
+    setViewMode('chat');
+  }, [session?.id]);
+
   const isTempSession = session?.id === TEMP_SESSION_ID;
   const isStreaming = agentStatus !== PARTICIPANT_STATUS_IDLE;
 
@@ -156,10 +162,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
     container.style.setProperty('--indicator-width', `${tabRect.width}px`);
   }, [viewMode]);
 
-  // Scroll to bottom when switching to chat view
+  // Scroll to bottom when switching to chat view — use instant jump since
+  // the chat-messages div is freshly mounted and starts at scrollTop=0.
   useEffect(() => {
     if (viewMode !== 'chat') return;
-    scrollToBottom(true);
+    scrollToBottom(false);
   }, [viewMode, scrollToBottom]);
 
   // ---- Handlers ----

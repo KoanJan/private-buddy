@@ -1,0 +1,11 @@
+services:
+  private-buddy:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: private-buddy
+    ports:
+      - "${PORT:-18888}:18888"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

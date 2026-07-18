@@ -147,7 +147,7 @@ func (w *WakeMeWhenTool) Execute(args map[string]interface{}) (string, error) {
 		Message:          message,
 		Action:           action,
 		ActionContent:    actionContent,
-		Status:           model.ScheduledEventPending,
+		Status:           model.ScheduledEventStatusPending,
 	}
 	if err := database.DB.Create(&event).Error; err != nil {
 		applogger.Error("Failed to create scheduled event record",

@@ -118,7 +118,7 @@ func registerAlarmGoroutine(event *model.ScheduledEvent) {
 				"event_id", event.ID, "error", err)
 			return
 		}
-		if currentEvent.Status != model.ScheduledEventPending {
+		if currentEvent.Status != model.ScheduledEventStatusPending {
 			applogger.Info("Scheduled event no longer pending, skipping",
 				"event_id", event.ID, "status", currentEvent.Status)
 			return
@@ -134,7 +134,7 @@ func registerAlarmGoroutine(event *model.ScheduledEvent) {
 func fireScheduledEvent(event *model.ScheduledEvent) {
 	if err := database.DB.Model(&model.ScheduledEvent{}).
 		Where("id = ?", event.ID).
-		Update("status", model.ScheduledEventTriggered).Error; err != nil {
+		Update("status", model.ScheduledEventStatusTriggered).Error; err != nil {
 		applogger.Error("fireScheduledEvent: failed to mark as triggered",
 			"event_id", event.ID, "error", err)
 		return
@@ -185,7 +185,7 @@ func (r *agentRuntime) handleAlarmCreated(eventID int64) {
 		return
 	}
 
-	if event.Status != model.ScheduledEventPending {
+	if event.Status != model.ScheduledEventStatusPending {
 		applogger.Info("handleAlarmCreated: event not pending, skipping",
 			"event_id", eventID, "status", event.Status)
 		return
@@ -212,7 +212,7 @@ func (r *agentRuntime) handleAlarmCreated(eventID int64) {
 // Called during runtime startup, after eventqueue.Init() and runtime.Start().
 func recoverScheduledEvents() {
 	var pendingEvents []*model.ScheduledEvent
-	if err := database.DB.Where("status = ?", model.ScheduledEventPending).
+	if err := database.DB.Where("status = ?", model.ScheduledEventStatusPending).
 		Order("trigger_at ASC").Find(&pendingEvents).Error; err != nil {
 		applogger.Error("recoverScheduledEvents: failed to load pending events", "error", err)
 		return

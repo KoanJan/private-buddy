@@ -6,7 +6,7 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -146,7 +146,7 @@ func propagateRelevance(params propagateParams) {
 	processed[params.HitEventID] = true // Don't propagate to self
 
 	// Temporal adjacency propagation
-	propagateTemporal(params, hitPos, eventPositions, processed, &params.AllObservationIDs)
+	propagateTemporal(params, hitPos, processed, &params.AllObservationIDs)
 
 	// Semantic similarity propagation (if hit embedding is available)
 	if params.HitEmbedding != nil {
@@ -166,7 +166,6 @@ func propagateRelevance(params propagateParams) {
 func propagateTemporal(
 	params propagateParams,
 	hitPos int,
-	_ map[int64]int,
 	processed map[int64]bool,
 	allObs *[]observationWithContext,
 ) {
@@ -237,12 +236,12 @@ func propagateSemantic(
 			continue
 		}
 
-		storedEmbedding := vectorstore.BlobToFloat32Slice(ev.Embedding)
+		storedEmbedding := vectorutils.BlobToFloat32Slice(ev.Embedding)
 		if storedEmbedding == nil {
 			continue
 		}
 
-		similarity := vectorstore.CosineSimilarity(params.HitEmbedding, storedEmbedding)
+		similarity := vectorutils.CosineSimilarity(params.HitEmbedding, storedEmbedding)
 		if similarity > propagateSimilarityThreshold {
 			applyPropagationToObservation(oc.ObservationID, params.DeltaBase*propagateSimilar)
 			processed[oc.ObservationID] = true

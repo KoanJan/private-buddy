@@ -88,6 +88,18 @@ cd web && npm run dev         # Vite dev server on :5173
 
 > **Note**: All 0.0.x versions are pre-release. Data compatibility is not guaranteed between versions — upgrading may clear existing user data. This will change once the project reaches 0.1.0.
 
+### Docker
+
+```bash
+git clone https://github.com/KoanJan/private-buddy.git
+cd private-buddy/docker
+docker compose up -d
+```
+
+The app will be available at `http://localhost:18888`. Data is persisted in the `docker/data/` directory.
+
+> **Note**: The first build pulls base images and compiles both the frontend and backend, which may take several minutes. Subsequent starts are instant.
+
 ---
 
 ## Architecture

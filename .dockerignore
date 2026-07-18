@@ -1,0 +1,29 @@
+# Dependencies
+web/node_modules
+server/vendor
+
+# Data and logs
+data
+logs
+*.db
+*.pid
+
+# Build artifacts
+web-dist
+private-buddy-server
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# CI
+.github

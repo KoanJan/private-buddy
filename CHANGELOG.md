@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.34] - 2026-07-18
+
+### Added
+- **Engineering Documentation**: two architecture documents covering the agent runtime event loop and the context engineering pipeline, plus package-level `doc.go` for sandbox, experience, memory, and knowledge base
+- **Docker Deployment**: single-container deployment with Alpine + nginx + Go backend; `docker compose up -d` in the `docker/` directory starts the full application on port 18888
+
+### Fixed
+- **Chat Scroll Animation**: session and tab switching now jumps instantly to the latest message instead of smoothly scrolling from the top; activity list opens at the newest records rather than the oldest
+- **Empty State Alignment**: "No activity records" and "No delivered files yet" prompts now consistently centered both horizontally and vertically
+- **Stale Chat Content**: creating a new chat without sending a message no longer preserves the previous session's view state (activity or received panel)
+- **Modal Auto-Reopen**: creating an LLM config or Agent no longer causes the creation modal to appear automatically on the next settings visit
+- **Memory Semantic Propagation**: `HitEmbedding` was never populated in `propagateRetrievalHit`, causing `propagateSemantic` to be unreachable dead code — all three propagation channels (temporal, semantic, same-session) now function correctly
+
+
 ## [0.0.33] - 2026-07-17
 
 ### Added

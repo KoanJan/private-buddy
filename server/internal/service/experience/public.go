@@ -8,7 +8,7 @@ import (
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 )
 
 // PublicSearchResult wraps a PublicExperience with its cosine similarity score.
@@ -41,7 +41,7 @@ func finalizePublicExperience(ctx context.Context, expID int64, output ingestOut
 	if err != nil {
 		return fmt.Errorf("embed public experience description: %w", err)
 	}
-	embBlob := vectorstore.Float32SliceToBlob(emb)
+	embBlob := vectorutils.Float32SliceToBlob(emb)
 
 	// Try update first; if no row exists (first distillation), create one.
 	result := database.DB.Model(&model.PublicExperienceVector{}).
@@ -134,7 +134,7 @@ func SearchPublicExperiences(ctx context.Context, query string, topN int, minSco
 		}
 		candidates = append(candidates, expWithVec{
 			exp: exp,
-			vec: vectorstore.BlobToFloat32Slice(v.Embedding),
+			vec: vectorutils.BlobToFloat32Slice(v.Embedding),
 		})
 	}
 
@@ -149,7 +149,7 @@ func SearchPublicExperiences(ctx context.Context, query string, topN int, minSco
 	var entries []scoreEntry
 
 	for _, c := range candidates {
-		sim := vectorstore.CosineSimilarity(queryVec, c.vec)
+		sim := vectorutils.CosineSimilarity(queryVec, c.vec)
 		if sim >= minScore {
 			entries = append(entries, scoreEntry{
 				result: PublicSearchResult{Experience: c.exp, Score: sim},

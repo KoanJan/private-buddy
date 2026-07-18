@@ -12,19 +12,10 @@ import (
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 	"private-buddy-server/pkg/hnsw"
 
 	_ "github.com/glebarez/go-sqlite/compat"
-)
-
-// indexType represents the current indexing mode for a knowledge base.
-type indexType int
-
-const (
-	indexTypeFlat      indexType = indexType(model.KnowledgeBaseIndexTypeFlat)
-	indexTypeSwitching indexType = indexType(model.KnowledgeBaseIndexTypeSwitching)
-	indexTypeHNSW      indexType = indexType(model.KnowledgeBaseIndexTypeHNSW)
 )
 
 // pendingVector holds a vector awaiting insertion into the HNSW graph
@@ -42,7 +33,7 @@ type pendingVector struct {
 type indexManager struct {
 	mu            sync.RWMutex
 	graph         *hnsw.SavedGraph[uint64]
-	indexType     indexType
+	indexType     model.KnowledgeBaseIndexType
 	indexPath     string
 	vectorsDBPath string
 	vectorsDB     *sql.DB
@@ -53,9 +44,9 @@ type indexManager struct {
 }
 
 // newIndexManager creates an indexManager for a knowledge base.
-func newIndexManager(kind int, indexFilePath, vectorsDBPath string, kbID int64, threshold int) *indexManager {
+func newIndexManager(kind model.KnowledgeBaseIndexType, indexFilePath, vectorsDBPath string, kbID int64, threshold int) *indexManager {
 	return &indexManager{
-		indexType:     indexType(kind),
+		indexType:     kind,
 		indexPath:     indexFilePath,
 		vectorsDBPath: vectorsDBPath,
 		kbID:          kbID,
@@ -79,10 +70,10 @@ func (m *indexManager) Load() error {
 		return fmt.Errorf("failed to open vectors db: %w", err)
 	}
 
-	if m.indexType == indexTypeHNSW {
+	if m.indexType == model.KnowledgeBaseIndexTypeHNSW {
 		if err := m.loadHNSWGraph(); err != nil {
 			applogger.Error("Failed to load HNSW graph, falling back to flat", "kb_id", m.kbID, "error", err)
-			m.indexType = indexTypeFlat
+			m.indexType = model.KnowledgeBaseIndexTypeFlat
 		}
 	}
 
@@ -112,7 +103,7 @@ func (m *indexManager) GetVector(chunkID int64) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	return vectorstore.BlobToFloat32Slice(blob), nil
+	return vectorutils.BlobToFloat32Slice(blob), nil
 }
 
 // Add inserts a vector into the index. It writes to SQLite for persistence
@@ -126,7 +117,7 @@ func (m *indexManager) Add(chunkID uint64, embedding []float32) error {
 		return fmt.Errorf("index manager not loaded")
 	}
 
-	blob := vectorstore.Float32SliceToBlob(embedding)
+	blob := vectorutils.Float32SliceToBlob(embedding)
 	_, err := m.vectorsDB.Exec(
 		"INSERT OR REPLACE INTO vectors (chunk_id, embedding) VALUES (?, ?)",
 		chunkID, blob,
@@ -157,11 +148,11 @@ func (m *indexManager) AddToIndex(chunkID uint64, embedding []float32) error {
 // Must be called with m.mu held.
 func (m *indexManager) addToMemoryIndex(chunkID uint64, embedding []float32) {
 	switch m.indexType {
-	case indexTypeFlat:
+	case model.KnowledgeBaseIndexTypeFlat:
 		m.checkFlatToHNSW()
-	case indexTypeSwitching:
+	case model.KnowledgeBaseIndexTypeSwitching:
 		m.pendingAdds = append(m.pendingAdds, pendingVector{ChunkID: chunkID, Embedding: embedding})
-	case indexTypeHNSW:
+	case model.KnowledgeBaseIndexTypeHNSW:
 		if m.graph != nil {
 			if err := safeAddToGraph(m.graph, chunkID, embedding); err != nil {
 				applogger.Error("Failed to add node to HNSW graph",
@@ -178,10 +169,10 @@ func (m *indexManager) checkFlatToHNSW() {
 
 	if count >= m.threshold {
 		result := database.DB.Model(&model.KnowledgeBase{}).
-			Where("id = ? AND index_type = ?", m.kbID, int(indexTypeFlat)).
-			Update("index_type", int(indexTypeSwitching))
+			Where("id = ? AND index_type = ?", m.kbID, model.KnowledgeBaseIndexTypeFlat).
+			Update("index_type", model.KnowledgeBaseIndexTypeSwitching)
 		if result.RowsAffected == 1 {
-			m.indexType = indexTypeSwitching
+			m.indexType = model.KnowledgeBaseIndexTypeSwitching
 			go m.buildHNSWIndex()
 		}
 	}
@@ -195,7 +186,7 @@ func (m *indexManager) buildHNSWIndex() {
 	defer func() {
 		if r := recover(); r != nil {
 			applogger.Error("HNSW build panic", "kb_id", m.kbID, "panic", r)
-			m.casIndexType(indexTypeSwitching, indexTypeFlat)
+			m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 		}
 	}()
 
@@ -203,14 +194,14 @@ func (m *indexManager) buildHNSWIndex() {
 
 	if m.vectorsDB == nil {
 		applogger.Error("HNSW build: vectorsDB not initialized", "kb_id", m.kbID)
-		m.casIndexType(indexTypeSwitching, indexTypeFlat)
+		m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 		return
 	}
 
 	entries, err := m.loadAllVectors()
 	if err != nil {
 		applogger.Error("Failed to load vectors for HNSW build", "kb_id", m.kbID, "error", err)
-		m.casIndexType(indexTypeSwitching, indexTypeFlat)
+		m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 		return
 	}
 	applogger.Info("HNSW build: vectors loaded", "kb_id", m.kbID, "count", len(entries))
@@ -223,13 +214,13 @@ func (m *indexManager) buildHNSWIndex() {
 
 	if dimStats.nanCount > 0 {
 		applogger.Error("HNSW build: found NaN/Inf in embeddings, aborting", "kb_id", m.kbID, "count", dimStats.nanCount)
-		m.casIndexType(indexTypeSwitching, indexTypeFlat)
+		m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 		return
 	}
 	if dimStats.minDim != dimStats.maxDim {
 		applogger.Error("HNSW build: inconsistent embedding dimensions",
 			"kb_id", m.kbID, "min_dim", dimStats.minDim, "max_dim", dimStats.maxDim)
-		m.casIndexType(indexTypeSwitching, indexTypeFlat)
+		m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 		return
 	}
 
@@ -251,7 +242,7 @@ func (m *indexManager) buildHNSWIndex() {
 			applogger.Error("HNSW build: invalid embedding",
 				"kb_id", m.kbID, "index", i, "total", len(entries),
 				"chunk_id", e.ChunkID, "embedding_len", len(e.Embedding))
-			m.casIndexType(indexTypeSwitching, indexTypeFlat)
+			m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 			return
 		}
 		if err := safeAddToGraph(sg, uint64(e.ChunkID), e.Embedding); err != nil {
@@ -260,7 +251,7 @@ func (m *indexManager) buildHNSWIndex() {
 				"kb_id", m.kbID, "index", i, "total", len(entries),
 				"chunk_id", e.ChunkID, "embedding_len", len(e.Embedding),
 				"sample", sample, "error", err)
-			m.casIndexType(indexTypeSwitching, indexTypeFlat)
+			m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 			return
 		}
 		addedChunkIDs[uint64(e.ChunkID)] = true
@@ -285,7 +276,7 @@ func (m *indexManager) buildHNSWIndex() {
 			applogger.Error("HNSW build: invalid pending embedding",
 				"kb_id", m.kbID, "index", i, "total_pending", len(pending),
 				"chunk_id", pv.ChunkID, "embedding_len", len(pv.Embedding))
-			m.casIndexType(indexTypeSwitching, indexTypeFlat)
+			m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 			return
 		}
 		if err := safeAddToGraph(sg, pv.ChunkID, pv.Embedding); err != nil {
@@ -294,7 +285,7 @@ func (m *indexManager) buildHNSWIndex() {
 				"kb_id", m.kbID, "index", i, "total_pending", len(pending),
 				"chunk_id", pv.ChunkID, "embedding_len", len(pv.Embedding),
 				"sample", sample, "error", err)
-			m.casIndexType(indexTypeSwitching, indexTypeFlat)
+			m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 			return
 		}
 		addedChunkIDs[pv.ChunkID] = true
@@ -305,18 +296,18 @@ func (m *indexManager) buildHNSWIndex() {
 
 	if err := saveGraph(sg); err != nil {
 		applogger.Error("Failed to save HNSW graph", "kb_id", m.kbID, "error", err)
-		m.casIndexType(indexTypeSwitching, indexTypeFlat)
+		m.casIndexType(model.KnowledgeBaseIndexTypeSwitching, model.KnowledgeBaseIndexTypeSwitching)
 		return
 	}
 
 	m.mu.Lock()
 	m.graph = sg
-	m.indexType = indexTypeHNSW
+	m.indexType = model.KnowledgeBaseIndexTypeHNSW
 	m.mu.Unlock()
 
 	if err := database.DB.Model(&model.KnowledgeBase{}).
-		Where("id = ? AND index_type = ?", m.kbID, int(indexTypeSwitching)).
-		Update("index_type", int(indexTypeHNSW)).Error; err != nil {
+		Where("id = ? AND index_type = ?", m.kbID, model.KnowledgeBaseIndexTypeSwitching).
+		Update("index_type", model.KnowledgeBaseIndexTypeHNSW).Error; err != nil {
 		applogger.Error("failed to update KB index type after HNSW build", "kb_id", m.kbID, "error", err)
 	}
 
@@ -334,12 +325,12 @@ func (m *indexManager) Search(query []float32, topK int) ([]searchCandidate, err
 	}
 
 	switch m.indexType {
-	case indexTypeHNSW:
+	case model.KnowledgeBaseIndexTypeHNSW:
 		return m.searchHNSW(query, topK)
-	case indexTypeFlat, indexTypeSwitching:
+	case model.KnowledgeBaseIndexTypeSwitching:
 		return m.searchFlat(query, topK)
 	default:
-		return nil, fmt.Errorf("unknown index type: %s", m.indexType)
+		return nil, fmt.Errorf("unknown index type: %d", m.indexType)
 	}
 }
 
@@ -363,10 +354,10 @@ func (m *indexManager) searchHNSW(query []float32, topK int) ([]searchCandidate,
 			applogger.Error("failed to scan vector embedding in index manager", "chunk_id", n.Key, "error", err)
 			continue
 		}
-		vec := vectorstore.BlobToFloat32Slice(blob)
+		vec := vectorutils.BlobToFloat32Slice(blob)
 		results = append(results, searchCandidate{
 			ChunkID: n.Key,
-			Score:   vectorstore.CosineSimilarity(query, vec),
+			Score:   vectorutils.CosineSimilarity(query, vec),
 		})
 	}
 
@@ -386,7 +377,7 @@ func (m *indexManager) searchFlat(query []float32, topK int) ([]searchCandidate,
 
 	scores := make([]scored, 0, len(entries))
 	for _, e := range entries {
-		sim := vectorstore.CosineSimilarity(query, e.Embedding)
+		sim := vectorutils.CosineSimilarity(query, e.Embedding)
 		scores = append(scores, scored{chunkID: uint64(e.ChunkID), score: sim})
 	}
 
@@ -424,7 +415,7 @@ func (m *indexManager) loadAllVectors() ([]vectorEntry, error) {
 		}
 		entries = append(entries, vectorEntry{
 			ChunkID:   chunkID,
-			Embedding: vectorstore.BlobToFloat32Slice(blob),
+			Embedding: vectorutils.BlobToFloat32Slice(blob),
 		})
 	}
 	return entries, rows.Err()
@@ -439,10 +430,10 @@ func (m *indexManager) loadHNSWGraph() error {
 	return nil
 }
 
-func (m *indexManager) casIndexType(from, to indexType) bool {
+func (m *indexManager) casIndexType(from, to model.KnowledgeBaseIndexType) bool {
 	result := database.DB.Model(&model.KnowledgeBase{}).
-		Where("id = ? AND index_type = ?", m.kbID, int(from)).
-		Update("index_type", int(to))
+		Where("id = ? AND index_type = ?", m.kbID, from).
+		Update("index_type", to)
 	if result.RowsAffected == 1 {
 		m.mu.Lock()
 		m.indexType = to

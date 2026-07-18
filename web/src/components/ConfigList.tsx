@@ -99,6 +99,7 @@ export default function ConfigList<T extends { id: number }>({
       setConfigs([response.data, ...configs]);
       setModalVisible(false);
       form.resetFields();
+      onCreateClose?.();
       message.success(t(`${i18nPrefix}.createSuccess`));
       onSelectConfig?.(response.data);
       onConfigChanged?.();

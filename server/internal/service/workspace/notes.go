@@ -18,11 +18,16 @@ import (
 type NoteType int
 
 const (
+	// NoteTypeObservation records what was observed.
 	NoteTypeObservation NoteType = 1
-	NoteTypeDecision    NoteType = 2
-	NoteTypeFinding     NoteType = 3
-	NoteTypeCorrection  NoteType = 4
-	NoteTypeProgress    NoteType = 5
+	// NoteTypeDecision records a decision made.
+	NoteTypeDecision NoteType = 2
+	// NoteTypeFinding records a finding or discovery.
+	NoteTypeFinding NoteType = 3
+	// NoteTypeCorrection records a correction to previous information.
+	NoteTypeCorrection NoteType = 4
+	// NoteTypeProgress records progress on a task.
+	NoteTypeProgress NoteType = 5
 )
 
 // String returns the uppercase display name for the note type.

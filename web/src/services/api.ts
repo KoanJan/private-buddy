@@ -37,13 +37,14 @@ function resolvePort(): Promise<number> {
         logger.info('[api] resolved dynamic port:', port);
         return port;
       }
-      logger.warn('[api] IPC returned invalid port, falling back to default');
     } catch (err) {
       logger.warn('[api] getServerPort failed (non-Electron env?):', err);
     }
-    resolvedPort = DEFAULT_PORT;
-    logger.info('[api] using default port:', DEFAULT_PORT);
-    return DEFAULT_PORT;
+    // Non-Electron (browser/Docker): use relative URLs, let the serving host proxy /api.
+    // Dev mode relies on Vite proxy; Docker uses nginx reverse proxy.
+    resolvedPort = -1;
+    logger.info('[api] using relative API path (non-Electron)');
+    return -1;
   })();
 
   return portPromise;
@@ -52,6 +53,7 @@ function resolvePort(): Promise<number> {
 // Build base URL from resolved port (or default if not yet resolved).
 function buildBaseUrl(): string {
   const port = resolvedPort ?? DEFAULT_PORT;
+  if (port === -1) return '';
   return `http://${SERVER_HOST}:${port}`;
 }
 
@@ -77,8 +79,12 @@ const api = axios.create({
 
 api.interceptors.request.use(async (config) => {
   const port = await resolvePort();
-  const url = `http://${SERVER_HOST}:${port}/api`;
-  config.baseURL = url;
+  if (port === -1) {
+    // Non-Electron: use relative path, browser resolves to current origin
+    config.baseURL = '/api';
+  } else {
+    config.baseURL = `http://${SERVER_HOST}:${port}/api`;
+  }
   return config;
 });
 

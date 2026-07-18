@@ -6,7 +6,7 @@ import (
 
 	"private-buddy-server/internal/database"
 	"private-buddy-server/internal/model"
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -57,7 +57,7 @@ func storeEventEmbedding(ctx context.Context, eventID int64, content string) err
 		return fmt.Errorf("embedding generation failed: %w", err)
 	}
 
-	blob := vectorstore.Float32SliceToBlob(embedding)
+	blob := vectorutils.Float32SliceToBlob(embedding)
 	ev := &model.EventVector{
 		EventID:   eventID,
 		Embedding: blob,

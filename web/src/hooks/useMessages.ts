@@ -142,7 +142,10 @@ export function useMessages(
     const prevId = prevSessionIdRef.current;
     const currentId = sessionRef.current?.id ?? null;
 
-    const isTempToReal = prevId === TEMP_SESSION_ID && currentId !== null && currentId !== TEMP_SESSION_ID;
+    // Only skip loading when this is a genuine temp→real transition (user sent
+    // a message). A switch from an unsent temp session to an unrelated old
+    // session should load messages normally.
+    const isTempToReal = prevId === TEMP_SESSION_ID && currentId !== null && currentId !== TEMP_SESSION_ID && skipLoadRef.current;
     if (isTempToReal) {
       prevSessionIdRef.current = currentId;
       skipLoadRef.current = true;

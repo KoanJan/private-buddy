@@ -159,7 +159,7 @@ const ReceivedPanel: React.FC<ReceivedPanelProps> = ({ sessionId }) => {
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '40px' }}>
+      <div className="received-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Spin size="large" />
       </div>
     );
@@ -167,7 +167,7 @@ const ReceivedPanel: React.FC<ReceivedPanelProps> = ({ sessionId }) => {
 
   if (deliveries.length === 0) {
     return (
-      <div className="received-panel">
+      <div className="received-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Empty description="No delivered files yet" />
       </div>
     );

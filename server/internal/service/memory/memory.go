@@ -9,6 +9,7 @@ import (
 	"private-buddy-server/internal/dops"
 	"private-buddy-server/internal/model"
 	"private-buddy-server/internal/service/llm"
+	"private-buddy-server/internal/service/vectorutils"
 
 	applogger "private-buddy-server/internal/logger"
 )
@@ -199,10 +200,21 @@ func propagateRetrievalHit(obs *model.AgentObservation, delta float64) {
 		}
 	}
 
+	// Load the hit event's embedding for semantic propagation
+	var hitEmbedding []float32
+	var ev model.EventVector
+	if err := database.DB.Where("event_id = ?", obs.EventID).First(&ev).Error; err != nil {
+		applogger.Error("propagateRetrievalHit: failed to load event vector, semantic propagation will be skipped",
+			"event_id", obs.EventID, "error", err)
+	} else {
+		hitEmbedding = vectorutils.BlobToFloat32Slice(ev.Embedding)
+	}
+
 	params := propagateParams{
 		DeltaBase:         delta,
 		HitEventID:        obs.EventID,
 		HitSessionID:      sessionID,
+		HitEmbedding:      hitEmbedding,
 		AllObservationIDs: obsWithCtx,
 	}
 

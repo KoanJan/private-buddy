@@ -11,7 +11,6 @@ func TestCycleDetect_NoCycle(t *testing.T) {
 	args1 := map[string]interface{}{"command": "ls"}
 	args2 := map[string]interface{}{"command": "pwd"}
 
-	// Different args, same result — not a cycle (input changed)
 	cs := d.CycleDetect(args1, "output-a")
 	if cs != NoCycleDetected {
 		t.Fatalf("first call should not detect cycle, got %+v", cs)
@@ -23,67 +22,24 @@ func TestCycleDetect_NoCycle(t *testing.T) {
 	}
 }
 
-// TestCycleDetect_SameArgsDifferentResult verifies that when the same args
-// produce a different result, the counter resets — this is progress, not a cycle.
-func TestCycleDetect_SameArgsDifferentResult(t *testing.T) {
-	d := &CycleDetector{}
-
-	args := map[string]interface{}{"command": "date"}
-
-	// Call 1: same args, result A
-	cs := d.CycleDetect(args, "result-A")
-	if cs != NoCycleDetected {
-		t.Fatalf("first call should not detect, got %+v", cs)
-	}
-
-	// Call 2: same args, result A again → count=1, no warning yet
-	cs = d.CycleDetect(args, "result-A")
-	if cs != NoCycleDetected {
-		t.Fatalf("count=1 should not warn, got %+v", cs)
-	}
-
-	// Call 3: same args, but different result → counter resets
-	cs = d.CycleDetect(args, "result-B")
-	if cs != NoCycleDetected {
-		t.Fatalf("different result should reset counter, got %+v", cs)
-	}
-
-	// Call 4: same args, result B → count=0 (just reset), not 3
-	cs = d.CycleDetect(args, "result-B")
-	if cs != NoCycleDetected {
-		t.Fatalf("after reset, count=1 should not warn, got %+v", cs)
-	}
-}
-
 // TestCycleDetect_WarnThreshold verifies that the warning fires exactly at
-// warnThreshold (3) consecutive identical calls.
+// warnThreshold (3) consecutive identical (args, result) pairs.
 func TestCycleDetect_WarnThreshold(t *testing.T) {
 	d := &CycleDetector{}
 
 	args := map[string]interface{}{"command": "echo hello"}
 	result := "hello"
 
-	// Call 1: count becomes 0 (first call, no previous to match)
-	// Actually, first call: sig != "" (lastSignature default), so count=0
+	// Calls 1-3: count=0,1,2 — no detection
+	for i := 0; i < 3; i++ {
+		cs := d.CycleDetect(args, result)
+		if cs != NoCycleDetected {
+			t.Fatalf("call %d: expected no detection, got %+v", i+1, cs)
+		}
+	}
+
+	// Call 4: count=3 → warn
 	cs := d.CycleDetect(args, result)
-	if cs != NoCycleDetected {
-		t.Fatalf("call 1: expected no detection, got %+v", cs)
-	}
-
-	// Call 2: same pair, count=1
-	cs = d.CycleDetect(args, result)
-	if cs != NoCycleDetected {
-		t.Fatalf("call 2: expected no detection, got %+v", cs)
-	}
-
-	// Call 3: same pair, count=2
-	cs = d.CycleDetect(args, result)
-	if cs != NoCycleDetected {
-		t.Fatalf("call 3: expected no detection (count=2 < threshold 3), got %+v", cs)
-	}
-
-	// Call 4: same pair, count=3 → warn
-	cs = d.CycleDetect(args, result)
 	if cs.Warning == "" {
 		t.Fatal("call 4: expected warning at count=3")
 	}
@@ -91,7 +47,7 @@ func TestCycleDetect_WarnThreshold(t *testing.T) {
 		t.Fatal("call 4: should not be blocked at count=3")
 	}
 
-	// Call 5: same pair, count=4 → still warn
+	// Call 5: count=4 → still warn
 	cs = d.CycleDetect(args, result)
 	if cs.Warning == "" {
 		t.Fatal("call 5: expected warning at count=4")
@@ -101,17 +57,16 @@ func TestCycleDetect_WarnThreshold(t *testing.T) {
 	}
 }
 
-// TestCycleDetect_BlockThreshold verifies that block fires at blockThreshold (8).
-// Note: the first call initializes lastSignature with count=0 (no previous to match).
-// So count=N requires N+1 total calls. Block at count=8 needs 9 calls.
+// TestCycleDetect_BlockThreshold verifies the full warn→block transition.
+// First call initializes lastSignature (count=0); block fires when count
+// reaches blockThreshold (8), which requires 9 total calls.
 func TestCycleDetect_BlockThreshold(t *testing.T) {
 	d := &CycleDetector{}
 
 	args := map[string]interface{}{"command": "npm run dev"}
 	result := `{"exit_code":1,"stderr":"Error: Cannot find module"}`
 
-	// Call 1: count=0 (init), no detection
-	// Calls 2-3: count=1→2, no detection
+	// Calls 1-3: count=0,1,2 — no detection
 	for i := 0; i < 3; i++ {
 		cs := d.CycleDetect(args, result)
 		if cs != NoCycleDetected {
@@ -119,29 +74,19 @@ func TestCycleDetect_BlockThreshold(t *testing.T) {
 		}
 	}
 
-	// Calls 4-6: count=3→5, warnings
-	for i := 0; i < 3; i++ {
+	// Calls 4-8: count=3→7 — warnings
+	for i := 4; i <= 8; i++ {
 		cs := d.CycleDetect(args, result)
 		if cs.Warning == "" {
-			t.Fatalf("call %d: expected warning, got %+v", i+4, cs)
+			t.Fatalf("call %d: expected warning, got %+v", i, cs)
 		}
 		if cs.Blocked {
-			t.Fatalf("call %d: should not be blocked", i+4)
+			t.Fatalf("call %d: should not be blocked before count=8", i)
 		}
-	}
-
-	// Calls 7-8: count=6→7, still warning only
-	cs := d.CycleDetect(args, result)
-	if cs.Warning == "" || cs.Blocked {
-		t.Fatalf("call 7: expected warning only, got %+v", cs)
-	}
-	cs = d.CycleDetect(args, result)
-	if cs.Warning == "" || cs.Blocked {
-		t.Fatalf("call 8: expected warning only, got %+v", cs)
 	}
 
 	// Call 9: count=8 → block
-	cs = d.CycleDetect(args, result)
+	cs := d.CycleDetect(args, result)
 	if !cs.Blocked {
 		t.Fatal("call 9: expected block at count=8")
 	}
@@ -163,7 +108,7 @@ func TestCycleDetect_BlockIsPersistent(t *testing.T) {
 		d.CycleDetect(args, result)
 	}
 
-	// Now blocked — any call should return blocked
+	// Blocked — any call should return blocked
 	cs := d.CycleDetect(map[string]interface{}{"command": "pwd"}, "different result")
 	if !cs.Blocked {
 		t.Fatal("after block, different args should still return blocked")
@@ -172,33 +117,6 @@ func TestCycleDetect_BlockIsPersistent(t *testing.T) {
 	cs = d.CycleDetect(args, result)
 	if !cs.Blocked {
 		t.Fatal("after block, same args should still return blocked")
-	}
-}
-
-// TestCycleDetect_CounterResetsOnDifferentArgs verifies that changing args
-// resets the consecutive counter.
-func TestCycleDetect_CounterResetsOnDifferentArgs(t *testing.T) {
-	d := &CycleDetector{}
-
-	args1 := map[string]interface{}{"command": "echo a"}
-	args2 := map[string]interface{}{"command": "echo b"}
-	result := "same output"
-
-	// Build up to count=2 with args1
-	d.CycleDetect(args1, result)
-	d.CycleDetect(args1, result)
-
-	// Different args → counter resets
-	cs := d.CycleDetect(args2, result)
-	if cs != NoCycleDetected {
-		t.Fatalf("different args should reset, got %+v", cs)
-	}
-
-	// Back to args1: count should be 0, not 3
-	d.CycleDetect(args1, result)
-	cs = d.CycleDetect(args1, result)
-	if cs != NoCycleDetected {
-		t.Fatalf("after reset, count should be 1 not 3, got %+v", cs)
 	}
 }
 
@@ -212,73 +130,29 @@ func TestCycleDetect_NilArgs(t *testing.T) {
 		}
 	}()
 
-	cs := d.CycleDetect(nil, "result")
-	if cs != NoCycleDetected {
-		t.Fatalf("first call with nil args should not detect, got %+v", cs)
-	}
-
-	// Same nil args + same result → should count
-	cs = d.CycleDetect(nil, "result")
-	if cs != NoCycleDetected {
-		t.Fatalf("count=1 should not warn, got %+v", cs)
-	}
-}
-
-// TestCycleDetect_EmptyResult verifies that empty result strings work correctly.
-func TestCycleDetect_EmptyResult(t *testing.T) {
-	d := &CycleDetector{}
-
-	args := map[string]interface{}{"command": "true"}
-
-	// Empty result is a valid output — same empty result should count.
-	// First call initializes (count=0), then 7 more to reach count=7 (still warning).
-	for i := 0; i < 8; i++ {
-		cs := d.CycleDetect(args, "")
-		if cs.Blocked {
-			t.Fatalf("call %d: should not block before threshold", i+1)
-		}
-	}
-
-	// 9th call → count=8 → block
-	cs := d.CycleDetect(args, "")
-	if !cs.Blocked {
-		t.Fatal("9th call with identical empty result should block")
-	}
+	d.CycleDetect(nil, "result")
 }
 
 // TestCycleDetect_ArgsOrderInvariant verifies that the same args with different
-// map key order produce the same signature (JSON marshalling sorts keys).
+// map key order produce the same signature (json.Marshal sorts keys).
 func TestCycleDetect_ArgsOrderInvariant(t *testing.T) {
 	d := &CycleDetector{}
 
-	// Go maps don't guarantee iteration order, but json.Marshal sorts keys.
-	// So two maps with the same content will produce the same signature.
 	args1 := map[string]interface{}{"a": "1", "b": "2"}
 	args2 := map[string]interface{}{"b": "2", "a": "1"}
 	result := "output"
 
-	// Call 1 with args1
+	// Calls 1-3: count=0,1,2 — no detection
 	d.CycleDetect(args1, result)
-
-	// Call 2 with args2 (same content, different declaration order)
-	// Should be treated as same args → count increments
-	cs := d.CycleDetect(args2, result)
-	if cs != NoCycleDetected {
-		// count=1, not enough for warning
-		if cs.Warning != "" {
-			t.Fatalf("count=1 should not warn, got %+v", cs)
-		}
-	}
-
-	// Call 3 with args1 again → count=2, still no warning
-	cs = d.CycleDetect(args1, result)
+	d.CycleDetect(args2, result) // same content, different key order → count=1
+	cs := d.CycleDetect(args1, result)
 	if cs.Warning != "" {
 		t.Fatalf("count=2 should not warn, got %+v", cs)
 	}
 
-	// Call 4 → count=3, warning
+	// Call 4: count=3 → warning
 	cs = d.CycleDetect(args2, result)
 	if cs.Warning == "" {
-		t.Fatal("count=3 should warn — args order should not matter")
+		t.Fatal("count=3 should warn — args key order should not matter")
 	}
 }

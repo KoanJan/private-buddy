@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"private-buddy-server/internal/service/vectorstore"
+	"private-buddy-server/internal/service/vectorutils"
 
 	_ "github.com/glebarez/go-sqlite/compat"
 )
@@ -41,7 +41,7 @@ func newVectorStore(dbPath string) (*vectorStore, error) {
 
 // Insert adds a vector embedding for a chunk.
 func (vs *vectorStore) Insert(chunkID int64, embedding []float32) error {
-	blob := vectorstore.Float32SliceToBlob(embedding)
+	blob := vectorutils.Float32SliceToBlob(embedding)
 	_, err := vs.db.Exec(
 		"INSERT OR REPLACE INTO vectors (chunk_id, embedding) VALUES (?, ?)",
 		chunkID, blob,
@@ -67,7 +67,7 @@ func (vs *vectorStore) InsertBatch(entries []vectorEntry) error {
 		if !isValidvectorEntry(e) {
 			return fmt.Errorf("invalid embedding for chunk_id %d at index %d: empty or contains NaN/Inf", e.ChunkID, i)
 		}
-		blob := vectorstore.Float32SliceToBlob(e.Embedding)
+		blob := vectorutils.Float32SliceToBlob(e.Embedding)
 		if _, err := stmt.Exec(e.ChunkID, blob); err != nil {
 			return err
 		}
@@ -99,7 +99,7 @@ func (vs *vectorStore) Get(chunkID int64) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	return vectorstore.BlobToFloat32Slice(blob), nil
+	return vectorutils.BlobToFloat32Slice(blob), nil
 }
 
 // GetAll retrieves all vectors from the store.
@@ -119,7 +119,7 @@ func (vs *vectorStore) GetAll() ([]vectorEntry, error) {
 		}
 		entries = append(entries, vectorEntry{
 			ChunkID:   chunkID,
-			Embedding: vectorstore.BlobToFloat32Slice(blob),
+			Embedding: vectorutils.BlobToFloat32Slice(blob),
 		})
 	}
 	return entries, rows.Err()
