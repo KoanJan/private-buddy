@@ -204,7 +204,7 @@ Return the IDs of experiences worth learning in the learn_ids field.`, profileTe
 
 	schemaDef := llm.JSONSchemaDefinition{
 		Name:   "learn_decision",
-		Schema: json.RawMessage(schema),
+		Schema: schema,
 		Strict: true,
 	}
 

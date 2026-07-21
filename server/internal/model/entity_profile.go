@@ -3,9 +3,13 @@ package model
 import "time"
 
 // Entity type constants for entity_profiles.entity_type.
+type EntityType int
+
 const (
-	EntityTypePerson  = 1 // Profile about a person (AI or human)
-	EntityTypeSession = 2 // Profile about a session
+	// EntityTypePerson represents a person entity (AI or human).
+	EntityTypePerson  EntityType = iota + 1
+	// EntityTypeSession represents a session entity.
+	EntityTypeSession
 )
 
 // EntityProfile represents a directional narrative that one person has formed
@@ -24,15 +28,15 @@ const (
 //   - Each generation is fresh — no prior narrative is fed to the LLM.
 //   - Rate limit: same profile at most once per 24 hours.
 type EntityProfile struct {
-	ID            int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	PersonID      int64     `gorm:"not null;uniqueIndex:idx_entity_profile;column:person_id" json:"person_id"`
-	EntityType    int       `gorm:"not null;uniqueIndex:idx_entity_profile;column:entity_type" json:"entity_type"`
-	EntityID      int64     `gorm:"not null;uniqueIndex:idx_entity_profile;column:entity_id" json:"entity_id"`
-	Narrative     string    `gorm:"type:text;not null" json:"narrative"`
-	EvidenceCount int       `gorm:"not null;default:0;column:evidence_count" json:"evidence_count"`
-	InputMD5      string    `gorm:"not null;default:'';column:input_md5" json:"input_md5"`
-	LastUpdatedAt time.Time `gorm:"not null;autoUpdateTime;column:last_updated_at" json:"last_updated_at"`
-	CreatedAt     time.Time `gorm:"not null;autoCreateTime" json:"created_at"`
+	ID            int64      `gorm:"primaryKey;autoIncrement" json:"id"`
+	PersonID      int64      `gorm:"not null;uniqueIndex:idx_entity_profile;column:person_id" json:"person_id"`
+	EntityType    EntityType `gorm:"not null;uniqueIndex:idx_entity_profile;column:entity_type" json:"entity_type"`
+	EntityID      int64      `gorm:"not null;uniqueIndex:idx_entity_profile;column:entity_id" json:"entity_id"`
+	Narrative     string     `gorm:"type:text;not null" json:"narrative"`
+	EvidenceCount int        `gorm:"not null;default:0;column:evidence_count" json:"evidence_count"`
+	InputMD5      string     `gorm:"not null;default:'';column:input_md5" json:"input_md5"`
+	LastUpdatedAt time.Time  `gorm:"not null;autoUpdateTime;column:last_updated_at" json:"last_updated_at"`
+	CreatedAt     time.Time  `gorm:"not null;autoCreateTime" json:"created_at"`
 }
 
 // TableName returns the database table name for EntityProfile.

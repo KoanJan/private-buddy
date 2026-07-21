@@ -36,6 +36,8 @@ func (c *SilentErrorChecker) Accept(ext string) bool { return ext == ".go" }
 
 // Check scans a Go source file for silently consumed error values.
 func (c *SilentErrorChecker) Check(filePath string, content []byte) ([]Finding, error) {
+	isTest := strings.HasSuffix(filePath, "_test.go")
+
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filePath, content, 0)
 	if err != nil {
@@ -55,7 +57,7 @@ func (c *SilentErrorChecker) Check(filePath string, content []byte) ([]Finding, 
 		errVars := make(map[string]bool)
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			c.collectErrVars(node, errVars)
-			c.checkSilentConsumption(fset, filePath, node, errVars, &findings)
+			c.checkSilentConsumption(fset, filePath, node, errVars, &findings, isTest)
 			return true
 		})
 		return true
@@ -97,7 +99,7 @@ func (c *SilentErrorChecker) isErrorReturnExpr(expr ast.Expr) bool {
 
 // checkSilentConsumption detects if-blocks where an error is checked but not
 // logged, wrapped, or returned.
-func (c *SilentErrorChecker) checkSilentConsumption(fset *token.FileSet, filePath string, node ast.Node, errVars map[string]bool, findings *[]Finding) {
+func (c *SilentErrorChecker) checkSilentConsumption(fset *token.FileSet, filePath string, node ast.Node, errVars map[string]bool, findings *[]Finding, isTest bool) {
 	ifStmt, ok := node.(*ast.IfStmt)
 	if !ok {
 		return
@@ -129,16 +131,26 @@ func (c *SilentErrorChecker) checkSilentConsumption(fset *token.FileSet, filePat
 		return
 	}
 
-	// Check if any statement in the body logs, wraps, or returns the error
+	// Check if any statement in the body logs, wraps, or terminates on the error.
+	// Rules differ by file type:
+	//   - Production code: logging, return, or panic are acceptable.
+	//   - Test code: only t.Fatal/t.Errorf are acceptable; applogger is NOT allowed
+	//     because tests should use the testing.T assertion methods.
 	for _, stmt := range body.List {
-		if c.isLogCall(stmt) {
-			return // Error is logged — acceptable
-		}
 		if c.isReturnStmt(stmt) {
-			return // Error is returned/wrapped — acceptable
+			return // Error is returned/wrapped — acceptable in both
 		}
 		if c.isPanic(stmt) {
-			return // Explicit panic — acceptable
+			return // Explicit panic — acceptable in both
+		}
+		if isTest {
+			if c.isTestFatalCall(stmt) || c.isTestErrorCall(stmt) {
+				return // t.Fatal/t.Errorf — acceptable in *_test.go
+			}
+		} else {
+			if c.isLogCall(stmt) {
+				return // Error is logged — acceptable in production code
+			}
 		}
 	}
 
@@ -222,6 +234,42 @@ func (c *SilentErrorChecker) isPanic(stmt ast.Stmt) bool {
 		return ident.Name == "panic"
 	}
 	return false
+}
+
+// isTestFatalCall checks if a statement is a t.Fatal or t.Fatalf call.
+// These are the idiomatic way to terminate a test on error.
+func (c *SilentErrorChecker) isTestFatalCall(stmt ast.Stmt) bool {
+	exprStmt, ok := stmt.(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := exprStmt.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	return sel.Sel.Name == "Fatal" || sel.Sel.Name == "Fatalf"
+}
+
+// isTestErrorCall checks if a statement is a t.Error or t.Errorf call.
+// These are the idiomatic way to record a test failure without immediate termination.
+func (c *SilentErrorChecker) isTestErrorCall(stmt ast.Stmt) bool {
+	exprStmt, ok := stmt.(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := exprStmt.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	return sel.Sel.Name == "Error" || sel.Sel.Name == "Errorf"
 }
 
 // isNil checks if an expression is the nil literal.

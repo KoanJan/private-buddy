@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"private-buddy-server/internal/audit"
-	"private-buddy-server/internal/audit/baseline"
-	"private-buddy-server/internal/audit/checker"
-	"private-buddy-server/internal/audit/reporter"
+	"private-buddy-ci/audit/internal/audit"
+	"private-buddy-ci/audit/internal/audit/baseline"
+	"private-buddy-ci/audit/internal/audit/checker"
+	"private-buddy-ci/audit/internal/audit/reporter"
 )
 
 // Version is set at build time via ldflags.

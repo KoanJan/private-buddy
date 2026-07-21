@@ -15,15 +15,6 @@ import (
 	applogger "private-buddy-server/internal/logger"
 )
 
-// Entity direction constants for density detection grouping.
-// Each observation can contribute to multiple entity directions (e.g., a
-// message belongs to both a session and a person, so it counts toward both
-// the session profile and the person profile).
-const (
-	entityDirSession = iota + 1
-	entityDirPerson
-)
-
 // Profile generation constants.
 const (
 	profileTriggerMin   = 10  // 10 Minimum observations in one direction to trigger generation
@@ -33,7 +24,7 @@ const (
 
 // entityDirection is a composite key for grouping observations by entity.
 type entityDirection struct {
-	EntityType int
+	EntityType model.EntityType
 	EntityID   int64
 }
 
@@ -228,7 +219,7 @@ func resolveEntityDirections(observations []model.AgentObservation) map[entityDi
 
 // isRateLimited checks whether a profile was recently updated (within the
 // rate limit window). Returns true if the profile should be skipped.
-func isRateLimited(entityType int, entityID, personID int64) bool {
+func isRateLimited(entityType model.EntityType, entityID, personID int64) bool {
 	var profile model.EntityProfile
 	err := database.DB.Where("person_id = ? AND entity_type = ? AND entity_id = ?",
 		personID, entityType, entityID).First(&profile).Error
@@ -245,7 +236,7 @@ func isRateLimited(entityType int, entityID, personID int64) bool {
 // formats them as evidence, and asks the LLM to synthesize a fresh narrative
 // (no prior narrative is fed). MD5 of the evidence text is compared with the
 // existing profile's input_md5 — if unchanged, generation is skipped.
-func generateProfile(ctx context.Context, personID int64, entityType int, entityID int64) {
+func generateProfile(ctx context.Context, personID int64, entityType model.EntityType, entityID int64) {
 	applogger.Info("Generating EntityProfile",
 		"person_id", personID,
 		"entity_type", entityType,
@@ -399,7 +390,7 @@ Key observations:
 
 // entityLabel returns a human-readable label for the entity type/ID combination.
 // Returns (label, true) on success, ("", false) if the entity name cannot be resolved.
-func entityLabel(entityType int, entityID int64) (string, bool) {
+func entityLabel(entityType model.EntityType, entityID int64) (string, bool) {
 	switch entityType {
 	case model.EntityTypePerson:
 		var person model.Person
@@ -420,7 +411,7 @@ func entityLabel(entityType int, entityID int64) (string, bool) {
 //
 // Selection: top profileTopK observations sorted by importance DESC (id DESC as
 // tiebreaker for equal importance). No survival_count gate.
-func loadProfileEvidences(personID int64, entityType int, entityID int64, agentName string) []string {
+func loadProfileEvidences(personID int64, entityType model.EntityType, entityID int64, agentName string) []string {
 	// Load all observations ordered by importance DESC, then id DESC for recency tiebreaking.
 	var observations []model.AgentObservation
 	if err := database.DB.Where("person_id = ?", personID).
@@ -566,7 +557,7 @@ func getLLMConfig(configID int64) *model.LLMConfig {
 
 // LoadProfileForEntity returns the narrative from an agent's EntityProfile for
 // a specific entity (user/agent/session). Returns empty string if no profile exists.
-func LoadProfileForEntity(personID int64, entityType int, entityID int64) string {
+func LoadProfileForEntity(personID int64, entityType model.EntityType, entityID int64) string {
 	var profile model.EntityProfile
 	err := database.DB.Where("person_id = ? AND entity_type = ? AND entity_id = ?",
 		personID, entityType, entityID).First(&profile).Error

@@ -71,19 +71,6 @@ func onRetrievalHit(obs *model.AgentObservation) float64 {
 	return deltaBase
 }
 
-// isKeyMoment returns true if the observation's importance exceeds the
-// key moment threshold, indicating a significant event worth highlighting.
-func isKeyMoment(obs *model.AgentObservation) bool {
-	return obs.Importance >= keyMomentThreshold
-}
-
-// applyDecay applies daily multiplicative decay to an observation's importance.
-// importance *= decayFactor, asymptotically approaching but never reaching zero.
-// This provides the forgetting mechanism: unused observations slowly fade.
-func applyDecay(obs *model.AgentObservation) {
-	obs.Importance *= decayFactor
-}
-
 // newObservation creates a new AgentObservation with default scores.
 func newObservation(personID, eventID int64) *model.AgentObservation {
 	now := time.Now()

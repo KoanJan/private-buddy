@@ -8,8 +8,7 @@ import AgentAvatar from './AgentAvatar';
 import AgentStatusBar from './AgentStatusBar';
 import ActivityList from './ActivityList';
 import ReceivedPanel from './ReceivedPanel';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownRenderer } from 'pd-markdown/web';
 import { useSSE } from '../hooks/useSSE';
 import { useMessages } from '../hooks/useMessages';
 import type { Message, Session, Agent, SessionAgentStatus } from '../types';
@@ -303,9 +302,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ session, onSessionCreated }) =>
                         return (
                           <div className={`message-content${collapsed ? ' collapsed' : ''}`}>
                             {msg.person_id !== currentUserPersonId ? (
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {msg.content}
-                              </ReactMarkdown>
+                              <MarkdownRenderer source={msg.content} />
                             ) : (
                               msg.content
                             )}

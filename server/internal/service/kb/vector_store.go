@@ -158,8 +158,8 @@ func (vs *vectorStore) Delete(chunkIDs []int64) error {
 }
 
 // Close closes the underlying database connection.
-func (vs *vectorStore) Close() error {
-	return vs.db.Close()
+func (vs *vectorStore) Close() {
+	vs.db.Close()
 }
 
 // vectorEntry represents a chunk vector record.

@@ -195,7 +195,7 @@ skip: true only if the log contains nothing transferable.
 
 	schemaDef := llm.JSONSchemaDefinition{
 		Name:   "reflect_output",
-		Schema: json.RawMessage(schema),
+		Schema: schema,
 		Strict: true,
 	}
 

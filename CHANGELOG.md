@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.35] - 2026-07-21
+
+### Added
+- **Skill Frontmatter Parsing**: `ExtractSkillFrontmatter` parses YAML frontmatter (name, description) from SKILL.md files, enabling direct transmission instead of LLM rewriting; `FormatRawWithLineNumbers` formats full content with line numbers for prompt context
+
+### Changed
+- **Experience Ingestion Decoupling**: title and description now sourced directly from SKILL.md frontmatter; body content preserved via `LineRange`/`SectionRef` with PRESERVE/SUPPLEMENT/GENERATE three modes — LLM references original content by line numbers instead of rewriting; LLM-generated sections used only as fallback when original sections don't exist
+- **Markdown Rendering**: `react-markdown` + `remark-gfm` replaced with `pd-markdown` across `PublicExperienceDetail` and `ChatWindow`, providing built-in full Markdown styling, GFM support, and YAML frontmatter parsing
+- **Public Experience Source Display**: SKILL.md source tab now renders frontmatter as a key-value table and body content as Markdown, replacing the old raw text display
+
 ## [0.0.34] - 2026-07-18
 
 ### Added

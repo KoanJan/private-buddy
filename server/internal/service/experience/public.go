@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"private-buddy-server/internal/database"
 	applogger "private-buddy-server/internal/logger"
@@ -17,17 +18,83 @@ type PublicSearchResult struct {
 	Score      float64 // Cosine similarity, 0..1
 }
 
+// resolveSectionRef resolves a SectionRef into the final text to store.
+//
+// Rules (in priority order):
+//  1. If LineRange is valid and within rawContent bounds → extract those lines.
+//     If Content is also non-empty → append it (SUPPLEMENT mode).
+//  2. If only Content is non-empty → use Content (GENERATE fallback).
+//  3. Otherwise → empty string.
+func resolveSectionRef(ref SectionRef, rawContent string) string {
+	if ref.LineRange != nil && ref.LineRange.Start > 0 && ref.LineRange.End >= ref.LineRange.Start {
+		lines := strings.Split(rawContent, "\n")
+		if ref.LineRange.End <= len(lines) {
+			extracted := strings.Join(lines[ref.LineRange.Start-1:ref.LineRange.End], "\n")
+			if ref.Content != "" {
+				// SUPPLEMENT mode: original lines + LLM supplement.
+				return extracted + "\n\n" + ref.Content
+			}
+			// PRESERVE mode: original lines verbatim.
+			return extracted
+		}
+	}
+	// GENERATE fallback or empty.
+	return ref.Content
+}
+
 // finalizePublicExperience fills in the content fields of a pre-written
 // PublicExperience, sets Status=Active, and upserts the embedding vector.
 // Called by processIngestion when LLM distillation succeeds.
-func finalizePublicExperience(ctx context.Context, expID int64, output ingestOutput) error {
+//
+// fm contains the YAML frontmatter (name → title, description → description).
+// These are used directly and NOT overridden by the LLM output.
+// output contains the LLM's section refs for when_to_use, guidelines, etc.
+// rawContent is the original SKILL.md content, used to resolve line_range refs.
+func finalizePublicExperience(ctx context.Context, expID int64, fm *SkillFrontmatter, output ingestOutput, rawContent string) error {
+	// Title and description come from YAML frontmatter.
+	// Only fall back to LLM output if frontmatter parsing failed (nil pointer or empty fields).
+	// If frontmatter has a value but the LLM returned something different,
+	// log a warning — the frontmatter value always wins.
+	var title, description string
+	var fmName, fmDesc string
+	if fm != nil {
+		title = fm.Name
+		description = fm.Description
+		fmName = fm.Name
+		fmDesc = fm.Description
+	}
+	if title == "" {
+		title = output.Title
+	} else if output.Title != "" && output.Title != title {
+		applogger.Warn("finalizePublicExperience: LLM title differs from frontmatter name, using frontmatter value",
+			"exp_id", expID,
+			"frontmatter_name", fmName,
+			"llm_title", output.Title,
+		)
+	}
+	if description == "" {
+		description = output.Description
+	} else if output.Description != "" && output.Description != description {
+		applogger.Warn("finalizePublicExperience: LLM description differs from frontmatter description, using frontmatter value",
+			"exp_id", expID,
+			"frontmatter_description", fmDesc,
+			"llm_description", output.Description,
+		)
+	}
+
+	// Resolve section content: line_range wins over content.
+	whenToUse := resolveSectionRef(output.WhenToUse, rawContent)
+	guidelines := resolveSectionRef(output.Guidelines, rawContent)
+	pitfalls := resolveSectionRef(output.Pitfalls, rawContent)
+	procedure := resolveSectionRef(output.Procedure, rawContent)
+
 	updates := map[string]interface{}{
-		"title":       output.Title,
-		"description": output.Description,
-		"when_to_use": output.WhenToUse,
-		"guidelines":  output.Guidelines,
-		"pitfalls":    output.Pitfalls,
-		"procedure":   output.Procedure,
+		"title":       title,
+		"description": description,
+		"when_to_use": whenToUse,
+		"guidelines":  guidelines,
+		"pitfalls":    pitfalls,
+		"procedure":   procedure,
 		"status":      model.PublicExperienceStatusActive,
 	}
 	if err := database.DB.Model(&model.PublicExperience{}).
@@ -37,7 +104,7 @@ func finalizePublicExperience(ctx context.Context, expID int64, output ingestOut
 	}
 
 	// Embed description and upsert vector.
-	emb, err := embeddingSvc.EmbedSingle(ctx, output.Description)
+	emb, err := embeddingSvc.EmbedSingle(ctx, description)
 	if err != nil {
 		return fmt.Errorf("embed public experience description: %w", err)
 	}

@@ -1,7 +1,7 @@
 {
   "name": "private-buddy-web",
   "private": true,
-  "version": "0.0.34",
+  "version": "0.0.35",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "axios": "^1.15.0",
     "i18next": "^26.0.5",
     "lucide-react": "^1.8.0",
+    "pd-markdown": "^2.1.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-i18next": "^17.0.4",

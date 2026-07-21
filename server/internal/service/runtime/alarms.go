@@ -52,18 +52,6 @@ func (r *alarmRegistryType) cancelAll() {
 	}
 }
 
-// cancelAlarmsForAgent cancels all alarm goroutines for a specific agent.
-// Currently cancels all because the registry is keyed by eventID, not agentConfigID.
-func (r *alarmRegistryType) cancelAlarmsForAgent(agentConfigID int64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, cancel := range r.alarms {
-		cancel()
-	}
-	_ = agentConfigID
-	r.alarms = make(map[int64]context.CancelFunc)
-}
-
 // CancelAlarms shuts down all alarm goroutines. Called during graceful shutdown
 // via runtime.StopAll().
 func CancelAlarms() {

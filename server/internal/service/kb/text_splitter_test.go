@@ -31,8 +31,8 @@ func TestSplit_WindowsLineEndings(t *testing.T) {
 // TestSplit_LargeParagraphSplit verifies word-level splitting when chunkSize is too small
 // for a single paragraph, triggering splitLargeParagraph.
 func TestSplit_LargeParagraphSplit(t *testing.T) {
-	// chunkSize=20 forces word-level splitting via splitLargeParagraph
-	s := newTextSplitter(20, 5, 5)
+	// chunkSize=7 forces word-level splitting: 15 words × ~1 token each > 7
+	s := newTextSplitter(7, 5, 5)
 	text := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen"
 	chunks := s.Split(text)
 

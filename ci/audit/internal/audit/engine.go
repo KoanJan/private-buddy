@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"private-buddy-server/internal/audit/checker"
-	"private-buddy-server/internal/audit/reporter"
-	"private-buddy-server/internal/audit/scanner"
+	"private-buddy-ci/audit/internal/audit/checker"
+	"private-buddy-ci/audit/internal/audit/reporter"
+	"private-buddy-ci/audit/internal/audit/scanner"
 )
 
 // Engine orchestrates the audit scan pipeline: file discovery → checker dispatch → report generation.
